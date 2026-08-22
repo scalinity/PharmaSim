@@ -50,6 +50,7 @@ const picking = new Picking(sim, bus, store, binBoard, rig.camera, renderer.canv
   selectionChanged: hud.selectionChanged,
   paletteChanged: hud.paletteChanged,
   stationHint: hud.stationHint,
+  shelfHover: hud.shelfHover,
 });
 hud.bindBuild(picking);
 
@@ -88,11 +89,30 @@ let liveStackKeys = new Set<string>();
 
 function updateOverlays(): void {
   const state = sim.snapshot;
-  if (state.phase !== "shift") {
+  if (state.phase === "close") {
     store.setBottleneck(null);
     return;
   }
   const { cols, rows } = state.store.grid;
+
+  // Shelves that want a trip to the backroom say so (§11 restock nudge).
+  for (const item of state.buildMode ? [] : state.store.furniture) {
+    if (item.defId !== "otc_shelf" && item.defId !== "rx_shelf") continue;
+    const units = sim.restockableUnits(item.id);
+    const empty = sim.hasEmptySlot(item.id);
+    if (units === 0 && !empty) {
+      hud.hideStockChip(item.id);
+      continue;
+    }
+    const [wx, wz] = cellToWorld(cols, rows, item.cellX, item.cellY);
+    const [sx, sy] = project(wx, 2.4, wz);
+    hud.updateStockChip(item.id, sx, sy, units, empty);
+  }
+
+  if (state.phase !== "shift") {
+    store.setBottleneck(null);
+    return;
+  }
   let worstId: string | null = null;
   let worstDepth = 0;
   const consider = (id: string, depth: number): void => {

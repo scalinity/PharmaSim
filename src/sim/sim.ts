@@ -6,7 +6,9 @@ import { DAY_END_IGM, IGM_PER_TICK } from "../core/clock";
 import type { Rot } from "../core/grid";
 import { handleCommand, type Command } from "./commands";
 import { applyRep, CustomerSystem, REP_REASONS } from "./customers";
+import { closeDay, groupTotal } from "./economy";
 import type { SimEvent } from "./events";
+import { hasEmptySlot, restockableUnits, rollHistory } from "./inventory";
 import {
   backroomZone,
   itemAvailability,
@@ -15,6 +17,9 @@ import {
 } from "./placement";
 import { createGameState, type GameState } from "./state";
 import { RxWorkflow } from "./workflow";
+
+/** §15 family-loan reputation cost — "word gets around". */
+const REP_FAMILY_LOAN = -0.3;
 
 export class Sim {
   readonly customers: CustomerSystem;
@@ -56,6 +61,10 @@ export class Sim {
       case "fill.pickBin":
         this.workflow.pickBin(command.drugId, this.emit);
         break;
+      case "stock.restock":
+        // Fresh bin units may unblock a fill the bench gave up on.
+        this.workflow.syncStation(this.state, this.emit);
+        break;
       case "dev.stressToggle": {
         const mult = this.customers.cycleStress(this.state);
         this.bus.emit({ type: "dev.stress", mult });
@@ -93,6 +102,16 @@ export class Sim {
     return this.customers.queueLength(stationId);
   }
 
+  /** Units this shelf or bin could take from the backroom right now (§11). */
+  restockableUnits(furnitureId: string): number {
+    return restockableUnits(this.state, furnitureId);
+  }
+
+  /** True when a label on this shelf has run dry — the chip turns rose. */
+  hasEmptySlot(furnitureId: string): boolean {
+    return hasEmptySlot(this.state, furnitureId);
+  }
+
   /** Advance one fixed tick (100 ms scaled). Clock only moves during the shift. */
   tick(): void {
     if (this.state.buildMode) return;
@@ -122,6 +141,13 @@ export class Sim {
       }
       // §15 daily drift: 1% toward 2.5 (neglect decays, grudges fade).
       applyRep(this.state, (2.5 - this.state.repStars) * 0.01, this.emit, REP_REASONS.drift);
+      // §10 books: fixed costs, loan servicing, then Aunt Rosa's soft floor.
+      const gross = groupTotal(this.state.dayStats, "revenue");
+      const summary = closeDay(this.state, this.emit);
+      if (summary.familyLoan > 0) {
+        applyRep(this.state, REP_FAMILY_LOAN, this.emit, REP_REASONS.familyLoan);
+      }
+      rollHistory(this.state, gross);
       this.state.phase = "close";
       this.bus.emit({ type: "day.phaseChanged", phase: this.state.phase, day: this.state.day });
     }

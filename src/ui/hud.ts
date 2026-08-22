@@ -8,15 +8,20 @@ import type { EventBus } from "../core/bus";
 import { dayProgress, formatClock, seasonForDay } from "../core/clock";
 import { drugDef } from "../data/drugs";
 import { furnitureDef } from "../data/furniture";
+import { otcDef } from "../data/otc";
 import type { SimEvent } from "../sim/events";
+import { SHELF_SLOT_UNITS, shelvedUnits, stockOf } from "../sim/inventory";
 import type { Sim } from "../sim/sim";
 import type { DayPhase, GameSpeed } from "../sim/state";
 import { Panel } from "./components/Panel";
 import { PillButton } from "./components/PillButton";
+import { PriceTag } from "./components/PriceTag";
 import { createRxCard } from "./components/RxCard";
 import { createToastHost, type ToastTone } from "./components/Toast";
 import { h } from "./dom";
+import { money } from "./format";
 import { createBuildPalette } from "./screens/buildPalette";
+import { createOrdersPanel } from "./screens/ordersPanel";
 import { buildReceipt } from "./screens/receipt";
 
 const STAR_GLYPHS = "★★★★★";
@@ -41,6 +46,11 @@ export interface HudHandle {
   bindBuild(controls: BuildControls): void;
   /** Register hover hint (null clears; a worked station overrides it). */
   stationHint(text: string | null): void;
+  /** OTC shelf under the pointer: its price tags + restock card (§11). */
+  shelfHover(shelfId: string | null, clientX: number, clientY: number): void;
+  /** Position/update the "restock" nudge chip over a shelf that needs it. */
+  updateStockChip(id: string, screenX: number, screenY: number, units: number, empty: boolean): void;
+  hideStockChip(id: string): void;
   /** Position/update the amber over-register queue chip (shown at ≥4). */
   updateQueueChip(id: string, screenX: number, screenY: number, count: number): void;
   hideQueueChip(id: string): void;
@@ -149,7 +159,18 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
   buildPill.addEventListener("click", () => {
     sim.dispatch({ type: sim.snapshot.buildMode ? "build.exit" : "build.enter" });
   });
-  const dock = h("div", { cls: "dock" }, [buildPill]);
+
+  const ordersPill = h(
+    "button",
+    {
+      cls: "pill pill--secondary pill--dock",
+      attrs: { type: "button", "aria-pressed": "false", "aria-label": "Orders (O)" },
+    },
+    [h("span", { cls: "keycap", attrs: { "aria-hidden": "true" }, text: "O" }), "Orders"],
+  );
+  ordersPill.addEventListener("pointerdown", (e) => e.preventDefault());
+  ordersPill.addEventListener("click", () => toggleOrders());
+  const dock = h("div", { cls: "dock" }, [buildPill, ordersPill]);
 
   // --- Build palette + move/sell context card ---
 
@@ -200,8 +221,112 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
 
   const queueChips = new Map<string, { el: HTMLElement; count: number }>();
   const stageStacks = new Map<string, { el: HTMLElement; count: number; label: string }>();
+  const stockChips = new Map<string, { el: HTMLElement; label: string }>();
 
-  root.append(topbar, palette.root, contextCard, morningStage, closeStage, stationHintEl, dock);
+  // --- Orders panel + the shelf's own price-tag card (§11) ---
+
+  const orders = createOrdersPanel(sim, bus);
+  let ordersOpen = false;
+
+  function setOrders(open: boolean): void {
+    const allowed = sim.snapshot.phase !== "close" && !sim.snapshot.buildMode;
+    ordersOpen = open && allowed;
+    orders.setVisible(ordersOpen);
+    ordersPill.classList.toggle("pill--primary", ordersOpen);
+    ordersPill.classList.toggle("pill--secondary", !ordersOpen);
+    ordersPill.setAttribute("aria-pressed", String(ordersOpen));
+  }
+
+  function toggleOrders(): void {
+    setOrders(!ordersOpen);
+  }
+
+  const shelfCard = h("div", { cls: "shelfcard" });
+  shelfCard.hidden = true;
+  let shelfCardId: string | null = null;
+
+  function buildShelfCard(shelfId: string): void {
+    const state = sim.snapshot;
+    const slots = state.store.shelfSlots[shelfId] ?? [];
+    const rows: HTMLElement[] = [];
+    let waiting = 0;
+    for (const skuId of slots) {
+      const def = otcDef(skuId);
+      const stock = stockOf(state.store, skuId);
+      waiting += stock.backroom;
+      rows.push(
+        h("div", { cls: "shelfcard__row" }, [
+          h("span", { cls: "shelfcard__name" }, [
+            h("span", { text: def.name }),
+            h("span", {
+              cls: `shelfcard__units${stock.shelved === 0 ? " shelfcard__units--out" : ""}`,
+              text:
+                stock.shelved === 0
+                  ? "empty label"
+                  : `${stock.shelved}/${SHELF_SLOT_UNITS} out${stock.backroom > 0 ? ` \u00b7 ${stock.backroom} back` : ""}`,
+            }),
+          ]),
+          PriceTag({
+            msrp: def.msrp,
+            multiplier: state.store.otcPricing[skuId] ?? 1,
+            name: def.name,
+            onChange: (multiplier) => sim.dispatch({ type: "otc.setPrice", skuId, multiplier }),
+          }).root,
+        ]),
+      );
+    }
+    if (rows.length === 0) {
+      rows.push(
+        h("p", {
+          cls: "shelfcard__empty",
+          text: "No labels yet. Order front-store stock and click the shelf to lay it out.",
+        }),
+      );
+    }
+    const units = sim.restockableUnits(shelfId);
+    shelfCard.replaceChildren(
+      h("p", { cls: "shelfcard__eyebrow", text: "Shelf labels" }),
+      ...rows,
+      h("p", {
+        cls: "shelfcard__hint",
+        text:
+          units > 0
+            ? `Click the shelf to bring out ${units} ${units === 1 ? "unit" : "units"}`
+            : waiting > 0
+              ? `Labels are full \u2014 ${waiting} more in the backroom`
+              : "Nothing in the backroom for this shelf",
+      }),
+    );
+  }
+
+  function setShelfCard(shelfId: string | null, clientX: number, clientY: number): void {
+    if (shelfId === null) {
+      shelfCardId = null;
+      shelfCard.hidden = true;
+      return;
+    }
+    if (shelfId !== shelfCardId) {
+      shelfCardId = shelfId;
+      buildShelfCard(shelfId);
+    }
+    shelfCard.hidden = false;
+    // Follow the pointer, kept clear of the right and bottom edges.
+    const x = Math.min(clientX + 18, window.innerWidth - shelfCard.offsetWidth - 12);
+    const y = Math.min(clientY + 14, window.innerHeight - shelfCard.offsetHeight - 12);
+    shelfCard.style.transform = `translate(${x.toFixed(0)}px, ${y.toFixed(0)}px)`;
+  }
+
+  root.append(
+    topbar,
+    palette.root,
+    orders.root,
+    contextCard,
+    morningStage,
+    closeStage,
+    stationHintEl,
+    shelfCard,
+    dock,
+  );
   const toast = createToastHost(root);
   const rxCard = createRxCard(root);
 
@@ -226,9 +351,11 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     if (phase === "close") {
       closeStage.append(buildReceipt(sim, () => sim.dispatch({ type: "day.advance" })));
     }
+    if (phase === "close") setOrders(false);
     if (phase !== "shift") {
       hoverHint = null;
       refreshStationHint();
+      setShelfCard(null, 0, 0);
       rxCard.hide();
       for (const [id, chip] of queueChips) {
         chip.el.remove();
@@ -238,6 +365,14 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
         stack.el.remove();
         stageStacks.delete(key);
       }
+    }
+    if (phase === "close") clearStockChips();
+  }
+
+  function clearStockChips(): void {
+    for (const [id, chip] of stockChips) {
+      chip.el.remove();
+      stockChips.delete(id);
     }
   }
 
@@ -268,6 +403,12 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     buildPill.setAttribute("aria-pressed", String(active));
     palette.setVisible(active);
     if (!active) contextCard.hidden = true;
+    // One sheet on the counter at a time.
+    if (active) {
+      setOrders(false);
+      setShelfCard(null, 0, 0);
+      clearStockChips();
+    }
   }
 
   function setSelection(next: BuildSelectionInfo | null): void {
@@ -302,6 +443,12 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
       chip.el.remove();
       queueChips.delete(e.id);
     }
+    const stockChip = stockChips.get(e.id);
+    if (stockChip) {
+      stockChip.el.remove();
+      stockChips.delete(e.id);
+    }
+    if (shelfCardId === e.id) setShelfCard(null, 0, 0);
   });
   const STATION_HINT_NAMES: Record<string, string> = {
     counter_register: "register",
@@ -332,11 +479,30 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     toast(`${drugDef(e.drugId).name} is out of stock — script refused`, "error");
   });
 
+  // --- Inventory + economy (§10, §11) ---
+
+  bus.on("order.submitted", (e) => {
+    toast(`Order placed — ${e.units} units, ${money(e.total)}. The van comes at dawn.`);
+    setOrders(false);
+  });
+  bus.on("order.delivered", (e) => {
+    toast(`Delivery unloaded — ${e.units} units across ${e.skus} lines, in the backroom`);
+  });
+  bus.on("stock.restocked", (e) => {
+    if (shelfCardId === e.furnitureId) buildShelfCard(e.furnitureId);
+    toast(`Brought out ${e.units} ${e.units === 1 ? "unit" : "units"}`);
+  });
+  bus.on("reorder.unlocked", () => {
+    toast("An empty shelf cost you a sale. Orders now takes min/target levels.", "error");
+  });
+
   bus.on("dev.stress", (e) => toast(e.mult === 1 ? "Stress spawn off" : `Stress spawn ×${e.mult}`));
 
   // --- Keys: Space pause toggle, 1 / 2 speeds, N dev stress spawn ---
 
   window.addEventListener("keydown", (e) => {
+    // Digits typed into the order form are quantities, not shortcuts.
+    if (e.target instanceof HTMLInputElement && e.target.type === "text") return;
     if (e.code === "Space") {
       if (e.target instanceof HTMLElement) {
         const button = e.target.closest("button");
@@ -351,6 +517,10 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
       sim.dispatch({ type: "speed.set", speed: 1 });
     } else if (e.key === "2") {
       sim.dispatch({ type: "speed.set", speed: 2 });
+    } else if (e.code === "KeyO" && !e.repeat) {
+      toggleOrders();
+    } else if (e.code === "Escape" && ordersOpen) {
+      setOrders(false);
     } else if (e.code === "KeyN" && !e.repeat) {
       sim.dispatch({ type: "dev.stressToggle" });
     }
@@ -375,6 +545,29 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     stationHint: (text) => {
       hoverHint = text;
       refreshStationHint();
+    },
+    shelfHover: (shelfId, clientX, clientY) => setShelfCard(shelfId, clientX, clientY),
+    updateStockChip: (id, screenX, screenY, units, empty) => {
+      const label = empty && units === 0 ? "empty" : `restock ${units}`;
+      let chip = stockChips.get(id);
+      if (!chip) {
+        chip = { el: h("div", { cls: "schip" }), label: "" };
+        root.append(chip.el);
+        stockChips.set(id, chip);
+      }
+      if (chip.label !== label) {
+        chip.label = label;
+        chip.el.textContent = label;
+        chip.el.classList.toggle("schip--out", label === "empty");
+      }
+      chip.el.style.transform = `translate(${screenX.toFixed(1)}px, ${screenY.toFixed(1)}px) translate(-50%, -100%)`;
+    },
+    hideStockChip: (id) => {
+      const chip = stockChips.get(id);
+      if (chip) {
+        chip.el.remove();
+        stockChips.delete(id);
+      }
     },
     updateQueueChip: (id, screenX, screenY, count) => {
       let chip = queueChips.get(id);

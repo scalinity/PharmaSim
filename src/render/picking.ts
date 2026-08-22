@@ -22,6 +22,9 @@ const STATION_NAMES: Record<string, string> = {
   fill_bench: "fill bench",
 };
 
+/** Fixtures a click restocks from the backroom (§11). */
+const RESTOCK_DEFS = new Set(["otc_shelf", "rx_shelf"]);
+
 export interface BuildSelection {
   id: string;
   defId: string;
@@ -35,6 +38,8 @@ export interface PickingCallbacks {
   paletteChanged(defId: string | null): void;
   /** Station interaction hint while hovering a register mid-shift. */
   stationHint(text: string | null): void;
+  /** OTC shelf under the pointer (§11 price tags + restock), or null. */
+  shelfHover(shelfId: string | null, clientX: number, clientY: number): void;
 }
 
 export class Picking {
@@ -173,7 +178,7 @@ export class Picking {
       const idle = !this.ghostDefId;
       this.scene.setHover(idle ? this.pickFurnitureId(e.clientX, e.clientY) : null);
       this.setCursor("");
-      this.callbacks.stationHint(null);
+      this.clearHints();
       return;
     }
 
@@ -184,34 +189,67 @@ export class Picking {
       if (bin !== -1) {
         this.scene.setHover(null);
         this.setCursor("pointer");
-        this.callbacks.stationHint(null);
+        this.clearHints();
         return;
       }
     } else {
       this.binBoard.setHover(-1);
     }
 
-    // Mid-shift: registers, the counter and the bench are workable (§8).
-    if (state.phase === "shift") {
-      const id = this.pickFurnitureId(e.clientX, e.clientY);
-      const item = id ? state.store.furniture.find((f) => f.id === id) : undefined;
-      const stationName = item ? STATION_NAMES[item.defId] : undefined;
-      this.scene.setHover(stationName ? id : null);
-      this.setCursor(stationName ? "pointer" : "");
-      if (stationName) {
-        this.callbacks.stationHint(
-          state.workingStationId === id
-            ? `Click to step away from the ${stationName}`
-            : `Click to work the ${stationName}`,
-        );
-      } else {
-        this.callbacks.stationHint(null);
-      }
-    } else {
+    if (state.phase === "close") {
       this.scene.setHover(null);
       this.setCursor("");
+      this.clearHints();
+      return;
+    }
+
+    const id = this.pickFurnitureId(e.clientX, e.clientY);
+    const item = id ? state.store.furniture.find((f) => f.id === id) : undefined;
+
+    // Shelves and bins take a restock click, morning or mid-shift (§11).
+    if (item && this.isRestockable(item.defId)) {
+      const units = this.sim.restockableUnits(item.id);
+      this.scene.setHover(item.id);
+      this.setCursor(units > 0 ? "pointer" : "");
+      if (item.defId === "otc_shelf") {
+        this.callbacks.stationHint(null);
+        this.callbacks.shelfHover(item.id, e.clientX, e.clientY);
+      } else {
+        this.callbacks.shelfHover(null, 0, 0);
+        this.callbacks.stationHint(
+          units > 0
+            ? `Click to move ${units} ${units === 1 ? "box" : "boxes"} into the bins`
+            : "The backroom has nothing for these bins",
+        );
+      }
+      return;
+    }
+    this.callbacks.shelfHover(null, 0, 0);
+
+    // Mid-shift: registers, the counter and the bench are workable (§8).
+    const stationName = state.phase === "shift" && item ? STATION_NAMES[item.defId] : undefined;
+    this.scene.setHover(stationName ? item!.id : null);
+    this.setCursor(stationName ? "pointer" : "");
+    if (stationName) {
+      this.callbacks.stationHint(
+        state.workingStationId === item!.id
+          ? `Click to step away from the ${stationName}`
+          : `Click to work the ${stationName}`,
+      );
+    } else {
       this.callbacks.stationHint(null);
     }
+  }
+
+  /** A shelf click restocks, except while its bins are being picked from. */
+  private isRestockable(defId: string): boolean {
+    if (!RESTOCK_DEFS.has(defId)) return false;
+    return !(defId === "rx_shelf" && this.binBoard.active);
+  }
+
+  private clearHints(): void {
+    this.callbacks.stationHint(null);
+    this.callbacks.shelfHover(null, 0, 0);
   }
 
   private setCursor(cursor: string): void {
@@ -226,9 +264,9 @@ export class Picking {
     const state = this.sim.snapshot;
 
     if (!state.buildMode) {
-      if (state.phase !== "shift") return;
+      if (state.phase === "close") return;
       // A fill in progress: clicking a labeled bin fills from it (§8).
-      if (this.binBoard.active) {
+      if (state.phase === "shift" && this.binBoard.active) {
         const bin = this.pickBinIndex(e.clientX, e.clientY);
         const drugId = bin === -1 ? null : this.binBoard.drugIdAt(bin);
         if (drugId) {
@@ -239,6 +277,12 @@ export class Picking {
       // Work the station you click; click anywhere else to leave the post.
       const id = this.pickFurnitureId(e.clientX, e.clientY);
       const item = id ? state.store.furniture.find((f) => f.id === id) : undefined;
+      // A shelf takes the backroom's stock out front (§11) — morning or mid-shift.
+      if (item && this.isRestockable(item.defId)) {
+        this.sim.dispatch({ type: "stock.restock", furnitureId: item.id });
+        return;
+      }
+      if (state.phase !== "shift") return;
       const stationName = item ? STATION_NAMES[item.defId] : undefined;
       if (item && stationName) {
         if (state.workingStationId === item.id) {

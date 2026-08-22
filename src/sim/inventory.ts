@@ -1,0 +1,309 @@
+// Inventory (SPEC §11, §17, §24): stock per SKU as backroom units plus units
+// out front (OTC shelf labels, Rx bins), player-set OTC prices with the §10
+// balk thresholds, restock moves the player makes by clicking a shelf,
+// next-morning deliveries, stock-out recording, and the trailing sales and
+// fill-rate history the city model reads later (§17). Pure sim — no DOM.
+
+import { OTC_DEFS, otcDef } from "../data/otc";
+import { round2 } from "./economy";
+import type { SimEvent } from "./events";
+import type { GameState, OrderLine, StockLine, StoreState } from "./state";
+
+/** §6 otc_shelf: 4 SKU labels × 24 units. */
+export const SHELF_SLOTS = 4;
+export const SHELF_SLOT_UNITS = 24;
+
+/** §10 OTC pricing: slider range and the two balk thresholds. */
+export const PRICE_MIN = 0.8;
+export const PRICE_MAX = 1.5;
+export const PRICE_STEP = 0.05;
+export const BALK_BARGAIN = 1.15;
+export const BALK_ALL = 1.35;
+
+/** §11/§17 trailing windows. */
+const HISTORY_DAYS = 7;
+
+type Emit = (event: SimEvent) => void;
+
+const OTC_IDS: ReadonlySet<string> = new Set(OTC_DEFS.map((def) => def.id));
+
+export function isOtc(skuId: string): boolean {
+  return OTC_IDS.has(skuId);
+}
+
+const EMPTY: StockLine = { backroom: 0, shelved: 0 };
+
+export function stockOf(store: StoreState, skuId: string): Readonly<StockLine> {
+  return store.stock[skuId] ?? EMPTY;
+}
+
+/** Mutable line, created on first use. */
+function line(store: StoreState, skuId: string): StockLine {
+  return (store.stock[skuId] ??= { backroom: 0, shelved: 0 });
+}
+
+export function onHand(store: StoreState, skuId: string): number {
+  const s = stockOf(store, skuId);
+  return s.backroom + s.shelved;
+}
+
+export function shelvedUnits(store: StoreState, skuId: string): number {
+  return stockOf(store, skuId).shelved;
+}
+
+/** Consume one unit from the shelf/bin. False when it is out of stock. */
+export function takeShelved(store: StoreState, skuId: string): boolean {
+  const s = store.stock[skuId];
+  if (!s || s.shelved <= 0) return false;
+  s.shelved--;
+  return true;
+}
+
+/** Put a unit back (basket abandoned, script cancelled). */
+export function returnShelved(store: StoreState, skuId: string): void {
+  line(store, skuId).shelved++;
+}
+
+// --- OTC pricing (§10) ---
+
+export function priceMultiplier(store: StoreState, skuId: string): number {
+  return store.otcPricing[skuId] ?? 1;
+}
+
+/** What a shopper pays: MSRP × the player's multiplier. */
+export function otcPrice(store: StoreState, skuId: string): number {
+  return round2(otcDef(skuId).msrp * priceMultiplier(store, skuId));
+}
+
+export function clampMultiplier(multiplier: number): number {
+  const stepped = Math.round(multiplier / PRICE_STEP) * PRICE_STEP;
+  return Math.min(PRICE_MAX, Math.max(PRICE_MIN, round2(stepped)));
+}
+
+/** True when this archetype puts the item back over its price (§10). */
+export function balksAt(multiplier: number, archetypeIsBargain: boolean): boolean {
+  if (multiplier > BALK_ALL) return true;
+  return archetypeIsBargain && multiplier > BALK_BARGAIN;
+}
+
+/** §17 priceScore input: the average multiplier across shelved SKUs. */
+export function refreshPriceIndex(store: StoreState): void {
+  let sum = 0;
+  let count = 0;
+  for (const slots of Object.values(store.shelfSlots)) {
+    for (const skuId of slots) {
+      sum += priceMultiplier(store, skuId);
+      count++;
+    }
+  }
+  store.priceIndex = count === 0 ? 1 : round2(sum / count);
+}
+
+// --- Shelf labels + restocking (§11) ---
+
+/** The shelf a SKU is labelled on, or null. */
+function shelfOf(store: StoreState, skuId: string): string | null {
+  for (const [shelfId, slots] of Object.entries(store.shelfSlots)) {
+    if (slots.includes(skuId)) return shelfId;
+  }
+  return null;
+}
+
+/** Units on the shelf's labels, and how many its 4 slots can still hold. */
+export function shelfUnits(store: StoreState, shelfId: string): number {
+  let units = 0;
+  for (const skuId of store.shelfSlots[shelfId] ?? []) units += shelvedUnits(store, skuId);
+  return units;
+}
+
+function moveOut(store: StoreState, skuId: string, cap: number): number {
+  const s = line(store, skuId);
+  const take = Math.min(cap - s.shelved, s.backroom);
+  if (take <= 0) return 0;
+  s.backroom -= take;
+  s.shelved += take;
+  return take;
+}
+
+/** OTC SKUs sitting in the backroom with no shelf label yet, catalog order. */
+function unlabelled(store: StoreState): string[] {
+  return OTC_DEFS.filter(
+    (def) => stockOf(store, def.id).backroom > 0 && shelfOf(store, def.id) === null,
+  ).map((def) => def.id);
+}
+
+/** Units this shelf/bin could take from the backroom right now (§11 prompt). */
+export function restockableUnits(state: GameState, furnitureId: string): number {
+  const store = state.store;
+  const item = store.furniture.find((f) => f.id === furnitureId);
+  if (!item) return 0;
+  if (item.defId === "otc_shelf") {
+    const slots = store.shelfSlots[furnitureId] ?? [];
+    let units = 0;
+    for (const skuId of slots) {
+      units += Math.min(SHELF_SLOT_UNITS - shelvedUnits(store, skuId), stockOf(store, skuId).backroom);
+    }
+    let free = SHELF_SLOTS - slots.length;
+    for (const skuId of unlabelled(store)) {
+      if (free-- <= 0) break;
+      units += Math.min(SHELF_SLOT_UNITS, stockOf(store, skuId).backroom);
+    }
+    return units;
+  }
+  if (item.defId === "rx_shelf") {
+    let units = 0;
+    for (const [skuId, s] of Object.entries(store.stock)) {
+      if (!isOtc(skuId)) units += s.backroom;
+    }
+    return units;
+  }
+  return 0;
+}
+
+/** True when a label on this shelf (or a bin behind it) has run dry. */
+export function hasEmptySlot(state: GameState, furnitureId: string): boolean {
+  const store = state.store;
+  const item = store.furniture.find((f) => f.id === furnitureId);
+  if (item?.defId !== "otc_shelf") return false;
+  const slots = store.shelfSlots[furnitureId] ?? [];
+  return slots.some((skuId) => shelvedUnits(store, skuId) === 0);
+}
+
+/**
+ * The player clicked a shelf: top its labels up from the backroom, then hand
+ * any free slot to a SKU that arrived with nowhere to go. Rx bins take the
+ * whole backroom (instant in the solo era, §11). Returns units moved.
+ */
+export function restock(state: GameState, furnitureId: string): number {
+  const store = state.store;
+  const item = store.furniture.find((f) => f.id === furnitureId);
+  if (!item) return 0;
+  let moved = 0;
+
+  if (item.defId === "otc_shelf") {
+    const slots = (store.shelfSlots[furnitureId] ??= []);
+    for (const skuId of slots) moved += moveOut(store, skuId, SHELF_SLOT_UNITS);
+    for (const skuId of unlabelled(store)) {
+      if (slots.length >= SHELF_SLOTS) break;
+      slots.push(skuId);
+      moved += moveOut(store, skuId, SHELF_SLOT_UNITS);
+    }
+    // Drop labels that are empty and unbacked, so new SKUs can take the slot.
+    for (let i = slots.length - 1; i >= 0; i--) {
+      const skuId = slots[i]!;
+      if (onHand(store, skuId) === 0) slots.splice(i, 1);
+    }
+    refreshPriceIndex(store);
+    return moved;
+  }
+
+  if (item.defId === "rx_shelf") {
+    for (const [skuId, s] of Object.entries(store.stock)) {
+      if (isOtc(skuId) || s.backroom <= 0) continue;
+      moved += s.backroom;
+      s.shelved += s.backroom;
+      s.backroom = 0;
+    }
+  }
+  return moved;
+}
+
+/** An OTC shelf was sold: box its units back into the backroom. */
+export function clearShelf(store: StoreState, furnitureId: string): void {
+  for (const skuId of store.shelfSlots[furnitureId] ?? []) {
+    const s = line(store, skuId);
+    s.backroom += s.shelved;
+    s.shelved = 0;
+  }
+  delete store.shelfSlots[furnitureId];
+  refreshPriceIndex(store);
+}
+
+// --- Orders and deliveries (§11) ---
+
+/** Queue an order for tomorrow morning, merging lines per SKU. */
+export function queueDelivery(store: StoreState, lines: readonly OrderLine[]): void {
+  for (const l of lines) {
+    const existing = store.inbound.find((i) => i.skuId === l.skuId);
+    if (existing) existing.units += l.units;
+    else store.inbound.push({ skuId: l.skuId, units: l.units });
+  }
+}
+
+/** Morning: yesterday's order lands in the backroom (§5, §11). */
+export function receiveDeliveries(store: StoreState): { units: number; skus: number } {
+  let units = 0;
+  const skus = store.inbound.length;
+  for (const l of store.inbound) {
+    line(store, l.skuId).backroom += l.units;
+    units += l.units;
+  }
+  store.inbound.length = 0;
+  return { units, skus };
+}
+
+/** Reorder rules → a draft cart the player still has to send (§11). */
+export function draftOrder(state: GameState): Record<string, number> {
+  const draft: Record<string, number> = {};
+  if (!state.store.reorderUnlocked) return draft;
+  for (const [skuId, rule] of Object.entries(state.store.reorderRules)) {
+    const held = onHand(state.store, skuId);
+    if (held > rule.min) continue;
+    const units = rule.target - held;
+    if (units > 0) draft[skuId] = units;
+  }
+  return draft;
+}
+
+// --- Stock-outs, sales history, fill rate (§11, §17) ---
+
+/** A sale lost to an empty label or bin. The first one teaches reorder rules. */
+export function recordStockOut(state: GameState, skuId: string, emit: Emit): void {
+  const stats = state.dayStats;
+  stats.stockOuts[skuId] = (stats.stockOuts[skuId] ?? 0) + 1;
+  emit({ type: "stock.out", skuId });
+  if (!state.store.reorderUnlocked) {
+    state.store.reorderUnlocked = true;
+    emit({ type: "reorder.unlocked" });
+  }
+}
+
+/** An item put back over its price (§10) — no rep hit, just a lost sale. */
+export function recordBalk(state: GameState, skuId: string): void {
+  const stats = state.dayStats;
+  stats.balks[skuId] = (stats.balks[skuId] ?? 0) + 1;
+}
+
+export function recordSale(store: StoreState, skuId: string, units: number): void {
+  store.salesToday[skuId] = (store.salesToday[skuId] ?? 0) + units;
+}
+
+/** Units sold over the trailing 7 days, today included (§11 order UI). */
+export function sales7d(store: StoreState, skuId: string): number {
+  let units = store.salesToday[skuId] ?? 0;
+  for (const day of store.salesLog) units += day[skuId] ?? 0;
+  return units;
+}
+
+/**
+ * Roll the day's history at close: sales log, the §17 fill rate (served vs.
+ * demand we could not meet), and gross revenue for the bank's credit line.
+ */
+export function rollHistory(state: GameState, gross: number): void {
+  const store = state.store;
+  const stats = state.dayStats;
+
+  store.salesLog.unshift(store.salesToday);
+  store.salesLog.length = Math.min(store.salesLog.length, HISTORY_DAYS - 1);
+  store.salesToday = {};
+
+  let missed = stats.refusals;
+  for (const count of Object.values(stats.stockOuts)) missed += count;
+  const served = stats.fills + stats.otcUnits;
+  const rate = served + missed === 0 ? 1 : round2(served / (served + missed));
+  store.fillRate7d.unshift(rate);
+  store.fillRate7d.length = Math.min(store.fillRate7d.length, HISTORY_DAYS);
+
+  store.gross7d.unshift(round2(gross));
+  store.gross7d.length = Math.min(store.gross7d.length, HISTORY_DAYS);
+}

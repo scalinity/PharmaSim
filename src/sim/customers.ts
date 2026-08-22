@@ -14,7 +14,19 @@ import { drugDef } from "../data/drugs";
 import { furnitureDef } from "../data/furniture";
 import { randomFullName } from "../data/names";
 import { otcDef } from "../data/otc";
+import { COPAY, post } from "./economy";
 import type { SimEvent } from "./events";
+import {
+  balksAt,
+  otcPrice,
+  priceMultiplier,
+  recordBalk,
+  recordSale,
+  recordStockOut,
+  returnShelved,
+  shelvedUnits,
+  takeShelved,
+} from "./inventory";
 import { backroomZone } from "./placement";
 import type { GameState, PlacedFurniture } from "./state";
 import type { RxWorkflow } from "./workflow";
@@ -140,7 +152,6 @@ const BASKET_MAX = 4;
 const EXTRA_ITEM_CHANCE = 0.6;
 const RX_SHARE = 0.35; // §26 customer mix (vaccine walk-ins fold in later)
 const RX_BROWSE_WAIT_IGM = 60; // §7: waiting Rx patients start browsing
-const COPAY = 10; // §26 flat copay
 const COUNSEL_BASKET_CHANCE = 0.5; // §8: +$4 basket chance after counsel
 const COUNSEL_BASKET_VALUE = 4;
 const REP_SERVE = 0.02;
@@ -157,6 +168,7 @@ export const REP_REASONS = {
   walkout: "Walk-outs",
   refused: "Scripts refused",
   error: "Dispensing errors",
+  familyLoan: "Family loan",
   drift: "Word settles",
 } as const;
 
@@ -592,7 +604,7 @@ export class CustomerSystem {
         if (this.isScriptWaiting(c) && this.rxWaitTick(state, c, dIgm, 1, emit)) return;
         c.browseLeft -= dIgm;
         if (c.browseLeft <= 0) {
-          this.finishBrowse(state, c);
+          this.finishBrowse(state, c, emit);
           c.targetIdx++;
           this.planNextTarget(state, c);
         }
@@ -753,6 +765,7 @@ export class CustomerSystem {
     } else {
       // Out of stock: the script is refused and logged for the receipt.
       state.dayStats.refusals++;
+      recordStockOut(state, script.drugId, emit);
       applyRep(state, REP_REFUSED, emit, REP_REASONS.refused);
       emit({ type: "rx.refused", drugId: script.drugId, customerId: c.id });
       c.scriptId = 0;
@@ -774,11 +787,14 @@ export class CustomerSystem {
     const basketTotal = c.basket.reduce((sum, line) => sum + line.price, 0);
 
     state.dayStats.fills++;
-    state.dayStats.copayRevenue += COPAY;
-    state.dayStats.rxReimbursement += drug.reimbursement;
+    recordSale(state.store, script.drugId, 1);
+    post(state, "rx.reimbursement", drug.reimbursement, emit);
+    post(state, "rx.copay", COPAY, emit);
     if (basketTotal > 0) {
       state.dayStats.otcSales++;
-      state.dayStats.otcRevenue += basketTotal;
+      state.dayStats.otcUnits += c.basket.length;
+      for (const line of c.basket) recordSale(state.store, line.skuId, 1);
+      post(state, "otc.sale", basketTotal, emit);
     }
     let cashDelta = COPAY + drug.reimbursement + basketTotal;
 
@@ -788,16 +804,14 @@ export class CustomerSystem {
       // §8 copy voice: an error is refunded, never depicted as harm.
       const refund = COPAY + drug.reimbursement;
       cashDelta -= refund;
-      state.dayStats.refunds += refund;
       state.dayStats.errors++;
+      post(state, "refund", -refund, emit);
       applyRep(state, REP_ERROR, emit, REP_REASONS.error);
       emit({ type: "rx.errorDispensed", scriptId: script.id, refund });
     } else {
       applyRep(state, REP_SERVE, emit, REP_REASONS.serve);
     }
 
-    state.cash += cashDelta;
-    emit({ type: "cash.changed", cash: state.cash });
     emit({ type: "rx.pickedUp", scriptId: script.id, total: cashDelta, counseled });
     this.workflow.finish(script, emit);
     c.scriptId = 0;
@@ -818,9 +832,7 @@ export class CustomerSystem {
     c.counseling = false;
     applyRep(state, REP_COUNSEL, emit, REP_REASONS.counsel);
     if (Math.random() < COUNSEL_BASKET_CHANCE) {
-      state.cash += COUNSEL_BASKET_VALUE;
-      state.dayStats.otcRevenue += COUNSEL_BASKET_VALUE;
-      emit({ type: "cash.changed", cash: state.cash });
+      post(state, "otc.sale", COUNSEL_BASKET_VALUE, emit);
     }
     this.leaveQueueStructures(c);
     this.beginLeave(c, false);
@@ -945,9 +957,11 @@ export class CustomerSystem {
     const stocked: { id: string; weight: number }[] = [];
     for (const item of state.store.furniture) {
       if (item.defId !== "otc_shelf") continue;
-      const slots = state.store.shelfStock[item.id];
-      if (!slots) continue;
-      const units = slots.reduce((sum, s) => sum + s.units, 0);
+      const slots = state.store.shelfSlots[item.id];
+      if (!slots || slots.length === 0) continue;
+      // Weight by what is actually on the shelf — empty labels pull no one in.
+      let units = 0;
+      for (const skuId of slots) units += shelvedUnits(state.store, skuId);
       if (units > 0) stocked.push({ id: item.id, weight: units });
     }
     let wanted = Math.min(randInt(min, max), stocked.length);
@@ -1108,26 +1122,42 @@ export class CustomerSystem {
     return best !== -1 && this.setPath(c, best, false);
   }
 
-  private finishBrowse(state: GameState, c: Customer): void {
+  /**
+   * The shopper picks a label off the shelf they browsed, then stock and price
+   * decide whether it reaches the basket: an empty label is a stock-out (§11),
+   * an over-priced one is a balk (§10 — Bargain above 1.15×, everyone above
+   * 1.35×).
+   */
+  private finishBrowse(state: GameState, c: Customer, emit: Emit): void {
     if (c.basket.length >= BASKET_MAX) return;
     const shelfId = c.targets[c.targetIdx];
     if (shelfId === undefined) return;
-    const slots = state.store.shelfStock[shelfId];
-    if (!slots) return;
-    const inStock = slots.filter((s) => s.units > 0);
-    if (inStock.length === 0) return; // empty slots can't be browsed into a basket
+    const slots = state.store.shelfSlots[shelfId];
+    if (!slots || slots.length === 0) return;
     if (c.basket.length > 0 && Math.random() > EXTRA_ITEM_CHANCE) return;
-    const total = inStock.reduce((sum, s) => sum + otcDef(s.skuId).demandWeight, 0);
+
+    const total = slots.reduce((sum, skuId) => sum + otcDef(skuId).demandWeight, 0);
     let u = Math.random() * total;
-    for (const slot of inStock) {
-      u -= otcDef(slot.skuId).demandWeight;
+    let wanted: string | null = null;
+    for (const skuId of slots) {
+      u -= otcDef(skuId).demandWeight;
       if (u <= 0) {
-        slot.units--;
-        // MSRP ×1.0 until the pricing slider lands in 05 (§10).
-        c.basket.push({ skuId: slot.skuId, shelfId, price: otcDef(slot.skuId).msrp });
-        return;
+        wanted = skuId;
+        break;
       }
     }
+    if (wanted === null) return;
+
+    if (shelvedUnits(state.store, wanted) <= 0) {
+      recordStockOut(state, wanted, emit);
+      return;
+    }
+    if (balksAt(priceMultiplier(state.store, wanted), c.archetype === "bargain")) {
+      recordBalk(state, wanted);
+      return;
+    }
+    takeShelved(state.store, wanted);
+    c.basket.push({ skuId: wanted, shelfId, price: otcPrice(state.store, wanted) });
   }
 
   /** Join the shortest register queue. False if no register is usable. */
@@ -1278,10 +1308,10 @@ export class CustomerSystem {
 
   private completeSale(state: GameState, c: Customer, emit: Emit): void {
     const total = c.basket.reduce((sum, line) => sum + line.price, 0);
-    state.cash += total;
     state.dayStats.otcSales++;
-    state.dayStats.otcRevenue += total;
-    emit({ type: "cash.changed", cash: state.cash });
+    state.dayStats.otcUnits += c.basket.length;
+    for (const line of c.basket) recordSale(state.store, line.skuId, 1);
+    post(state, "otc.sale", total, emit);
     emit({ type: "sale.completed", customerId: c.id, items: c.basket.length, total });
     applyRep(state, REP_SERVE, emit, REP_REASONS.serve); // happy serve (§15)
     c.basket.length = 0;
@@ -1312,11 +1342,7 @@ export class CustomerSystem {
 
   /** Put unpurchased basket items back on their shelves. */
   private returnBasket(state: GameState, c: Customer): void {
-    for (const line of c.basket) {
-      const slots = state.store.shelfStock[line.shelfId];
-      const slot = slots?.find((s) => s.skuId === line.skuId);
-      if (slot) slot.units++;
-    }
+    for (const line of c.basket) returnShelved(state.store, line.skuId);
     c.basket.length = 0;
   }
 

@@ -1,5 +1,5 @@
-// OTC catalog (SPEC §25 front-store table, §24 OtcDef shape). Player pricing
-// (0.8–1.5× MSRP) arrives in milestone 05; until then everything sells at ×1.0.
+// OTC catalog (SPEC §25 front-store table, §24 OtcDef shape). The player sets
+// each SKU's price at 0.8–1.5× MSRP (§10); wholesale is 55% of MSRP.
 
 export type OtcCategory = "pain" | "allergy" | "coldflu" | "digestive" | "wellness" | "firstaid";
 

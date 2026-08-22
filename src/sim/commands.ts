@@ -5,9 +5,25 @@
 import { DAY_START_IGM } from "../core/clock";
 import type { Rot } from "../core/grid";
 import { furnitureDef } from "../data/furniture";
+import {
+  bankStatus,
+  catalog,
+  orderTotal,
+  post,
+  round2,
+} from "./economy";
 import type { SimEvent } from "./events";
+import {
+  clampMultiplier,
+  clearShelf,
+  isOtc,
+  queueDelivery,
+  receiveDeliveries,
+  refreshPriceIndex,
+  restock,
+} from "./inventory";
 import { validatePlacement } from "./placement";
-import { emptyDayStats, type GameState, type GameSpeed } from "./state";
+import { emptyDayStats, type GameState, type GameSpeed, type OrderLine } from "./state";
 
 export type Command =
   | { type: "store.open" }
@@ -22,6 +38,15 @@ export type Command =
   | { type: "station.leave" }
   /** Player picked a bin during the fill interaction; handled by Sim (workflow). */
   | { type: "fill.pickBin"; drugId: string }
+  // --- Inventory + economy (§10, §11) ---
+  /** Buy wholesale: cash out now, goods land in the backroom next morning. */
+  | { type: "order.submit"; lines: OrderLine[] }
+  | { type: "otc.setPrice"; skuId: string; multiplier: number }
+  /** Move backroom stock onto a shelf's labels or into the Rx bins. */
+  | { type: "stock.restock"; furnitureId: string }
+  | { type: "reorder.setRule"; skuId: string; min: number; target: number }
+  | { type: "loan.draw"; amount: number }
+  | { type: "loan.repay"; amount: number }
   /** Dev-only spawn stress cycle ×1/×3/×9/×27 (milestone 03); handled by Sim, not here. */
   | { type: "dev.stressToggle" };
 
@@ -32,6 +57,19 @@ function leaveStation(state: GameState, emit: (event: SimEvent) => void): void {
   if (state.workingStationId === null) return;
   state.workingStationId = null;
   emit({ type: "station.changed", stationId: null });
+}
+
+/** Drop lines that are empty, unknown, or behind a licence gate (§12). */
+function acceptableLines(state: GameState, lines: readonly OrderLine[]): OrderLine[] {
+  const orderable = new Map(catalog(state).map((entry) => [entry.skuId, entry]));
+  const out: OrderLine[] = [];
+  for (const l of lines) {
+    const entry = orderable.get(l.skuId);
+    const units = Math.floor(l.units);
+    if (!entry || entry.lock !== null || units <= 0) continue;
+    out.push({ skuId: l.skuId, units });
+  }
+  return out;
 }
 
 export function handleCommand(
@@ -51,9 +89,12 @@ export function handleCommand(
       state.day += 1;
       state.clockIgm = DAY_START_IGM;
       state.phase = "morning";
-      state.dayStats = emptyDayStats();
+      state.dayStats = emptyDayStats(state.cash);
+      // Morning: yesterday's wholesale order is on the loading step (§5).
+      const delivery = receiveDeliveries(state.store);
       emit({ type: "day.phaseChanged", phase: state.phase, day: state.day });
       emit({ type: "clock.minute", igm: state.clockIgm });
+      if (delivery.units > 0) emit({ type: "order.delivered", ...delivery });
       return;
     }
     case "speed.set": {
@@ -81,10 +122,9 @@ export function handleCommand(
       const def = furnitureDef(defId);
       const item = { id: `f${state.store.nextFurnitureId++}`, defId, cellX, cellY, rot };
       state.store.furniture.push(item);
-      state.cash -= def.cost;
-      if (defId === "otc_shelf") state.store.shelfStock[item.id] = []; // stocked via orders (05)
+      if (defId === "otc_shelf") state.store.shelfSlots[item.id] = []; // labels come with stock
+      post(state, "fixtures", -def.cost, emit);
       emit({ type: "furniture.placed", item: { ...item } });
-      emit({ type: "cash.changed", cash: state.cash });
       return;
     }
     case "furniture.move": {
@@ -104,11 +144,11 @@ export function handleCommand(
       const item = state.store.furniture[index]!;
       const refund = Math.round(furnitureDef(item.defId).cost / 2);
       state.store.furniture.splice(index, 1);
-      state.cash += refund;
-      delete state.store.shelfStock[item.id];
+      // Stock on a sold shelf goes back in a box, not in the bin.
+      if (item.defId === "otc_shelf") clearShelf(state.store, item.id);
       if (state.workingStationId === item.id) leaveStation(state, emit);
+      post(state, "fixtures", refund, emit);
       emit({ type: "furniture.sold", id: item.id, refund });
-      emit({ type: "cash.changed", cash: state.cash });
       return;
     }
     case "station.workHere": {
@@ -122,6 +162,60 @@ export function handleCommand(
     }
     case "station.leave": {
       leaveStation(state, emit);
+      return;
+    }
+    case "order.submit": {
+      if (state.phase === "close") return;
+      const lines = acceptableLines(state, command.lines);
+      if (lines.length === 0) return;
+      const total = orderTotal(state, lines);
+      if (total > state.cash) return;
+      queueDelivery(state.store, lines);
+      post(state, "order", -total, emit);
+      const units = lines.reduce((sum, l) => sum + l.units, 0);
+      emit({ type: "order.submitted", lines, units, total });
+      return;
+    }
+    case "otc.setPrice": {
+      if (!isOtc(command.skuId)) return;
+      const multiplier = clampMultiplier(command.multiplier);
+      if (state.store.otcPricing[command.skuId] === multiplier) return;
+      state.store.otcPricing[command.skuId] = multiplier;
+      refreshPriceIndex(state.store);
+      emit({ type: "otc.priceChanged", skuId: command.skuId, multiplier });
+      return;
+    }
+    case "stock.restock": {
+      if (state.phase === "close" || state.buildMode) return;
+      const units = restock(state, command.furnitureId);
+      if (units <= 0) return;
+      emit({ type: "stock.restocked", furnitureId: command.furnitureId, units });
+      return;
+    }
+    case "reorder.setRule": {
+      if (!state.store.reorderUnlocked) return;
+      const min = Math.max(0, Math.floor(command.min));
+      const target = Math.max(min, Math.floor(command.target));
+      if (min === 0 && target === 0) delete state.store.reorderRules[command.skuId];
+      else state.store.reorderRules[command.skuId] = { min, target };
+      return;
+    }
+    case "loan.draw": {
+      const bank = bankStatus(state);
+      if (bank.lock !== null) return;
+      const amount = round2(Math.min(command.amount, bank.available));
+      if (amount <= 0) return;
+      state.loans.bank = round2(state.loans.bank + amount);
+      post(state, "bank.draw", amount, emit);
+      emit({ type: "loan.changed", bank: state.loans.bank, family: state.loans.family });
+      return;
+    }
+    case "loan.repay": {
+      const amount = round2(Math.min(command.amount, state.loans.bank, state.cash));
+      if (amount <= 0) return;
+      state.loans.bank = round2(state.loans.bank - amount);
+      post(state, "bank.payment", -amount, emit);
+      emit({ type: "loan.changed", bank: state.loans.bank, family: state.loans.family });
       return;
     }
     case "fill.pickBin":

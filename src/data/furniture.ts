@@ -9,7 +9,8 @@ export interface FurnitureDef {
   zone: "public" | "backroom" | "any";
   capability: string;
   requires?: { license?: string; era?: number; furniture?: string[] };
-  powered?: boolean; // adds $6/day utilities (§26; billed from milestone 05)
+  /** Adds to the daily utilities bill: $6, or $2 for an idle generator (§10). */
+  powered?: boolean;
   /** Decor that never blocks pathing (rug lies flat, poster hangs on a wall). */
   walkable?: boolean;
   /** Flood-fill rule: must keep a walkable neighbor connected to the door. */
@@ -113,6 +114,7 @@ export const FURNITURE_DEFS: readonly FurnitureDef[] = [
     zone: "public",
     capability: "enables vaccination service",
     requires: { license: "L4", furniture: ["fridge_medical"] },
+    powered: true,
     needsAccess: true,
   },
   {

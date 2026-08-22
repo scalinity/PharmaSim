@@ -992,6 +992,726 @@ button {
   pointer-events: auto;
 }
 
+/* ---- PriceTag: the shelf label you price a SKU with (§28) ---- */
+
+.ptag {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 3px 8px 2px;
+  background: var(--paper-gen1);
+  border-left: 3px solid var(--ink);
+  box-shadow: inset 0 0 0 1px var(--ink-25);
+}
+
+/* The two prongs of the label channel it clips into */
+.ptag__clip {
+  position: absolute;
+  top: -3px;
+  left: 8px;
+  width: 16px;
+  height: 3px;
+  background: var(--ink-60);
+  border-radius: 1px;
+}
+
+.ptag__read {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.ptag__price {
+  font-family: var(--font-mono);
+  font-size: var(--fs-14);
+  font-weight: var(--w-semibold);
+  letter-spacing: -0.01em;
+}
+
+.ptag[data-tone="warn"] .ptag__price {
+  color: #a5701f; /* amber, darkened to stay ≥4.5:1 on paper */
+}
+
+.ptag[data-tone="stop"] .ptag__price {
+  color: var(--rose);
+}
+
+.ptag__mult {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  color: var(--ink-60);
+}
+
+.ptag__note {
+  font-size: 10px;
+  line-height: 1.2;
+  color: var(--rose);
+}
+
+/* Slider track doubles as the label's own printed rule; ticks are the two
+   balk thresholds (§10), so the tuning constant is visible, not folklore. */
+.ptag__track {
+  position: relative;
+  height: 12px;
+}
+
+.ptag__tick {
+  position: absolute;
+  top: 3px;
+  width: 1px;
+  height: 6px;
+  background: var(--ink-60);
+}
+
+.ptag__slider {
+  position: relative;
+  appearance: none;
+  -webkit-appearance: none;
+  width: 100%;
+  height: 12px;
+  margin: 0;
+  background: none;
+  cursor: ew-resize;
+}
+
+.ptag__slider::-webkit-slider-runnable-track {
+  height: 2px;
+  margin-top: 5px;
+  background: var(--ink-25);
+}
+
+.ptag__slider::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 9px;
+  height: 12px;
+  margin-top: -5px;
+  border: 1.5px solid var(--ink);
+  border-radius: 2px;
+  background: var(--paper);
+}
+
+.ptag__slider::-moz-range-track {
+  height: 2px;
+  background: var(--ink-25);
+}
+
+.ptag__slider::-moz-range-thumb {
+  width: 7px;
+  height: 11px;
+  border: 1.5px solid var(--ink);
+  border-radius: 2px;
+  background: var(--paper);
+}
+
+/* ---- Orders: the wholesaler's form and its carbon duplicate ---- */
+
+.orders {
+  position: absolute;
+  top: 68px;
+  bottom: 76px;
+  left: 12px;
+  width: min(1120px, calc(100% - 24px));
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 264px;
+  gap: 12px;
+  z-index: 15;
+  pointer-events: none;
+}
+
+.orders__leaf,
+.orders__side {
+  min-height: 0;
+  pointer-events: auto;
+}
+
+.orders__side {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+}
+
+.oform {
+  /* item · cost · price · margin · on hand · 7-day · units */
+  --ocols: minmax(120px, 1fr) 58px 116px 60px 64px 46px 96px;
+  height: 100%;
+}
+
+.oform--rules {
+  --ocols: minmax(120px, 1fr) 58px 116px 60px 64px 46px 40px 40px 96px;
+}
+
+.oform .panel__inner {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding: 14px 0 0;
+}
+
+.oform__top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 20px;
+}
+
+.oform__eyebrow {
+  margin: 0 0 2px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-75);
+}
+
+.oform .panel__title {
+  margin: 0 0 10px;
+}
+
+.oform__tier {
+  padding: 3px 10px;
+  border: 1.5px solid var(--ink);
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.oform__head,
+.orow {
+  display: grid;
+  grid-template-columns: var(--ocols);
+  align-items: center;
+  gap: 7px;
+  padding: 0 18px;
+}
+
+.oform__head {
+  padding-bottom: 4px;
+  border-bottom: 1.5px solid var(--ink);
+}
+
+.oform__col {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-75);
+}
+
+/* Numeric columns are right-aligned so the decimal points line up. */
+.oform__col:nth-child(2),
+.oform__col:nth-child(4),
+.oform__col:nth-child(5),
+.oform__col:nth-child(6) {
+  text-align: right;
+}
+
+.oform__list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.oform__section {
+  padding: 12px 20px 5px;
+  border-bottom: 1px dashed var(--ink-25);
+}
+
+.oform__sectitle {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--fs-14);
+  font-weight: var(--w-semibold);
+}
+
+.oform__secnote {
+  margin: 1px 0 0;
+  font-size: var(--fs-12);
+  color: var(--ink-75);
+}
+
+.orow {
+  min-height: 44px;
+  border-bottom: 1px solid rgba(32, 48, 43, 0.08);
+}
+
+/* Green-bar ledger striping, one band per written line */
+.orow--stripe {
+  background: rgba(47, 107, 79, 0.05);
+}
+
+.orow--ordered {
+  background: rgba(231, 160, 60, 0.16);
+}
+
+.orow--locked .orow__name,
+.orow--locked .orow__cost,
+.orow--locked .orow__margin,
+.orow--locked .orow__fixed {
+  opacity: 0.45;
+}
+
+.orow--locked .qty,
+.orow--locked .orow__rule {
+  visibility: hidden;
+}
+
+.orow__item {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  gap: 1px;
+}
+
+.orow__name {
+  font-size: var(--fs-14);
+  font-weight: var(--w-semibold);
+}
+
+.orow__meta {
+  font-size: var(--fs-12);
+  color: var(--ink-75);
+}
+
+.orow__cost,
+.orow__margin,
+.orow__hand,
+.orow__sales {
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  text-align: right;
+}
+
+.orow__cost {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+}
+
+.orow__costlist {
+  font-size: 10px;
+  color: var(--ink-60);
+  text-decoration: line-through;
+}
+
+.orow__margin {
+  font-weight: var(--w-semibold);
+}
+
+.orow__margin--thin {
+  color: #a5701f;
+}
+
+.orow__margin--under {
+  color: var(--rose);
+}
+
+.orow__hand--out {
+  color: var(--rose);
+}
+
+.orow__fixed {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.orow__fixednum {
+  font-family: var(--font-mono);
+  font-size: var(--fs-14);
+  font-weight: var(--w-semibold);
+}
+
+.orow__fixedcap {
+  font-size: 10px;
+  color: var(--ink-60);
+}
+
+/* Reorder levels stay off the form until a stock-out teaches them (§11) */
+.orow__rule,
+.oform__col--rule {
+  display: none;
+}
+
+.oform--rules .orow__rule,
+.oform--rules .oform__col--rule {
+  display: block;
+}
+
+.orow__rule {
+  width: 100%;
+  height: 26px;
+  padding: 0 4px;
+  border: 1px solid var(--ink-25);
+  border-radius: 2px;
+  background: var(--paper);
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  text-align: center;
+  color: var(--ink);
+}
+
+.oform__col--rule {
+  text-align: center;
+}
+
+/* Quantity stepper: two ink keys and a written-in figure */
+.qty {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) 26px;
+  align-items: center;
+  gap: 3px;
+}
+
+.qty__btn {
+  height: 26px;
+  border: 1.5px solid var(--ink);
+  border-radius: 3px;
+  background: var(--paper);
+  font-family: var(--font-mono);
+  font-size: var(--fs-14);
+  line-height: 1;
+  transition: background-color var(--dur-fast) var(--ease-out);
+}
+
+.qty__btn:hover {
+  background: rgba(47, 107, 79, 0.14);
+}
+
+.qty__field {
+  height: 26px;
+  min-width: 0;
+  padding: 0 2px;
+  border: none;
+  border-bottom: 1.5px solid var(--ink);
+  background: none;
+  font-family: var(--font-mono);
+  font-size: var(--fs-14);
+  font-weight: var(--w-semibold);
+  text-align: center;
+  color: var(--ink);
+}
+
+.qty__field:disabled {
+  border-bottom-style: dotted;
+}
+
+/* Carbon duplicate: the stub you keep, perforated off the form */
+.stub {
+  position: relative;
+  padding: 14px 16px 12px 20px;
+  background: #f6efdd;
+  border: var(--panel-border) solid var(--ink);
+  border-left: none;
+  filter: var(--panel-shadow);
+  overflow: hidden;
+}
+
+.stub::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 5px;
+  width: 2px;
+  background-image: repeating-linear-gradient(
+    180deg,
+    var(--ink-60) 0 4px,
+    transparent 4px 9px
+  );
+}
+
+.stub__mark {
+  position: absolute;
+  right: -6px;
+  bottom: 34px;
+  font-family: var(--font-display);
+  font-size: var(--fs-28);
+  font-weight: var(--w-bold);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: rgba(32, 48, 43, 0.07);
+  transform: rotate(-90deg);
+  transform-origin: 100% 100%;
+  pointer-events: none;
+}
+
+.stub__eyebrow {
+  margin: 0 0 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-75);
+}
+
+.stub__lines {
+  min-height: 54px;
+}
+
+.stub__empty {
+  margin: 0;
+  font-size: var(--fs-12);
+  line-height: 1.45;
+  color: var(--ink-75);
+}
+
+.stub__line {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 38px 62px;
+  gap: 4px;
+  padding: 2px 0;
+  border-bottom: 1px dotted var(--ink-25);
+  font-size: var(--fs-12);
+}
+
+.stub__lname {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.stub__lqty,
+.stub__lcost {
+  font-family: var(--font-mono);
+  text-align: right;
+}
+
+.stub__more {
+  margin: 4px 0 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-75);
+}
+
+.stub__foot {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1.5px solid var(--ink);
+}
+
+.stub__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: var(--fs-12);
+}
+
+.stub__num {
+  font-family: var(--font-mono);
+  font-weight: var(--w-semibold);
+}
+
+/* The total is stamped, not printed */
+.stub__row--total {
+  margin: 4px 0;
+  padding: 3px 7px;
+  background: rgba(231, 160, 60, 0.28);
+  border: 1.5px solid var(--ink);
+  font-size: var(--fs-14);
+  font-weight: var(--w-semibold);
+}
+
+.stub__num--total {
+  font-size: var(--fs-16);
+}
+
+.stub__num--short {
+  color: var(--rose);
+}
+
+.stub__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.stub__actions .pill:first-child {
+  flex: 1;
+}
+
+.pill:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.pill:disabled:hover {
+  transform: none;
+}
+
+.stub__hint {
+  margin: 8px 0 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--ink-75);
+}
+
+/* The bank's card, clipped under the stub */
+.bank {
+  padding: 12px 16px;
+  background: var(--paper);
+  border: var(--panel-border) solid var(--ink);
+  border-top: 4px solid var(--pine);
+  filter: var(--panel-shadow);
+}
+
+.bank__eyebrow {
+  margin: 0 0 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-75);
+}
+
+.bank__lock {
+  margin: 0;
+  font-size: var(--fs-12);
+  line-height: 1.45;
+  color: var(--ink-75);
+}
+
+.bank__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: var(--fs-12);
+}
+
+.bank__num {
+  font-family: var(--font-mono);
+  font-weight: var(--w-semibold);
+}
+
+.bank__actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.bank__fine,
+.bank__family {
+  margin: 8px 0 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--ink-75);
+}
+
+.bank__family {
+  padding-top: 7px;
+  border-top: 1px dashed var(--ink-25);
+  color: var(--ink);
+}
+
+/* ---- Shelf hover card: the labels on the shelf you're pointing at ---- */
+
+.shelfcard {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 268px;
+  padding: 10px 12px;
+  background: var(--paper);
+  border: var(--panel-border) solid var(--ink);
+  box-shadow: var(--chip-shadow);
+  pointer-events: none;
+  z-index: 25;
+}
+
+.shelfcard__eyebrow {
+  margin: 0 0 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-75);
+}
+
+.shelfcard__row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 112px;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  border-top: 1px dotted var(--ink-25);
+}
+
+.shelfcard__name {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  font-size: var(--fs-12);
+  font-weight: var(--w-semibold);
+}
+
+.shelfcard__units {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: var(--w-regular);
+  color: var(--ink-60);
+}
+
+.shelfcard__units--out {
+  color: var(--rose);
+}
+
+.shelfcard__empty,
+.shelfcard__hint {
+  margin: 6px 0 0;
+  font-size: 11px;
+  line-height: 1.4;
+  color: var(--ink-75);
+}
+
+/* ---- Restock chip: floats over a shelf with stock waiting in the back ---- */
+
+.schip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  padding: 2px 8px;
+  background: var(--paper);
+  border: 1.5px solid var(--ink);
+  border-left: 3px solid var(--amber);
+  box-shadow: var(--chip-shadow);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: nowrap;
+  pointer-events: none;
+  will-change: transform;
+}
+
+.schip--out {
+  border-left-color: var(--rose);
+  color: var(--rose);
+}
+
+/* ---- Receipt: family-loan stamp + Aunt Rosa's note ---- */
+
+.rcpt__stamp--family {
+  color: var(--amber);
+  font-size: var(--fs-16);
+}
+
+.rcpt__note {
+  margin: 6px 0 8px;
+  padding: 7px 9px;
+  background: rgba(231, 160, 60, 0.16);
+  border: 1px dashed var(--ink-60);
+  font-size: 11px;
+  line-height: 1.45;
+  transform: rotate(-0.5deg);
+}
+
 /* ---- Reduced motion ---- */
 
 @media (prefers-reduced-motion: reduce) {

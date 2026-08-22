@@ -7,6 +7,7 @@
 import { IGM_PER_TICK } from "../core/clock";
 import { DRUG_DEFS, TIER1_DRUGS, drugDef, type DrugDef } from "../data/drugs";
 import type { SimEvent } from "./events";
+import { returnShelved, takeShelved } from "./inventory";
 import type { GameState } from "./state";
 
 export type RxStage =
@@ -158,12 +159,10 @@ export class RxWorkflow {
    * out of stock (caller applies the −0.08 rep and walk-away, §15).
    */
   tryAccept(state: GameState, script: RxScript, emit: Emit): boolean {
-    const units = state.store.rxStock[script.drugId] ?? 0;
-    if (units <= 0) {
+    if (!takeShelved(state.store, script.drugId)) {
       this.scripts.delete(script.id);
       return false;
     }
-    state.store.rxStock[script.drugId] = units - 1;
     script.stage = "fillQueue";
     this.fillQueue.push(script.id);
     emit({ type: "rx.dropoff", scriptId: script.id, drugId: script.drugId });
@@ -282,9 +281,7 @@ export class RxWorkflow {
   cancel(state: GameState, scriptId: number, emit: Emit): void {
     const script = this.scripts.get(scriptId);
     if (!script) return;
-    if (script.stage !== "dropoff") {
-      state.store.rxStock[script.drugId] = (state.store.rxStock[script.drugId] ?? 0) + 1;
-    }
+    if (script.stage !== "dropoff") returnShelved(state.store, script.drugId);
     const queued = this.fillQueue.indexOf(scriptId);
     if (queued !== -1) this.fillQueue.splice(queued, 1);
     if (this.fillingId === scriptId) {

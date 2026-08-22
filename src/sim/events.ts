@@ -1,7 +1,7 @@
 // SimEvent union — everything the sim announces to render/ and ui/.
 
 import type { Archetype } from "./customers";
-import type { DayPhase, GameSpeed, PlacedFurniture } from "./state";
+import type { DayPhase, GameSpeed, OrderLine, PlacedFurniture } from "./state";
 import type { RxStage } from "./workflow";
 
 export type SimEvent =
@@ -42,4 +42,14 @@ export type SimEvent =
   | { type: "rx.pickedUp"; scriptId: number; total: number; counseled: boolean }
   | { type: "rx.errorDispensed"; scriptId: number; refund: number }
   | { type: "rx.cancelled"; scriptId: number }
+  // --- Inventory + economy (§10, §11, milestone 05) ---
+  /** A sale or fill lost to an empty shelf label or bin. */
+  | { type: "stock.out"; skuId: string }
+  | { type: "stock.restocked"; furnitureId: string; units: number }
+  /** First stock-out: per-SKU reorder rules become available (§11). */
+  | { type: "reorder.unlocked" }
+  | { type: "order.submitted"; lines: OrderLine[]; units: number; total: number }
+  | { type: "order.delivered"; units: number; skus: number }
+  | { type: "otc.priceChanged"; skuId: string; multiplier: number }
+  | { type: "loan.changed"; bank: number; family: number }
   | { type: "dev.stress"; mult: number };
