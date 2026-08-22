@@ -1,0 +1,46 @@
+/* PharmaSim design tokens (SPEC §28) — pharmacy paper on glass. */
+
+:root {
+  /* Color */
+  --ink: #20302b; /* green-black text/lines */
+  --pine: #2f6b4f; /* primary, the cross */
+  --paper: #fbf8f0; /* panel ground */
+  --amber: #e7a03c; /* money, warnings, bottlenecks */
+  --rose: #c0524e; /* errors, walk-outs */
+  --glass: rgba(32, 48, 43, 0.55); /* scrim */
+
+  /* Era paper tints — swapped onto --paper on the HUD root as the store
+     modernizes (Gen 1 warm → Gen 4 clinical white). */
+  --paper-gen1: #fbf4e4;
+  --paper-gen4: #fcfcfa;
+
+  /* Ink at reduced strengths for lines and muted text */
+  --ink-60: rgba(32, 48, 43, 0.6);
+  --ink-25: rgba(32, 48, 43, 0.25);
+
+  /* Type */
+  --font-display: "Fraunces", georgia, serif;
+  --font-ui: "Public Sans", system-ui, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --fs-12: 12px;
+  --fs-14: 14px;
+  --fs-16: 16px;
+  --fs-20: 20px;
+  --fs-28: 28px;
+  --fs-40: 40px;
+  --w-regular: 400;
+  --w-semibold: 600;
+  --w-bold: 700;
+
+  /* Motion: 150–250 ms ease-out */
+  --dur-fast: 150ms;
+  --dur: 200ms;
+  --dur-slow: 250ms;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+
+  /* Paper construction */
+  --panel-border: 1.5px;
+  --panel-notch: 10px;
+  --panel-shadow: drop-shadow(0 6px 10px rgba(32, 48, 43, 0.28));
+  --chip-shadow: 0 2px 6px rgba(32, 48, 43, 0.22);
+}

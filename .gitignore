@@ -1,0 +1,15 @@
+# Node
+node_modules/
+npm-debug.log*
+
+# Vite
+dist/
+dist-ssr/
+*.local
+
+# Tauri
+src-tauri/target/
+src-tauri/gen/
+
+# OS
+.DS_Store
