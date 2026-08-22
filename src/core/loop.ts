@@ -9,8 +9,11 @@ export interface LoopHooks {
   getSpeed(): number;
   /** Advance the sim by one fixed tick. */
   tick(): void;
-  /** Render one frame; dtMs is real elapsed time since the last frame. */
-  render(dtMs: number): void;
+  /**
+   * Render one frame; dtMs is real elapsed time since the last frame and
+   * alpha is the 0..1 progress into the next sim tick (NPC interpolation).
+   */
+  render(dtMs: number, alpha: number): void;
 }
 
 const MAX_FRAME_MS = 250; // clamp after tab switches so we never spiral
@@ -29,7 +32,7 @@ export function startLoop(hooks: LoopHooks): void {
       accumulator -= TICK_MS;
     }
 
-    hooks.render(dtMs);
+    hooks.render(dtMs, accumulator / TICK_MS);
     requestAnimationFrame(frame);
   }
 

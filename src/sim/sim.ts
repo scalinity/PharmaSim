@@ -1,10 +1,11 @@
-// Sim facade: owns GameState, ticks the clock, accepts commands, emits events.
-// Pure simulation — no DOM, no three.js.
+// Sim facade: owns GameState, ticks the clock + customers, accepts commands,
+// emits events. Pure simulation — no DOM, no three.js.
 
 import type { EventBus } from "../core/bus";
 import { DAY_END_IGM, IGM_PER_TICK } from "../core/clock";
 import type { Rot } from "../core/grid";
 import { handleCommand, type Command } from "./commands";
+import { applyRep, CustomerSystem } from "./customers";
 import type { SimEvent } from "./events";
 import {
   backroomZone,
@@ -15,12 +16,16 @@ import {
 import { createGameState, type GameState } from "./state";
 
 export class Sim {
+  readonly customers: CustomerSystem;
   private state: GameState;
   private lastEmittedMinute: number;
+  private emit: (event: SimEvent) => void;
 
   constructor(private bus: EventBus<SimEvent>) {
     this.state = createGameState();
     this.lastEmittedMinute = Math.floor(this.state.clockIgm);
+    this.emit = (event) => this.bus.emit(event);
+    this.customers = new CustomerSystem(this.state);
   }
 
   /** Read-only view of the state for HUD rendering. Never mutate through this. */
@@ -29,7 +34,22 @@ export class Sim {
   }
 
   dispatch(command: Command): void {
-    handleCommand(this.state, command, (event) => this.bus.emit(event));
+    handleCommand(this.state, command, this.emit);
+    switch (command.type) {
+      case "store.open":
+        if (this.state.phase === "shift") this.customers.beginDay(this.state);
+        break;
+      case "furniture.place":
+      case "furniture.move":
+      case "furniture.sell":
+        this.customers.layoutChanged(this.state);
+        break;
+      case "dev.stressToggle": {
+        const mult = this.customers.cycleStress(this.state);
+        this.bus.emit({ type: "dev.stress", mult });
+        break;
+      }
+    }
     this.lastEmittedMinute = Math.floor(this.state.clockIgm);
   }
 
@@ -56,24 +76,39 @@ export class Sim {
     return backroomZone(this.state);
   }
 
+  /** Customers currently queued at a register (queue chip, §27). */
+  queueLength(stationId: string): number {
+    return this.customers.queueLength(stationId);
+  }
+
   /** Advance one fixed tick (100 ms scaled). Clock only moves during the shift. */
   tick(): void {
     if (this.state.buildMode) return;
     if (this.state.phase !== "shift") return;
 
-    this.state.clockIgm += IGM_PER_TICK;
-
-    if (this.state.clockIgm >= DAY_END_IGM - 1e-9) {
-      this.state.clockIgm = DAY_END_IGM;
+    if (this.state.clockIgm < DAY_END_IGM) {
+      this.state.clockIgm += IGM_PER_TICK;
+      if (this.state.clockIgm >= DAY_END_IGM - 1e-9) {
+        this.state.clockIgm = DAY_END_IGM;
+      }
+      const minute = Math.floor(this.state.clockIgm);
+      if (minute !== this.lastEmittedMinute) {
+        this.lastEmittedMinute = minute;
+        this.bus.emit({ type: "clock.minute", igm: this.state.clockIgm });
+      }
     }
 
-    const minute = Math.floor(this.state.clockIgm);
-    if (minute !== this.lastEmittedMinute) {
-      this.lastEmittedMinute = minute;
-      this.bus.emit({ type: "clock.minute", igm: this.state.clockIgm });
-    }
+    this.customers.tick(this.state, this.emit);
 
-    if (this.state.clockIgm >= DAY_END_IGM) {
+    // 20:00: the clock freezes while remaining customers finish (§5),
+    // then the day closes.
+    if (this.state.clockIgm >= DAY_END_IGM && this.customers.activeCount === 0) {
+      if (this.state.workingStationId !== null) {
+        this.state.workingStationId = null;
+        this.bus.emit({ type: "station.changed", stationId: null });
+      }
+      // §15 daily drift: 1% toward 2.5 (neglect decays, grudges fade).
+      applyRep(this.state, (2.5 - this.state.repStars) * 0.01, this.emit);
       this.state.phase = "close";
       this.bus.emit({ type: "day.phaseChanged", phase: this.state.phase, day: this.state.day });
     }

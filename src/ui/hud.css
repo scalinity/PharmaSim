@@ -550,6 +550,76 @@ button {
   }
 }
 
+/* ---- End-of-day report (placeholder until the printed receipt, 04) ---- */
+
+.report {
+  min-width: 240px;
+  margin: 0 0 16px;
+  padding: 10px 0 8px;
+  border-top: 1px dashed var(--ink-25);
+  border-bottom: 1px dashed var(--ink-25);
+}
+
+.report__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 2px 0;
+}
+
+.report__label {
+  font-size: var(--fs-14);
+  color: var(--ink-75);
+}
+
+.report__value {
+  font-family: var(--font-mono);
+  font-size: var(--fs-14);
+  font-weight: var(--w-semibold);
+}
+
+.report__value--rose {
+  color: var(--rose);
+}
+
+/* ---- Station hint + working chip ---- */
+
+.stationhint {
+  position: absolute;
+  bottom: 76px;
+  left: 50%;
+  transform: translateX(-50%) rotate(-0.4deg);
+  padding: 6px 12px;
+  background: var(--paper);
+  border: var(--panel-border) solid var(--ink);
+  border-left: 4px solid var(--amber);
+  box-shadow: var(--chip-shadow);
+  font-size: var(--fs-12);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* ---- Queue count chip: floats over a register when the line is long ---- */
+
+.qchip {
+  position: fixed;
+  top: 0;
+  left: 0;
+  padding: 3px 9px;
+  background: var(--amber);
+  border: 1.5px solid var(--ink);
+  border-radius: 999px;
+  box-shadow: var(--chip-shadow);
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  font-weight: var(--w-semibold);
+  color: var(--ink);
+  white-space: nowrap;
+  pointer-events: none;
+  will-change: transform;
+}
+
 /* ---- Phase stages ---- */
 
 .stage-morning {

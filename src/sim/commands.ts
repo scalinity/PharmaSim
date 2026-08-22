@@ -7,7 +7,7 @@ import type { Rot } from "../core/grid";
 import { furnitureDef } from "../data/furniture";
 import type { SimEvent } from "./events";
 import { validatePlacement } from "./placement";
-import type { GameState, GameSpeed } from "./state";
+import { emptyDayStats, type GameState, type GameSpeed } from "./state";
 
 export type Command =
   | { type: "store.open" }
@@ -17,7 +17,17 @@ export type Command =
   | { type: "build.exit" }
   | { type: "furniture.place"; defId: string; cellX: number; cellY: number; rot: Rot }
   | { type: "furniture.move"; id: string; cellX: number; cellY: number; rot: Rot }
-  | { type: "furniture.sell"; id: string };
+  | { type: "furniture.sell"; id: string }
+  | { type: "station.workHere"; stationId: string }
+  | { type: "station.leave" }
+  /** Dev-only spawn stress cycle ×1/×3/×9/×27 (milestone 03); handled by Sim, not here. */
+  | { type: "dev.stressToggle" };
+
+function leaveStation(state: GameState, emit: (event: SimEvent) => void): void {
+  if (state.workingStationId === null) return;
+  state.workingStationId = null;
+  emit({ type: "station.changed", stationId: null });
+}
 
 export function handleCommand(
   state: GameState,
@@ -36,6 +46,7 @@ export function handleCommand(
       state.day += 1;
       state.clockIgm = DAY_START_IGM;
       state.phase = "morning";
+      state.dayStats = emptyDayStats();
       emit({ type: "day.phaseChanged", phase: state.phase, day: state.day });
       emit({ type: "clock.minute", igm: state.clockIgm });
       return;
@@ -49,6 +60,7 @@ export function handleCommand(
     case "build.enter": {
       if (state.buildMode || state.phase === "close") return;
       state.buildMode = true;
+      leaveStation(state, emit); // stepping away to renovate
       emit({ type: "build.changed", active: true });
       return;
     }
@@ -65,6 +77,7 @@ export function handleCommand(
       const item = { id: `f${state.store.nextFurnitureId++}`, defId, cellX, cellY, rot };
       state.store.furniture.push(item);
       state.cash -= def.cost;
+      if (defId === "otc_shelf") state.store.shelfStock[item.id] = []; // stocked via orders (05)
       emit({ type: "furniture.placed", item: { ...item } });
       emit({ type: "cash.changed", cash: state.cash });
       return;
@@ -87,9 +100,26 @@ export function handleCommand(
       const refund = Math.round(furnitureDef(item.defId).cost / 2);
       state.store.furniture.splice(index, 1);
       state.cash += refund;
+      delete state.store.shelfStock[item.id];
+      if (state.workingStationId === item.id) leaveStation(state, emit);
       emit({ type: "furniture.sold", id: item.id, refund });
       emit({ type: "cash.changed", cash: state.cash });
       return;
     }
+    case "station.workHere": {
+      if (state.phase !== "shift" || state.buildMode) return;
+      const item = state.store.furniture.find((f) => f.id === command.stationId);
+      if (!item || item.defId !== "counter_register") return;
+      if (state.workingStationId === item.id) return;
+      state.workingStationId = item.id;
+      emit({ type: "station.changed", stationId: item.id });
+      return;
+    }
+    case "station.leave": {
+      leaveStation(state, emit);
+      return;
+    }
+    case "dev.stressToggle":
+      return; // handled by Sim (customer system lives outside GameState)
   }
 }

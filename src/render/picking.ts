@@ -25,6 +25,8 @@ export interface PickingCallbacks {
   selectionChanged(selection: BuildSelection | null): void;
   /** Palette def picked up / put down as the placement ghost. */
   paletteChanged(defId: string | null): void;
+  /** Station interaction hint while hovering a register mid-shift. */
+  stationHint(text: string | null): void;
 }
 
 export class Picking {
@@ -52,13 +54,14 @@ export class Picking {
   private downX = 0;
   private downY = 0;
   private downButton = -1;
+  private canvasCursor = "";
 
   constructor(
     private sim: Sim,
     bus: EventBus<SimEvent>,
     private scene: StoreScene,
     private camera: OrthographicCamera,
-    canvas: HTMLCanvasElement,
+    private canvas: HTMLCanvasElement,
     private callbacks: PickingCallbacks,
   ) {
     const { cols, rows } = sim.snapshot.store.grid;
@@ -102,6 +105,9 @@ export class Picking {
       if (!e.active) {
         this.cancelGhost();
         this.setSelection(null);
+      } else {
+        this.setCursor("");
+        this.callbacks.stationHint(null);
       }
       this.refresh();
     });
@@ -152,15 +158,68 @@ export class Picking {
     this.updateHoverCell(e.clientX, e.clientY);
     this.refresh();
 
-    // Hover highlight on placed furniture while idle in build mode.
-    const idle = this.sim.snapshot.buildMode && !this.ghostDefId;
-    this.scene.setHover(idle ? this.pickFurnitureId(e.clientX, e.clientY) : null);
+    const state = this.sim.snapshot;
+    if (state.buildMode) {
+      // Hover highlight on placed furniture while idle in build mode.
+      const idle = !this.ghostDefId;
+      this.scene.setHover(idle ? this.pickFurnitureId(e.clientX, e.clientY) : null);
+      this.setCursor("");
+      this.callbacks.stationHint(null);
+      return;
+    }
+
+    // Mid-shift: registers are workable stations (§8 workHere).
+    if (state.phase === "shift") {
+      const id = this.pickFurnitureId(e.clientX, e.clientY);
+      const item = id ? state.store.furniture.find((f) => f.id === id) : undefined;
+      const isRegister = item?.defId === "counter_register";
+      this.scene.setHover(isRegister ? id : null);
+      this.setCursor(isRegister ? "pointer" : "");
+      if (isRegister) {
+        this.callbacks.stationHint(
+          state.workingStationId === id
+            ? "Click to step away from the register"
+            : "Click to work the register",
+        );
+      } else {
+        this.callbacks.stationHint(null);
+      }
+    } else {
+      this.scene.setHover(null);
+      this.setCursor("");
+      this.callbacks.stationHint(null);
+    }
+  }
+
+  private setCursor(cursor: string): void {
+    if (this.canvasCursor !== cursor) {
+      this.canvasCursor = cursor;
+      this.canvas.style.cursor = cursor;
+    }
   }
 
   private onClick(e: PointerEvent): void {
     this.updateHoverCell(e.clientX, e.clientY);
     const state = this.sim.snapshot;
-    if (!state.buildMode) return;
+
+    if (!state.buildMode) {
+      if (state.phase !== "shift") return;
+      // Work the register you click; click anywhere else to leave the post.
+      const id = this.pickFurnitureId(e.clientX, e.clientY);
+      const item = id ? state.store.furniture.find((f) => f.id === id) : undefined;
+      if (item?.defId === "counter_register") {
+        if (state.workingStationId === item.id) {
+          this.sim.dispatch({ type: "station.leave" });
+          this.callbacks.stationHint("Click to work the register");
+        } else {
+          this.sim.dispatch({ type: "station.workHere", stationId: item.id });
+          this.callbacks.stationHint("Click to step away from the register");
+        }
+      } else if (state.workingStationId) {
+        this.sim.dispatch({ type: "station.leave" });
+      }
+      return;
+    }
 
     if (this.ghostDefId) {
       if (!this.hasHoverCell) return;

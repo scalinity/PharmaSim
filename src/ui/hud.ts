@@ -35,6 +35,11 @@ export interface HudHandle {
   selectionChanged(selection: BuildSelectionInfo | null): void;
   /** Late-bound because the picking controller is created after the HUD. */
   bindBuild(controls: BuildControls): void;
+  /** Register hover hint (null clears; a worked station overrides it). */
+  stationHint(text: string | null): void;
+  /** Position/update the amber over-register queue chip (shown at ≥4). */
+  updateQueueChip(id: string, screenX: number, screenY: number, count: number): void;
+  hideQueueChip(id: string): void;
 }
 
 function formatCash(cash: number): string {
@@ -84,6 +89,7 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
 
   const starsFill = h("span", { cls: "stars__fill", text: STAR_GLYPHS });
   starsFill.style.width = `${(state.repStars / 5) * 100}%`;
+  const starsNum = h("span", { cls: "stars__num", text: state.repStars.toFixed(1) });
   const starsChip = h(
     "div",
     { cls: "chip stars", attrs: { "aria-label": `Reputation ${state.repStars} of 5 stars` } },
@@ -92,7 +98,7 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
         h("span", { text: STAR_GLYPHS }),
         starsFill,
       ]),
-      h("span", { cls: "stars__num", text: state.repStars.toFixed(1) }),
+      starsNum,
     ],
   );
 
@@ -169,17 +175,49 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     ]),
   ]);
 
+  // End-of-day report (placeholder until the printed receipt lands in 04).
+  const reportValues = {
+    visitors: h("span", { cls: "report__value" }),
+    sales: h("span", { cls: "report__value" }),
+    walkouts: h("span", { cls: "report__value" }),
+    revenue: h("span", { cls: "report__value" }),
+    repDelta: h("span", { cls: "report__value" }),
+  };
+  const reportRow = (label: string, value: HTMLElement): HTMLElement =>
+    h("div", { cls: "report__row" }, [h("span", { cls: "report__label", text: label }), value]);
   const closeStage = h("div", { cls: "scrim" }, [
     Panel({ title: "Day complete" }, [
       h("p", {
         cls: "panel__text",
         text: "Doors are locked and the register is counted.",
       }),
+      h("div", { cls: "report" }, [
+        reportRow("Visitors", reportValues.visitors),
+        reportRow("Sales", reportValues.sales),
+        reportRow("Walk-outs", reportValues.walkouts),
+        reportRow("Revenue", reportValues.revenue),
+        reportRow("Reputation Δ", reportValues.repDelta),
+      ]),
       PillButton("Next day", () => sim.dispatch({ type: "day.advance" })),
     ]),
   ]);
 
-  root.append(topbar, palette.root, contextCard, morningStage, closeStage, dock);
+  // --- Station hint chip (§28 minor UI) + queue chips over registers ---
+
+  const stationHintEl = h("div", { cls: "stationhint" });
+  stationHintEl.hidden = true;
+  let hoverHint: string | null = null;
+  let workingHint: string | null = null;
+
+  function refreshStationHint(): void {
+    const text = workingHint ?? hoverHint;
+    stationHintEl.hidden = text === null;
+    if (text !== null) stationHintEl.textContent = text;
+  }
+
+  const queueChips = new Map<string, { el: HTMLElement; count: number }>();
+
+  root.append(topbar, palette.root, contextCard, morningStage, closeStage, stationHintEl, dock);
   const toast = createToastHost(root);
 
   // --- Updates (cached refs only) ---
@@ -199,6 +237,31 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
   function setPhase(phase: DayPhase): void {
     morningStage.hidden = phase !== "morning";
     closeStage.hidden = phase !== "close";
+    if (phase === "close") {
+      const stats = sim.snapshot.dayStats;
+      reportValues.visitors.textContent = String(stats.visitors);
+      reportValues.sales.textContent = String(stats.sales);
+      reportValues.walkouts.textContent = String(stats.walkouts);
+      reportValues.walkouts.classList.toggle("report__value--rose", stats.walkouts > 0);
+      reportValues.revenue.textContent = formatCash(stats.revenue);
+      const delta = stats.repDelta;
+      reportValues.repDelta.textContent = `${delta >= 0 ? "+" : "−"}${Math.abs(delta).toFixed(2)}`;
+      reportValues.repDelta.classList.toggle("report__value--rose", delta < 0);
+    }
+    if (phase !== "shift") {
+      hoverHint = null;
+      refreshStationHint();
+      for (const [id, chip] of queueChips) {
+        chip.el.remove();
+        queueChips.delete(id);
+      }
+    }
+  }
+
+  function setStars(stars: number): void {
+    starsFill.style.width = `${(stars / 5) * 100}%`;
+    starsNum.textContent = stars.toFixed(1);
+    starsChip.setAttribute("aria-label", `Reputation ${stars.toFixed(1)} of 5 stars`);
   }
 
   function setSpeed(speed: GameSpeed): void {
@@ -246,11 +309,24 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     setCash(e.cash);
     palette.refresh();
   });
+  bus.on("rep.changed", (e) => setStars(e.stars));
   bus.on("build.changed", (e) => setBuildMode(e.active));
   bus.on("furniture.placed", () => palette.refresh());
-  bus.on("furniture.sold", () => palette.refresh());
+  bus.on("furniture.sold", (e) => {
+    palette.refresh();
+    const chip = queueChips.get(e.id);
+    if (chip) {
+      chip.el.remove();
+      queueChips.delete(e.id);
+    }
+  });
+  bus.on("station.changed", (e) => {
+    workingHint = e.stationId ? "Working the register — click anywhere else to step away" : null;
+    refreshStationHint();
+  });
+  bus.on("dev.stress", (e) => toast(e.mult === 1 ? "Stress spawn off" : `Stress spawn ×${e.mult}`));
 
-  // --- Keys: Space pause toggle, 1 / 2 speeds ---
+  // --- Keys: Space pause toggle, 1 / 2 speeds, N dev stress spawn ---
 
   window.addEventListener("keydown", (e) => {
     if (e.code === "Space") {
@@ -267,6 +343,8 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
       sim.dispatch({ type: "speed.set", speed: 1 });
     } else if (e.key === "2") {
       sim.dispatch({ type: "speed.set", speed: 2 });
+    } else if (e.code === "KeyN" && !e.repeat) {
+      sim.dispatch({ type: "dev.stressToggle" });
     }
   });
 
@@ -285,6 +363,30 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     selectionChanged: (next) => setSelection(next),
     bindBuild: (controls) => {
       build = controls;
+    },
+    stationHint: (text) => {
+      hoverHint = text;
+      refreshStationHint();
+    },
+    updateQueueChip: (id, screenX, screenY, count) => {
+      let chip = queueChips.get(id);
+      if (!chip) {
+        chip = { el: h("div", { cls: "qchip" }), count: -1 };
+        root.append(chip.el);
+        queueChips.set(id, chip);
+      }
+      if (chip.count !== count) {
+        chip.count = count;
+        chip.el.textContent = `${count} waiting`;
+      }
+      chip.el.style.transform = `translate(${screenX.toFixed(1)}px, ${screenY.toFixed(1)}px) translate(-50%, -100%)`;
+    },
+    hideQueueChip: (id) => {
+      const chip = queueChips.get(id);
+      if (chip) {
+        chip.el.remove();
+        queueChips.delete(id);
+      }
     },
   };
 }

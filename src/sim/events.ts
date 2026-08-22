@@ -1,5 +1,6 @@
 // SimEvent union — everything the sim announces to render/ and ui/.
 
+import type { Archetype } from "./customers";
 import type { DayPhase, GameSpeed, PlacedFurniture } from "./state";
 
 export type SimEvent =
@@ -10,4 +11,10 @@ export type SimEvent =
   | { type: "furniture.placed"; item: PlacedFurniture }
   | { type: "furniture.moved"; item: PlacedFurniture }
   | { type: "furniture.sold"; id: string; refund: number }
-  | { type: "cash.changed"; cash: number };
+  | { type: "cash.changed"; cash: number }
+  | { type: "customer.spawned"; id: number; archetype: Archetype }
+  | { type: "customer.walkout"; id: number; archetype: Archetype }
+  | { type: "sale.completed"; customerId: number; items: number; total: number }
+  | { type: "rep.changed"; stars: number; delta: number }
+  | { type: "station.changed"; stationId: string | null }
+  | { type: "dev.stress"; mult: number };
