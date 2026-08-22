@@ -1,12 +1,17 @@
 // Orthographic eagle-eye camera rig (SPEC §27): left-drag orbit (pitch
-// clamped 35°–65°, yaw free), right-drag/WASD pan, wheel zoom clamped to an
-// 8–30 m viewport height, everything smooth-damped.
+// clamped 35°–65°, yaw free), right-drag/WASD pan, wheel zoom clamped to a
+// 3.5–30 m viewport height, everything smooth-damped.
 
 import { MathUtils, OrthographicCamera, Vector3 } from "three";
 
+const TAU = Math.PI * 2;
 const PITCH_MIN = MathUtils.degToRad(35);
 const PITCH_MAX = MathUtils.degToRad(65);
-const VIEW_MIN = 8;
+// §27 says "~8 m". That leaves an Rx bin name about sixteen pixels of type in
+// a short window — enough to see that a label exists, not enough to tell
+// Amlodipine from Lisinopril. The floor sits under the fill glide (main.ts)
+// so the wheel can lean in until a name is a readable line of Plex Mono.
+const VIEW_MIN = 2;
 const VIEW_MAX = 30;
 const CAMERA_DIST = 45;
 const ORBIT_SPEED = 0.006; // rad per px
@@ -34,7 +39,12 @@ export class CameraRig {
   private lastX = 0;
   private lastY = 0;
   /** Where the player had the camera before a fill glide (§8), or null. */
-  private saved: { target: Vector3; viewHeight: number } | null = null;
+  private saved: {
+    target: Vector3;
+    viewHeight: number;
+    yaw: number;
+    pitch: number;
+  } | null = null;
   /** Ambient yaw drift, rad/s — the title screen's slow orbit (§23). */
   private autoOrbit = 0;
 
@@ -65,13 +75,30 @@ export class CameraRig {
     this.updateProjection();
   }
 
-  /** Fill glide (§8): frame a world point tightly, remembering where we were. */
-  glideTo(wx: number, wz: number, viewHeight = 9): void {
+  /**
+   * Fill glide (§8): frame a world point tightly, remembering where we were.
+   * The aim point carries a height because the thing being read is a metre up
+   * a wall, not on the floor. `faceYaw` swings round to look at that wall
+   * square-on and drops to the shallowest legal pitch — a bin label is a
+   * vertical card, so every degree of extra tilt is height off its type.
+   */
+  glideTo(aim: Vector3, viewHeight = 9, faceYaw?: number): void {
     if (!this.saved) {
-      this.saved = { target: this.goalTarget.clone(), viewHeight: this.goalViewHeight };
+      this.saved = {
+        target: this.goalTarget.clone(),
+        viewHeight: this.goalViewHeight,
+        yaw: this.goalYaw,
+        pitch: this.goalPitch,
+      };
     }
-    this.goalTarget.set(wx, 0, wz);
+    this.goalTarget.copy(aim);
     this.goalViewHeight = MathUtils.clamp(viewHeight, VIEW_MIN, VIEW_MAX);
+    if (faceYaw !== undefined) {
+      // Take the short way round from wherever the player left the camera.
+      const turn = MathUtils.euclideanModulo(faceYaw - this.yaw + Math.PI, TAU) - Math.PI;
+      this.goalYaw = this.yaw + turn;
+      this.goalPitch = PITCH_MIN;
+    }
   }
 
   /** Glide back to wherever the player had the camera before the fill. */
@@ -79,6 +106,8 @@ export class CameraRig {
     if (!this.saved) return;
     this.goalTarget.copy(this.saved.target);
     this.goalViewHeight = this.saved.viewHeight;
+    this.goalYaw = this.saved.yaw;
+    this.goalPitch = this.saved.pitch;
     this.saved = null;
   }
 

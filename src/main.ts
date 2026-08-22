@@ -15,9 +15,8 @@ import "./ui/hud.css";
 import { Vector3 } from "three";
 import { EventBus } from "./core/bus";
 import { seasonForDay } from "./core/clock";
-import { cellToWorld, FACING, footprintRect, rectCenterWorld } from "./core/grid";
+import { cellToWorld, FACING } from "./core/grid";
 import { startLoop } from "./core/loop";
-import { furnitureDef } from "./data/furniture";
 import { createStorage } from "./platform/storage";
 import { CustomerSystem } from "./sim/customers";
 import type { SimEvent } from "./sim/events";
@@ -89,6 +88,24 @@ const picking = new Picking(sim, bus, store, binBoard, rig.camera, renderer.canv
 });
 hud.bindBuild(picking);
 
+/**
+ * How tight the fill glide frames the shelf (§8). A 0.37 m label at the
+ * glide's 35° pitch stands about 0.3 m tall; 90 px of that is what it takes
+ * for a condensed "Levothyroxine" to stay a word rather than a smudge. The
+ * 4-bin face is 2.4 m across, so a wide short window also has to come in
+ * until that face is at least half the view — otherwise the names shrink
+ * into the green around the store.
+ */
+const LABEL_WORLD_H = 0.3;
+const LABEL_TARGET_PX = 90;
+const SHELF_FACE_W = 2.4;
+
+function fillViewHeight(): number {
+  const byType = (LABEL_WORLD_H * window.innerHeight) / LABEL_TARGET_PX;
+  const byFace = SHELF_FACE_W / (0.5 * (window.innerWidth / window.innerHeight));
+  return Math.min(byType, byFace);
+}
+
 // Fill interaction (§8): labeled bins appear and the camera glides to frame
 // the Rx shelf; both retract when the fill ends (done, caught, or abandoned).
 bus.on("rx.fillStarted", (e) => {
@@ -97,11 +114,8 @@ bus.on("rx.fillStarted", (e) => {
   const shelf = e.shelfId ? state.store.furniture.find((f) => f.id === e.shelfId) : undefined;
   if (!shelf) return;
   binBoard.show(shelf, cols, rows, e.bins);
-  const def = furnitureDef(shelf.defId);
-  const rect = footprintRect(def.cells, shelf.cellX, shelf.cellY, shelf.rot);
-  const [wx, wz] = rectCenterWorld(cols, rows, rect);
   const [fx, fy] = FACING[shelf.rot]!;
-  rig.glideTo(wx + fx * 1.2, wz + fy * 1.2, 9);
+  rig.glideTo(binBoard.focus, fillViewHeight(), Math.atan2(fx, fy));
 });
 bus.on("rx.fillEnded", () => {
   binBoard.hide();

@@ -8,10 +8,12 @@ import {
   BufferGeometry,
   CanvasTexture,
   Group,
+  LinearMipmapLinearFilter,
   Mesh,
   MeshBasicMaterial,
   PlaneGeometry,
   SRGBColorSpace,
+  Vector3,
   type Raycaster,
 } from "three";
 import { footprintRect, rectCenterWorld } from "../core/grid";
@@ -29,9 +31,12 @@ const BIN_DY = 0.42;
 const LABEL_Z = 0.26; // in front of the bin boxes and their blank paper strips
 const LABEL_W = 0.54;
 const LABEL_H = 0.37;
+const LABEL_MID_Y = BIN_Y0 + ((BIN_ROWS - 1) * BIN_DY) / 2; // middle of the grid
 
 const TILE_W = 256;
 const TILE_H = 128;
+const NAME_PX = 44; // as large as the tallest label line can be set
+const NAME_SQUEEZE = 0.8; // how narrow a long name may go before it loses size
 
 /** Split "Metoprolol 50 mg" into the name and the strength line. */
 function splitName(name: string): [string, string] {
@@ -59,23 +64,34 @@ function drawAtlas(canvas: HTMLCanvasElement, bins: string[]): void {
     g.fillStyle = "#20302b";
     g.textAlign = "center";
     g.textBaseline = "middle";
-    let size = 34;
+
+    // Long names pay for their length in condensed letterforms before they pay
+    // in point size, the way real shelf labels do — "Levothyroxine" set narrow
+    // reads from across the room where the same name set small does not.
+    g.font = `600 ${NAME_PX}px "IBM Plex Mono", monospace`;
+    const fit = Math.min(1, (TILE_W - 24) / g.measureText(name).width);
+    const squeeze = Math.max(fit, NAME_SQUEEZE);
+    const size = Math.round((NAME_PX * fit) / squeeze);
+
+    g.save();
+    g.translate(x + TILE_W / 2, y + (strength ? 46 : TILE_H / 2));
+    g.scale(squeeze, 1);
     g.font = `600 ${size}px "IBM Plex Mono", monospace`;
-    while (size > 16 && g.measureText(name).width > TILE_W - 28) {
-      size -= 2;
-      g.font = `600 ${size}px "IBM Plex Mono", monospace`;
-    }
-    g.fillText(name, x + TILE_W / 2, y + (strength ? 50 : TILE_H / 2));
+    g.fillText(name, 0, 0);
+    g.restore();
+
     if (strength) {
-      g.font = '400 24px "IBM Plex Mono", monospace';
+      g.font = '500 28px "IBM Plex Mono", monospace';
       g.fillStyle = "#2f6b4f";
-      g.fillText(strength, x + TILE_W / 2, y + 92);
+      g.fillText(strength, x + TILE_W / 2, y + 94);
     }
   }
 }
 
 export class RxBinBoard {
   readonly group = new Group();
+  /** World centre of the label grid — what the fill glide aims at (§8). */
+  readonly focus = new Vector3();
 
   private labelMesh: Mesh;
   private hoverFrame: Mesh;
@@ -87,6 +103,10 @@ export class RxBinBoard {
   constructor() {
     this.texture = new CanvasTexture(this.canvas);
     this.texture.colorSpace = SRGBColorSpace;
+    // The labels are read at a slant, and a slanted unfiltered atlas crawls as
+    // the camera settles. Mips plus anisotropy keep the type still.
+    this.texture.minFilter = LinearMipmapLinearFilter;
+    this.texture.anisotropy = 8;
 
     this.labelMesh = new Mesh(
       this.buildQuads(),
@@ -161,6 +181,7 @@ export class RxBinBoard {
     const [wx, wz] = rectCenterWorld(cols, rows, rect);
     this.group.position.set(wx, FLOOR_Y, wz);
     this.group.rotation.y = shelf.rot * (Math.PI / 2);
+    this.focus.set(wx, FLOOR_Y + LABEL_MID_Y, wz);
     this.setHover(-1);
     this.group.visible = true;
   }
