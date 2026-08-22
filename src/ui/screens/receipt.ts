@@ -153,7 +153,13 @@ export function buildReceipt(sim: Sim, onNextDay: () => void): HTMLElement {
     timers.length = 0;
     for (const el of all) el.classList.add("rcpt__item--on");
   };
-  if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+  // Reduced motion comes from the OS or the settings toggle (§23); either way
+  // the print collapses to instant. Flipping the toggle mid-print is handled
+  // in CSS, so a receipt already on screen snaps to done.
+  const instant =
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches ||
+    state.settings.reducedMotion;
+  if (instant) {
     finish();
   } else {
     const step = PRINT_MS / all.length;

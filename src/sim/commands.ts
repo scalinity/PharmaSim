@@ -47,6 +47,9 @@ export type Command =
   | { type: "reorder.setRule"; skuId: string; min: number; target: number }
   | { type: "loan.draw"; amount: number }
   | { type: "loan.repay"; amount: number }
+  // --- App shell (§23, §24) ---
+  /** Reduced motion is the only live setting; volumes wait for milestone 17. */
+  | { type: "settings.set"; reducedMotion: boolean }
   /** Dev-only spawn stress cycle ×1/×3/×9/×27 (milestone 03); handled by Sim, not here. */
   | { type: "dev.stressToggle" };
 
@@ -216,6 +219,12 @@ export function handleCommand(
       state.loans.bank = round2(state.loans.bank - amount);
       post(state, "bank.payment", -amount, emit);
       emit({ type: "loan.changed", bank: state.loans.bank, family: state.loans.family });
+      return;
+    }
+    case "settings.set": {
+      if (state.settings.reducedMotion === command.reducedMotion) return;
+      state.settings.reducedMotion = command.reducedMotion;
+      emit({ type: "settings.changed", settings: { ...state.settings } });
       return;
     }
     case "fill.pickBin":

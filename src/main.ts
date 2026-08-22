@@ -1,4 +1,6 @@
-// Bootstrap: fonts, styles, sim, renderer, camera, lighting, HUD, loop.
+// Bootstrap: fonts, styles, save profile, sim, renderer, camera, lighting,
+// HUD, app shell, loop. The profile is read before anything is built, so the
+// world behind the title screen is the store the player left (§23).
 
 import "@fontsource/fraunces/600.css";
 import "@fontsource/fraunces/700.css";
@@ -12,12 +14,16 @@ import "./ui/hud.css";
 
 import { Vector3 } from "three";
 import { EventBus } from "./core/bus";
+import { seasonForDay } from "./core/clock";
 import { cellToWorld, FACING, footprintRect, rectCenterWorld } from "./core/grid";
 import { startLoop } from "./core/loop";
 import { furnitureDef } from "./data/furniture";
+import { createStorage } from "./platform/storage";
 import { CustomerSystem } from "./sim/customers";
 import type { SimEvent } from "./sim/events";
+import { hydrate, migrate, serialize, type SaveFile } from "./sim/save";
 import { Sim } from "./sim/sim";
+import { createGameState } from "./sim/state";
 import { CameraRig } from "./render/cameraRig";
 import { Lighting } from "./render/lighting";
 import { NpcView } from "./render/npcView";
@@ -26,9 +32,34 @@ import { Renderer } from "./render/renderer";
 import { RxBinBoard } from "./render/rxBins";
 import { StoreScene } from "./render/storeScene";
 import { createHud } from "./ui/hud";
+import { createShell, type ShellPersistence } from "./ui/shell";
+
+/** Set across a deliberate reload to say "skip the title, we're playing". */
+const BOOT_KEY = "pharmasim.boot";
+/** Ambient yaw drift behind the title card, rad/s. */
+const TITLE_ORBIT = 0.055;
+
+const storage = createStorage();
+const bootIntoPlay = window.sessionStorage.getItem(BOOT_KEY) === "play";
+window.sessionStorage.removeItem(BOOT_KEY);
+
+let saved: SaveFile | null = null;
+let bootNotice: string | null = null;
+try {
+  const raw = await storage.load();
+  if (raw !== null) saved = migrate(raw);
+} catch (error) {
+  // A hand-edited or half-written profile must not take the game down with
+  // it: boot as a new store and say what happened at the title.
+  const reason = error instanceof Error ? error.message : "Your save couldn't be read.";
+  bootNotice = `${reason} Import a save, or start a new store.`;
+}
+
+const hudRoot = document.getElementById("hud")!;
+hudRoot.hidden = true; // the title comes first (§23 boot → title → play)
 
 const bus = new EventBus<SimEvent>();
-const sim = new Sim(bus);
+const sim = new Sim(bus, saved ? hydrate(saved) : undefined);
 
 const renderer = new Renderer();
 const store = new StoreScene(sim, bus);
@@ -41,7 +72,7 @@ renderer.onResize((width, height) => rig.setAspect(width / height));
 bus.on("clock.minute", (e) => lighting.setTime(e.igm));
 lighting.setTime(sim.snapshot.clockIgm);
 
-const hud = createHud(document.getElementById("hud")!, sim, bus);
+const hud = createHud(hudRoot, sim, bus);
 const binBoard = new RxBinBoard();
 store.scene.add(binBoard.group);
 
@@ -88,6 +119,7 @@ function project(wx: number, wy: number, wz: number): [number, number] {
 let liveStackKeys = new Set<string>();
 
 function updateOverlays(): void {
+  if (hudRoot.hidden) return; // title screen: no chips to place
   const state = sim.snapshot;
   if (state.phase === "close") {
     store.setBottleneck(null);
@@ -165,6 +197,114 @@ function updateOverlays(): void {
   store.setBottleneck(worstDepth >= 4 ? worstId : null);
 }
 
+// --- Saves (§5, §23) ---
+//
+// The profile always holds a *day boundary*: the morning the player is
+// playing, or the close they are reading the receipt of. Both are untimed
+// phases with no customer or script in flight. A shift is never snapshotted,
+// so quitting mid-shift resumes from that morning — by design, the day is
+// replayed rather than half-restored.
+
+let snapshot: SaveFile = serialize(sim.snapshot);
+/** True once we are deliberately reloading, so the unload hook can't write
+ *  the old run over the file we just replaced. */
+let handingOver = false;
+/** A run only becomes a file once it is played. Looking at the title screen
+ *  and closing the window leaves no save behind, so "Start a new store" has
+ *  nothing to ask about. */
+let started = saved !== null;
+
+function persist(): void {
+  if (!started) return;
+  void storage.save(snapshot).catch((error: unknown) => {
+    console.warn("[save] the profile couldn't be written", error);
+  });
+}
+
+bus.on("day.phaseChanged", (event) => {
+  if (event.phase === "shift") return;
+  snapshot = serialize(sim.snapshot);
+  persist(); // autosave: the new morning, and the close behind the receipt
+});
+
+// Settings live in the save (§24), so they follow the toggle, not the day.
+bus.on("settings.changed", (event) => {
+  snapshot.settings = { ...event.settings };
+  persist();
+  document.documentElement.classList.toggle("reduce-motion", event.settings.reducedMotion);
+  if (hudRoot.hidden) rig.setAutoOrbit(titleOrbit());
+});
+
+// Closing the window is a quit (§23): the last boundary goes down with it.
+window.addEventListener("beforeunload", () => {
+  if (handingOver || !started) return;
+  void storage.save(snapshot);
+});
+
+function reboot(intent: "play" | null): void {
+  handingOver = true;
+  if (intent === null) window.sessionStorage.removeItem(BOOT_KEY);
+  else window.sessionStorage.setItem(BOOT_KEY, intent);
+  window.location.reload();
+}
+
+/** Reduced motion, from the OS or the settings toggle, stops the orbit too. */
+function titleOrbit(): number {
+  const reduced =
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches ||
+    sim.snapshot.settings.reducedMotion;
+  return reduced ? 0 : TITLE_ORBIT;
+}
+
+// A new run and an imported run are both *different states*, so they start a
+// new session: write the profile, then boot from it. One construction path,
+// no half-swapped world.
+const persistence: ShellPersistence = {
+  exportSave: () => storage.exportFile(),
+  importSave: async () => {
+    const raw = await storage.importFile();
+    if (raw === null) return false; // cancelled
+    await storage.save(migrate(raw));
+    reboot("play");
+    return true;
+  },
+  startNewGame: async () => {
+    await storage.save(serialize(createGameState()));
+    reboot("play");
+  },
+  saveAndQuit: async () => {
+    await storage.save(snapshot);
+    reboot(null);
+  },
+};
+
+const shell = createShell(document.getElementById("shell")!, {
+  sim,
+  persistence,
+  summary: saved
+    ? {
+        day: saved.day,
+        season: seasonForDay(saved.day),
+        cash: saved.cash,
+        repStars: saved.repStars,
+      }
+    : null,
+  onPlay: () => enterPlay(),
+  hudDismiss: () => hud.dismiss(),
+});
+
+function enterPlay(): void {
+  hudRoot.hidden = false;
+  rig.setAutoOrbit(0);
+  hud.enterPlay();
+  // Whatever we are now playing is the save (§23: one profile).
+  started = true;
+  snapshot = serialize(sim.snapshot);
+  persist();
+}
+
+document.documentElement.classList.toggle("reduce-motion", sim.snapshot.settings.reducedMotion);
+
 const loopHooks = {
   getSpeed: () => sim.snapshot.speed,
   tick: () => sim.tick(),
@@ -178,6 +318,13 @@ const loopHooks = {
 };
 startLoop(loopHooks);
 
+if (bootIntoPlay) {
+  enterPlay();
+} else {
+  rig.setAutoOrbit(titleOrbit());
+  shell.showTitle(bootNotice);
+}
+
 // Dev console handle for read-only debugging; the game never uses it.
 (window as unknown as Record<string, unknown>).__pharmasim = {
   sim,
@@ -187,4 +334,6 @@ startLoop(loopHooks);
   renderer,
   binBoard,
   loopHooks,
+  shell,
+  storage,
 };

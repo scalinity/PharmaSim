@@ -28,8 +28,12 @@ export class Sim {
   private lastEmittedMinute: number;
   private emit: (event: SimEvent) => void;
 
-  constructor(private bus: EventBus<SimEvent>) {
-    this.state = createGameState();
+  /** `initial` comes from a hydrated save (§23); omit it for a new run. */
+  constructor(
+    private bus: EventBus<SimEvent>,
+    initial?: GameState,
+  ) {
+    this.state = initial ?? createGameState();
     this.lastEmittedMinute = Math.floor(this.state.clockIgm);
     this.emit = (event) => this.bus.emit(event);
     this.workflow = new RxWorkflow();

@@ -104,6 +104,15 @@ export interface DayStats {
   repReasons: Record<string, RepReason>;
 }
 
+/** Player settings (§24). Persisted with the save; the volume levels are
+ *  stored and shown but inert until audio arrives in milestone 17. */
+export interface GameSettings {
+  volume: number;
+  sfx: number;
+  ambience: number;
+  reducedMotion: boolean;
+}
+
 export interface GameState {
   day: number;
   /** In-game minute of day; 480 = 08:00. Frozen outside the shift phase. */
@@ -122,6 +131,7 @@ export interface GameState {
   /** Register the player is personally working, or null (§8: workHere). */
   workingStationId: string | null;
   dayStats: DayStats;
+  settings: GameSettings;
 }
 
 /** Starting layout (SPEC §6): pre-placed and movable, not charged to cash. */
@@ -168,6 +178,10 @@ const STARTER_RX: readonly (readonly [string, number])[] = [
   ["azithromycin250", 8],
   ["albuterolHFA", 3],
 ];
+
+export function defaultSettings(): GameSettings {
+  return { volume: 0.8, sfx: 0.8, ambience: 0.6, reducedMotion: false };
+}
 
 export function emptyDayStats(cashOpen: number): DayStats {
   return {
@@ -238,5 +252,6 @@ export function createGameState(): GameState {
     },
     workingStationId: null,
     dayStats: emptyDayStats(cash),
+    settings: defaultSettings(),
   };
 }

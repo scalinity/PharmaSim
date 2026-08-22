@@ -1,7 +1,7 @@
 // SimEvent union — everything the sim announces to render/ and ui/.
 
 import type { Archetype } from "./customers";
-import type { DayPhase, GameSpeed, OrderLine, PlacedFurniture } from "./state";
+import type { DayPhase, GameSettings, GameSpeed, OrderLine, PlacedFurniture } from "./state";
 import type { RxStage } from "./workflow";
 
 export type SimEvent =
@@ -52,4 +52,6 @@ export type SimEvent =
   | { type: "order.delivered"; units: number; skus: number }
   | { type: "otc.priceChanged"; skuId: string; multiplier: number }
   | { type: "loan.changed"; bank: number; family: number }
+  // --- App shell (§23, milestone 06) ---
+  | { type: "settings.changed"; settings: GameSettings }
   | { type: "dev.stress"; mult: number };

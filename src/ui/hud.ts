@@ -38,6 +38,12 @@ export interface BuildControls {
 
 export interface HudHandle {
   toast(message: string, tone?: ToastTone): void;
+  /** Coming back from the title: repaint the phase so the end-of-day receipt
+   *  prints when the player can actually see it (§23 boot → title → play). */
+  enterPlay(): void;
+  /** Escape: put away whatever sheet is open. True when it consumed the key,
+   *  which is how the shell knows not to pause on top of it. */
+  dismiss(): boolean;
   /** Ghost picked up / put down: highlight the palette row. */
   paletteChanged(defId: string | null): void;
   /** Placed furniture selected for move/sell. */
@@ -519,8 +525,6 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
       sim.dispatch({ type: "speed.set", speed: 2 });
     } else if (e.code === "KeyO" && !e.repeat) {
       toggleOrders();
-    } else if (e.code === "Escape" && ordersOpen) {
-      setOrders(false);
     } else if (e.code === "KeyN" && !e.repeat) {
       sim.dispatch({ type: "dev.stressToggle" });
     }
@@ -537,6 +541,18 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
 
   return {
     toast,
+    enterPlay: () => {
+      setPhase(sim.snapshot.phase);
+    },
+    dismiss: () => {
+      if (ordersOpen) {
+        setOrders(false);
+        return true;
+      }
+      // Build mode owns Escape for its ghost, selection and its own exit
+      // (render/picking.ts) — it consumes the key.
+      return sim.snapshot.buildMode;
+    },
     paletteChanged: (defId) => palette.setSelected(defId),
     selectionChanged: (next) => setSelection(next),
     bindBuild: (controls) => {

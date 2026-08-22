@@ -1,0 +1,242 @@
+// Versioned saves (SPEC §23, §24). This file is part of sim/, so it only ever
+// makes and reads *plain objects* — no filesystem, no DOM, no platform/.
+// `platform/storage.ts` does every byte of I/O.
+//
+// ===========================================================================
+//  MIGRATION CONTRACT — READ THIS BEFORE YOU ADD A FIELD TO GameState
+// ===========================================================================
+//  A save on disk outlives the code that wrote it. So: every piece of
+//  GameState that survives a day boundary must round-trip through
+//  serialize() → hydrate(), and any milestone that extends GameState must, in
+//  the same session:
+//
+//    1. add the field to SaveFile (below),
+//    2. extend serialize() and hydrate() — the explicit object literals in
+//       here are deliberate: a missing field is a compile error, not a
+//       silently lost pharmacy,
+//    3. bump SAVE_VERSION and push a step onto MIGRATIONS that fills the new
+//       field with the value an *older* save should get.
+//
+//  Skip step 3 and every playtest save ever written stops loading. There is
+//  no cloud, no second slot, and no backup: this chain is the only thing
+//  standing between a schema change and someone's day-40 store.
+//
+//  Version 1 (milestone 06) carries the whole solo era:
+//    · day, clockIgm, phase                                          (M01)
+//    · store.grid, store.furniture, store.nextFurnitureId            (M02)
+//    · repStars, era, licenses                                       (M03/04)
+//    · cash, loans{bank,family}, the ledger-shaped dayStats          (M05)
+//    · store.stock, shelfSlots, otcPricing, priceIndex, inbound,
+//      salesToday, salesLog, fillRate7d, gross7d, reorderUnlocked,
+//      reorderRules                                                  (M05)
+//    · settings{volume,sfx,ambience,reducedMotion}                   (M06)
+//
+//  §24's fuller schema (worldSeed, stores[], competitors, patientPools, dc,
+//  aitech, legacy, stats) is not here because those systems do not exist yet.
+//  They arrive field-by-field with the milestones that own them — 07 staff,
+//  08 licenses/expansion, 09 cold chain, 10 legacy, 12 city, 13 competitors,
+//  14 branches, 15 logistics, 16 AI tech — each with its own migrate step.
+//  Season is derived from `day` (§5), never stored.
+// ===========================================================================
+
+import {
+  defaultSettings,
+  type DayPhase,
+  type DayStats,
+  type GameSettings,
+  type GameState,
+  type StoreState,
+} from "./state";
+
+export const SAVE_VERSION = 1;
+
+export interface SaveFile {
+  version: number;
+  day: number;
+  clockIgm: number;
+  phase: DayPhase;
+  cash: number;
+  loans: { bank: number; family: number };
+  repStars: number;
+  licenses: string[];
+  era: 1 | 2 | 3 | 4;
+  store: StoreState;
+  dayStats: DayStats;
+  settings: GameSettings;
+}
+
+/** A save file as it comes off disk: parsed JSON, nothing checked yet. */
+type RawSave = Record<string, unknown>;
+
+/**
+ * Stepwise migrations. `MIGRATIONS[n - 1]` upgrades a version-`n` file to
+ * version `n + 1`; the chain runs until the file reaches SAVE_VERSION. Empty
+ * at version 1 — the identity chain — and one step longer per schema change.
+ */
+const MIGRATIONS: readonly ((file: RawSave) => RawSave)[] = [];
+
+// --- Deep copies: a save must never alias live state, and a hydrated state
+//     must never alias the file it came from. ---
+
+function copyMap<T>(source: Record<string, T>, copy: (value: T) => T): Record<string, T> {
+  const out: Record<string, T> = {};
+  for (const key of Object.keys(source)) out[key] = copy(source[key]!);
+  return out;
+}
+
+function copyStore(store: StoreState): StoreState {
+  return {
+    grid: { ...store.grid },
+    furniture: store.furniture.map((item) => ({ ...item })),
+    nextFurnitureId: store.nextFurnitureId,
+    stock: copyMap(store.stock, (line) => ({ ...line })),
+    shelfSlots: copyMap(store.shelfSlots, (slots) => [...slots]),
+    otcPricing: { ...store.otcPricing },
+    priceIndex: store.priceIndex,
+    inbound: store.inbound.map((line) => ({ ...line })),
+    salesToday: { ...store.salesToday },
+    salesLog: store.salesLog.map((day) => ({ ...day })),
+    fillRate7d: [...store.fillRate7d],
+    gross7d: [...store.gross7d],
+    reorderUnlocked: store.reorderUnlocked,
+    reorderRules: copyMap(store.reorderRules, (rule) => ({ ...rule })),
+  };
+}
+
+function copyDayStats(stats: DayStats): DayStats {
+  return {
+    cashOpen: stats.cashOpen,
+    ledger: copyMap(stats.ledger, (tally) => ({ ...tally })),
+    visitors: stats.visitors,
+    otcSales: stats.otcSales,
+    otcUnits: stats.otcUnits,
+    fills: stats.fills,
+    walkouts: stats.walkouts,
+    errors: stats.errors,
+    refusals: stats.refusals,
+    stockOuts: { ...stats.stockOuts },
+    balks: { ...stats.balks },
+    familyLoan: stats.familyLoan,
+    repDelta: stats.repDelta,
+    repReasons: copyMap(stats.repReasons, (reason) => ({ ...reason })),
+  };
+}
+
+/**
+ * Snapshot the run as a plain, detached SaveFile.
+ *
+ * Session-only state is deliberately left out: `speed`, `buildMode` and
+ * `workingStationId` are controls the player is holding right now, not
+ * progress, so a save always comes back at 1× with the sheets put away.
+ * Saves are only ever taken at a day boundary (§23), where no customer or
+ * script is in flight — that is why neither needs serializing.
+ */
+export function serialize(state: GameState): SaveFile {
+  return {
+    version: SAVE_VERSION,
+    day: state.day,
+    clockIgm: state.clockIgm,
+    phase: state.phase,
+    cash: state.cash,
+    loans: { ...state.loans },
+    repStars: state.repStars,
+    licenses: [...state.licenses],
+    era: state.era,
+    store: copyStore(state.store),
+    dayStats: copyDayStats(state.dayStats),
+    settings: { ...state.settings },
+  };
+}
+
+/** Build a fresh GameState from a (migrated) save file. */
+export function hydrate(file: SaveFile): GameState {
+  return {
+    day: file.day,
+    clockIgm: file.clockIgm,
+    phase: file.phase,
+    cash: file.cash,
+    loans: { ...file.loans },
+    repStars: file.repStars,
+    speed: 1,
+    buildMode: false,
+    licenses: [...file.licenses],
+    era: file.era,
+    store: copyStore(file.store),
+    workingStationId: null,
+    dayStats: copyDayStats(file.dayStats),
+    settings: { ...defaultSettings(), ...file.settings },
+  };
+}
+
+// --- Validation: hand-edited and half-written files must be *refused*, with
+//     a sentence the player can act on, rather than crashing the game. ---
+
+function reject(missing: string): never {
+  throw new Error(`That file isn't a PharmaSim save — it has no ${missing}.`);
+}
+
+function requireObject(value: unknown, name: string): RawSave {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) reject(name);
+  return value as RawSave;
+}
+
+function requireArray(value: unknown, name: string): void {
+  if (!Array.isArray(value)) reject(name);
+}
+
+const PHASES: readonly string[] = ["morning", "shift", "close"];
+
+function validate(file: RawSave): SaveFile {
+  for (const key of ["day", "clockIgm", "cash", "repStars", "era"]) {
+    if (typeof file[key] !== "number") reject(key);
+  }
+  if (typeof file.phase !== "string" || !PHASES.includes(file.phase)) reject("day phase");
+  requireArray(file.licenses, "licenses");
+  requireObject(file.loans, "loan balances");
+  requireObject(file.settings, "settings");
+
+  const store = requireObject(file.store, "store");
+  requireObject(store.grid, "store grid");
+  for (const key of ["stock", "shelfSlots", "otcPricing", "salesToday", "reorderRules"]) {
+    requireObject(store[key], `store ${key}`);
+  }
+  for (const key of ["furniture", "inbound", "salesLog", "fillRate7d", "gross7d"]) {
+    requireArray(store[key], `store ${key}`);
+  }
+
+  const stats = requireObject(file.dayStats, "day totals");
+  for (const key of ["ledger", "stockOuts", "balks", "repReasons"]) {
+    requireObject(stats[key], `day ${key}`);
+  }
+
+  return file as unknown as SaveFile;
+}
+
+/**
+ * Take anything that claims to be a save and return a SaveFile at the current
+ * version, or throw with a message worth showing the player. Boot and import
+ * both go through here — nothing reaches `hydrate` unmigrated.
+ */
+export function migrate(raw: unknown): SaveFile {
+  const file = requireObject(raw, "save data");
+  const version = file.version;
+  if (typeof version !== "number" || !Number.isInteger(version) || version < 1) {
+    throw new Error(
+      `That file says save version ${String(version)}. PharmaSim saves start at version 1.`,
+    );
+  }
+  if (version > SAVE_VERSION) {
+    throw new Error(
+      `That save is from a newer build (version ${version}). This one reads up to version ${SAVE_VERSION}.`,
+    );
+  }
+
+  let current = file;
+  for (let from = version; from < SAVE_VERSION; from++) {
+    const step = MIGRATIONS[from - 1];
+    if (!step) throw new Error(`No migration from save version ${from} — this save can't be read.`);
+    current = step(current);
+    current.version = from + 1;
+  }
+  return validate(current);
+}

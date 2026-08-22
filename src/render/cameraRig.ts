@@ -35,6 +35,8 @@ export class CameraRig {
   private lastY = 0;
   /** Where the player had the camera before a fill glide (§8), or null. */
   private saved: { target: Vector3; viewHeight: number } | null = null;
+  /** Ambient yaw drift, rad/s — the title screen's slow orbit (§23). */
+  private autoOrbit = 0;
 
   // Scratch vectors — no per-frame allocations.
   private fwd = new Vector3();
@@ -80,8 +82,15 @@ export class CameraRig {
     this.saved = null;
   }
 
+  /** Drift the yaw on its own, in rad/s; 0 stops it. */
+  setAutoOrbit(radPerSecond: number): void {
+    this.autoOrbit = radPerSecond;
+  }
+
   update(dtMs: number): void {
     const dt = dtMs / 1000;
+
+    if (this.autoOrbit !== 0) this.goalYaw += this.autoOrbit * dt;
 
     if (this.heldKeys.size > 0) {
       this.groundAxes();

@@ -29,6 +29,8 @@
   --fs-20: 20px;
   --fs-28: 28px;
   --fs-40: 40px;
+  /* Signage, not HUD: the title-screen wordmark only (§28 scale ends at 40). */
+  --fs-wordmark: 56px;
   --w-regular: 400;
   --w-semibold: 600;
   --w-bold: 700;

@@ -1712,6 +1712,462 @@ button {
   transform: rotate(-0.5deg);
 }
 
+/* ================================================================
+   App shell — title, settings, pause (SPEC §23, §28: screens are
+   full paper sheets over the scrim)
+   ================================================================ */
+
+#shell {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  pointer-events: none;
+}
+
+.screen {
+  position: absolute;
+  inset: 0;
+  background: var(--glass);
+  pointer-events: auto;
+  animation: fade-in var(--dur) var(--ease-out) both;
+}
+
+/* ---- Title: the door card, hung over the orbiting store ---- */
+
+/* The card casts its own shade across the glass: dense where the reading
+   happens, clearing to the right so the store keeps its colour. */
+.screen--title {
+  display: flex;
+  align-items: center;
+  background: linear-gradient(
+    100deg,
+    rgba(32, 48, 43, 0.74) 0%,
+    rgba(32, 48, 43, 0.6) 36%,
+    rgba(32, 48, 43, 0.22) 66%,
+    rgba(32, 48, 43, 0.12) 100%
+  );
+}
+
+.tcard {
+  --era-ink: var(--ink);
+  width: 424px;
+  max-width: calc(100vw - 48px);
+  margin-left: 8vw;
+  padding: var(--panel-border);
+  background: var(--ink);
+  clip-path: polygon(0 0, calc(100% - 20px) 0, 100% 20px, 100% 100%, 0 100%);
+  filter: drop-shadow(0 10px 18px rgba(32, 48, 43, 0.34));
+  transform: rotate(-1.1deg);
+  animation: card-land var(--dur-slow) var(--ease-out) both;
+}
+
+/* Era tint (§28): the wordmark takes the store's own fixtures — walnut in
+   Gen 1, cooling to clinical pine by Gen 4 — and the paper cools with it. */
+.tcard[data-era="1"] {
+  --era-ink: #6b4a32;
+  --paper: var(--paper-gen1);
+}
+
+.tcard[data-era="2"] {
+  --era-ink: #2f6259;
+}
+
+.tcard[data-era="3"] {
+  --era-ink: #4a5b68;
+}
+
+.tcard[data-era="4"] {
+  --era-ink: var(--pine);
+  --paper: var(--paper-gen4);
+}
+
+.tcard__inner {
+  padding: 34px 36px 28px;
+  background: var(--paper);
+  clip-path: polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 0 100%);
+}
+
+@keyframes card-land {
+  from {
+    opacity: 0;
+    transform: rotate(-2.8deg) translateY(-12px);
+  }
+}
+
+.tcard__step {
+  animation: paper-settle var(--dur) var(--ease-out) both;
+}
+
+.tcard__eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0 0 20px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink-75);
+}
+
+/* The pine cross, same mark as the app icon */
+.tcard__cross {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  background: var(--pine);
+  clip-path: polygon(
+    38% 0,
+    62% 0,
+    62% 38%,
+    100% 38%,
+    100% 62%,
+    62% 62%,
+    62% 100%,
+    38% 100%,
+    38% 62%,
+    0 62%,
+    0 38%,
+    38% 38%
+  );
+}
+
+.tcard__mark {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--fs-wordmark);
+  font-weight: var(--w-bold);
+  line-height: 0.96;
+  letter-spacing: -0.022em;
+  color: var(--era-ink);
+}
+
+.tcard__rule {
+  display: block;
+  width: 76px;
+  height: 2px;
+  margin: 15px 0 13px;
+  background: var(--era-ink);
+}
+
+.tcard__tag {
+  margin: 0 0 26px;
+  font-size: var(--fs-16);
+  line-height: 1.5;
+  color: var(--ink-75);
+}
+
+/* Continue is a line out of the daybook, not a button with a badge. */
+.tcont {
+  display: block;
+  width: 100%;
+  padding: 10px 14px 11px;
+  text-align: left;
+  background: var(--paper);
+  border-left: 4px solid var(--pine);
+  box-shadow: inset 0 0 0 1px var(--ink-25);
+  transition:
+    background-color var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
+}
+
+.tcont:hover,
+.tcont:focus-visible {
+  background: rgba(47, 107, 79, 0.1);
+  transform: translateX(2px);
+}
+
+.tcont__label {
+  display: block;
+  font-family: var(--font-display);
+  font-size: var(--fs-20);
+  font-weight: var(--w-semibold);
+}
+
+.tcont__line {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  margin-top: 3px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  color: var(--ink-75);
+}
+
+.tcont__dots {
+  flex: 1;
+  border-bottom: 1.5px dotted var(--ink-25);
+  transform: translateY(-3px);
+}
+
+.tcont__v {
+  font-weight: var(--w-semibold);
+  color: var(--ink);
+}
+
+.tcont__stars {
+  color: var(--pine);
+}
+
+.tcard__actions {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  margin-top: 24px;
+}
+
+.tlink {
+  min-height: 32px;
+  font-size: var(--fs-14);
+  font-weight: var(--w-semibold);
+  color: var(--ink-75);
+  text-decoration: underline;
+  text-decoration-color: var(--ink-25);
+  text-underline-offset: 4px;
+  transition: color var(--dur-fast) var(--ease-out);
+}
+
+.tlink:hover {
+  color: var(--ink);
+  text-decoration-color: var(--pine);
+}
+
+/* ---- Settings + pause sheets ---- */
+
+.screen--sheet {
+  display: grid;
+  place-items: center;
+}
+
+.sheet {
+  width: 552px;
+  max-width: calc(100vw - 48px);
+  max-height: calc(100vh - 64px);
+  overflow-y: auto;
+  padding: var(--panel-border);
+  background: var(--ink);
+  clip-path: polygon(0 0, calc(100% - 20px) 0, 100% 20px, 100% 100%, 0 100%);
+  filter: var(--panel-shadow);
+  animation: paper-settle var(--dur-slow) var(--ease-out) both;
+}
+
+.sheet--narrow {
+  width: 384px;
+}
+
+.sheet__inner {
+  padding: 28px 32px 24px;
+  background: var(--paper);
+  clip-path: polygon(0 0, calc(100% - 18px) 0, 100% 18px, 100% 100%, 0 100%);
+}
+
+.sheet__eyebrow {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink-75);
+}
+
+.sheet__title {
+  margin: 7px 0 22px;
+  font-family: var(--font-display);
+  font-size: var(--fs-28);
+  font-weight: var(--w-semibold);
+}
+
+.sheet__title--lone {
+  margin-top: 0;
+  margin-bottom: 4px;
+}
+
+.sheet__stat {
+  margin: 12px 0 22px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-16);
+}
+
+.sheet__section {
+  margin-bottom: 20px;
+  padding-top: 15px;
+  border-top: 1.5px solid var(--ink-25);
+}
+
+.sheet__label {
+  margin: 0 0 10px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: var(--w-regular);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ink-75);
+}
+
+.sheet__stack {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sheet__foot {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 4px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 36px;
+}
+
+.row--slider {
+  gap: 24px;
+}
+
+/* The whole row reads inert until there is audio to move (§28 honesty). */
+.row--slider .row__name {
+  color: var(--ink-60);
+}
+
+.row--actions {
+  justify-content: flex-start;
+  gap: 10px;
+}
+
+.row__name {
+  font-size: var(--fs-14);
+  font-weight: var(--w-semibold);
+}
+
+.row__help {
+  max-width: 48ch;
+  margin: 7px 0 0;
+  font-size: var(--fs-12);
+  line-height: 1.55;
+  color: var(--ink-75);
+}
+
+.row__help--warn {
+  margin-top: 18px;
+  padding-left: 10px;
+  border-left: 3px solid var(--amber);
+}
+
+/* Toggle: a pill that fills pine when it's on */
+.switch {
+  position: relative;
+  flex: none;
+  width: 54px;
+  height: 32px;
+  background: var(--paper);
+  border: var(--panel-border) solid var(--ink);
+  border-radius: 999px;
+  transition:
+    background-color var(--dur) var(--ease-out),
+    border-color var(--dur) var(--ease-out);
+}
+
+.switch__knob {
+  position: absolute;
+  top: 3.5px;
+  left: 3.5px;
+  width: 22px;
+  height: 22px;
+  background: var(--ink);
+  border-radius: 50%;
+  transition:
+    transform var(--dur) var(--ease-out),
+    background-color var(--dur) var(--ease-out);
+}
+
+.switch--on {
+  background: var(--pine);
+  border-color: var(--pine);
+}
+
+.switch--on .switch__knob {
+  background: var(--paper);
+  transform: translateX(21px);
+}
+
+/* Volume sliders: laid out, inert until milestone 17 */
+.slider {
+  flex: 1;
+  max-width: 268px;
+  height: 18px;
+  appearance: none;
+  -webkit-appearance: none;
+  background: none;
+}
+
+.slider::-webkit-slider-runnable-track {
+  height: 3px;
+  background: var(--ink-25);
+}
+
+.slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 13px;
+  height: 13px;
+  margin-top: -5px;
+  background: var(--ink-60);
+  border: 1.5px solid var(--paper);
+  border-radius: 50%;
+}
+
+.slider:disabled {
+  opacity: 0.5;
+}
+
+/* ---- Modal: the one decision the game won't take on its own ---- */
+
+.modal {
+  display: grid;
+  place-items: center;
+}
+
+.modal__sheet {
+  width: 420px;
+  max-width: calc(100vw - 48px);
+  padding: 24px 26px 20px;
+  background: var(--paper);
+  border: var(--panel-border) solid var(--ink);
+  border-left: 4px solid var(--rose);
+  filter: var(--panel-shadow);
+  animation: paper-settle var(--dur) var(--ease-out) both;
+}
+
+.modal__title {
+  margin: 0 0 12px;
+  font-family: var(--font-display);
+  font-size: var(--fs-20);
+  font-weight: var(--w-semibold);
+}
+
+.modal__text {
+  max-width: 44ch;
+  margin: 0 0 10px;
+  font-size: var(--fs-14);
+  line-height: 1.55;
+}
+
+.modal__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.pill--warn {
+  background: var(--rose);
+  border-color: var(--rose);
+  color: var(--paper);
+}
+
 /* ---- Reduced motion ---- */
 
 @media (prefers-reduced-motion: reduce) {
@@ -1721,5 +2177,26 @@ button {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+}
+
+/* The settings toggle (§23) does the same on demand, live. */
+.reduce-motion *,
+.reduce-motion *::before,
+.reduce-motion *::after {
+  animation-duration: 0.01ms !important;
+  animation-iteration-count: 1 !important;
+  transition-duration: 0.01ms !important;
+}
+
+/* The receipt print is revealed by timers rather than CSS, so it needs
+   telling directly: show every line at once (§28 signature, collapsed). */
+.reduce-motion .rcpt__item {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .rcpt__item {
+    opacity: 1;
   }
 }
