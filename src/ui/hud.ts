@@ -1,25 +1,51 @@
-// HUD layout root: top bar (day chip, clock tape, cash, stars, speed) plus
-// the morning and close phase panels. Reads sim state via snapshot, mutates
+// HUD layout root: top bar (day chip, clock tape, cash, stars, speed), the
+// bottom dock (Build), the build palette + move/sell context card, toasts,
+// and the morning/close phase panels. Reads sim state via snapshot, mutates
 // only through sim.dispatch, updates via cached refs on bus events.
 
 import type { EventBus } from "../core/bus";
 import { dayProgress, formatClock, seasonForDay } from "../core/clock";
+import { furnitureDef } from "../data/furniture";
 import type { SimEvent } from "../sim/events";
 import type { Sim } from "../sim/sim";
 import type { DayPhase, GameSpeed } from "../sim/state";
 import { Panel } from "./components/Panel";
 import { PillButton } from "./components/PillButton";
+import { createToastHost, type ToastTone } from "./components/Toast";
 import { h } from "./dom";
+import { createBuildPalette } from "./screens/buildPalette";
 
 const STAR_GLYPHS = "★★★★★";
+
+export interface BuildSelectionInfo {
+  id: string;
+  defId: string;
+}
+
+export interface BuildControls {
+  selectDef(defId: string | null): void;
+  beginMove(): void;
+}
+
+export interface HudHandle {
+  toast(message: string, tone?: ToastTone): void;
+  /** Ghost picked up / put down: highlight the palette row. */
+  paletteChanged(defId: string | null): void;
+  /** Placed furniture selected for move/sell. */
+  selectionChanged(selection: BuildSelectionInfo | null): void;
+  /** Late-bound because the picking controller is created after the HUD. */
+  bindBuild(controls: BuildControls): void;
+}
 
 function formatCash(cash: number): string {
   return `$${cash.toLocaleString("en-US")}`;
 }
 
-export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>): void {
+export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>): HudHandle {
   const state = sim.snapshot;
   let lastRunSpeed: GameSpeed = state.speed === 0 ? 1 : state.speed;
+  let build: BuildControls | null = null;
+  let selection: BuildSelectionInfo | null = null;
 
   // --- Top bar ---
 
@@ -96,6 +122,41 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
 
   const topbar = h("div", { cls: "topbar" }, [dayChip, tape, cashChip, starsChip, speedGroup]);
 
+  // --- Bottom dock ---
+
+  const buildPill = h(
+    "button",
+    {
+      cls: "pill pill--secondary pill--dock",
+      attrs: { type: "button", "aria-pressed": "false", "aria-label": "Build (B)" },
+    },
+    [h("span", { cls: "keycap", attrs: { "aria-hidden": "true" }, text: "B" }), "Build"],
+  );
+  buildPill.addEventListener("pointerdown", (e) => e.preventDefault());
+  buildPill.addEventListener("click", () => {
+    sim.dispatch({ type: sim.snapshot.buildMode ? "build.exit" : "build.enter" });
+  });
+  const dock = h("div", { cls: "dock" }, [buildPill]);
+
+  // --- Build palette + move/sell context card ---
+
+  const palette = createBuildPalette(sim, (defId) => build?.selectDef(defId));
+
+  const contextName = h("span", { cls: "context__name" });
+  const moveButton = PillButton("Move", () => build?.beginMove(), { cls: "pill--small" });
+  const sellButton = PillButton("Sell", () => {
+    if (!selection) return;
+    const def = furnitureDef(selection.defId);
+    const refund = Math.round(def.cost / 2);
+    sim.dispatch({ type: "furniture.sell", id: selection.id });
+    toast(`Sold the ${def.name.toLowerCase()} — $${refund.toLocaleString("en-US")} refunded`);
+  }, { variant: "secondary", cls: "pill--small" });
+  const contextCard = Panel({ cls: "context" }, [
+    contextName,
+    h("div", { cls: "context__actions" }, [moveButton, sellButton]),
+  ]);
+  contextCard.hidden = true;
+
   // --- Phase panels ---
 
   const morningStage = h("div", { cls: "stage-morning" }, [
@@ -118,7 +179,8 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     ]),
   ]);
 
-  root.append(topbar, morningStage, closeStage);
+  root.append(topbar, palette.root, contextCard, morningStage, closeStage, dock);
+  const toast = createToastHost(root);
 
   // --- Updates (cached refs only) ---
 
@@ -149,12 +211,44 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     if (speed !== 0) lastRunSpeed = speed;
   }
 
+  function setCash(cash: number): void {
+    cashChip.textContent = formatCash(cash);
+    cashChip.setAttribute("aria-label", `Cash ${formatCash(cash)}`);
+  }
+
+  function setBuildMode(active: boolean): void {
+    buildPill.classList.toggle("pill--primary", active);
+    buildPill.classList.toggle("pill--secondary", !active);
+    buildPill.setAttribute("aria-pressed", String(active));
+    palette.setVisible(active);
+    if (!active) contextCard.hidden = true;
+  }
+
+  function setSelection(next: BuildSelectionInfo | null): void {
+    selection = next;
+    if (!next) {
+      contextCard.hidden = true;
+      return;
+    }
+    const def = furnitureDef(next.defId);
+    contextName.textContent = def.name;
+    sellButton.textContent = `Sell for $${Math.round(def.cost / 2).toLocaleString("en-US")}`;
+    contextCard.hidden = false;
+  }
+
   bus.on("clock.minute", (e) => setClock(e.igm));
   bus.on("day.phaseChanged", (e) => {
     setDay(e.day);
     setPhase(e.phase);
   });
   bus.on("speed.changed", (e) => setSpeed(e.speed));
+  bus.on("cash.changed", (e) => {
+    setCash(e.cash);
+    palette.refresh();
+  });
+  bus.on("build.changed", (e) => setBuildMode(e.active));
+  bus.on("furniture.placed", () => palette.refresh());
+  bus.on("furniture.sold", () => palette.refresh());
 
   // --- Keys: Space pause toggle, 1 / 2 speeds ---
 
@@ -182,4 +276,15 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
   setPhase(state.phase);
   setClock(state.clockIgm);
   setSpeed(state.speed);
+  setCash(state.cash);
+  setBuildMode(state.buildMode);
+
+  return {
+    toast,
+    paletteChanged: (defId) => palette.setSelected(defId),
+    selectionChanged: (next) => setSelection(next),
+    bindBuild: (controls) => {
+      build = controls;
+    },
+  };
 }

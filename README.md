@@ -33,7 +33,7 @@ and is only used when a milestone brief calls for it.
 ## Milestone progress
 
 - [x] 01 Scaffold + core loop
-- [ ] 02 Store grid + placement
+- [x] 02 Store grid + placement
 - [ ] 03 Customers + OTC flow
 - [ ] 04 Prescription vertical slice
 - [ ] 05 Inventory + economy

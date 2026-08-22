@@ -16,16 +16,17 @@ import type { SimEvent } from "./sim/events";
 import { Sim } from "./sim/sim";
 import { CameraRig } from "./render/cameraRig";
 import { Lighting } from "./render/lighting";
+import { Picking } from "./render/picking";
 import { Renderer } from "./render/renderer";
-import { createStoreScene } from "./render/storeScene";
+import { StoreScene } from "./render/storeScene";
 import { createHud } from "./ui/hud";
 
 const bus = new EventBus<SimEvent>();
 const sim = new Sim(bus);
 
 const renderer = new Renderer();
-const scene = createStoreScene();
-const lighting = new Lighting(scene);
+const store = new StoreScene(sim, bus);
+const lighting = new Lighting(store.scene);
 const rig = new CameraRig(renderer.canvas);
 rig.setAspect(renderer.aspect);
 renderer.onResize((width, height) => rig.setAspect(width / height));
@@ -33,13 +34,23 @@ renderer.onResize((width, height) => rig.setAspect(width / height));
 bus.on("clock.minute", (e) => lighting.setTime(e.igm));
 lighting.setTime(sim.snapshot.clockIgm);
 
-createHud(document.getElementById("hud")!, sim, bus);
+// Dev console handle for read-only debugging; the game never uses it.
+(window as unknown as Record<string, unknown>).__pharmasim = { sim, rig, store };
+
+const hud = createHud(document.getElementById("hud")!, sim, bus);
+const picking = new Picking(sim, bus, store, rig.camera, renderer.canvas, {
+  toast: hud.toast,
+  selectionChanged: hud.selectionChanged,
+  paletteChanged: hud.paletteChanged,
+});
+hud.bindBuild(picking);
 
 startLoop({
   getSpeed: () => sim.snapshot.speed,
   tick: () => sim.tick(),
   render: (dtMs) => {
     rig.update(dtMs);
-    renderer.render(scene, rig.camera);
+    store.update(rig.camera, dtMs);
+    renderer.render(store.scene, rig.camera);
   },
 });
