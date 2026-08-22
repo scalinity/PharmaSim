@@ -33,6 +33,8 @@ export class CameraRig {
   private dragButton = -1;
   private lastX = 0;
   private lastY = 0;
+  /** Where the player had the camera before a fill glide (§8), or null. */
+  private saved: { target: Vector3; viewHeight: number } | null = null;
 
   // Scratch vectors — no per-frame allocations.
   private fwd = new Vector3();
@@ -59,6 +61,23 @@ export class CameraRig {
   setAspect(aspect: number): void {
     this.aspect = aspect;
     this.updateProjection();
+  }
+
+  /** Fill glide (§8): frame a world point tightly, remembering where we were. */
+  glideTo(wx: number, wz: number, viewHeight = 9): void {
+    if (!this.saved) {
+      this.saved = { target: this.goalTarget.clone(), viewHeight: this.goalViewHeight };
+    }
+    this.goalTarget.set(wx, 0, wz);
+    this.goalViewHeight = MathUtils.clamp(viewHeight, VIEW_MIN, VIEW_MAX);
+  }
+
+  /** Glide back to wherever the player had the camera before the fill. */
+  glideBack(): void {
+    if (!this.saved) return;
+    this.goalTarget.copy(this.saved.target);
+    this.goalViewHeight = this.saved.viewHeight;
+    this.saved = null;
   }
 
   update(dtMs: number): void {

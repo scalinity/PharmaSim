@@ -12,8 +12,10 @@ import "./ui/hud.css";
 
 import { Vector3 } from "three";
 import { EventBus } from "./core/bus";
-import { cellToWorld } from "./core/grid";
+import { cellToWorld, FACING, footprintRect, rectCenterWorld } from "./core/grid";
 import { startLoop } from "./core/loop";
+import { furnitureDef } from "./data/furniture";
+import { CustomerSystem } from "./sim/customers";
 import type { SimEvent } from "./sim/events";
 import { Sim } from "./sim/sim";
 import { CameraRig } from "./render/cameraRig";
@@ -21,6 +23,7 @@ import { Lighting } from "./render/lighting";
 import { NpcView } from "./render/npcView";
 import { Picking } from "./render/picking";
 import { Renderer } from "./render/renderer";
+import { RxBinBoard } from "./render/rxBins";
 import { StoreScene } from "./render/storeScene";
 import { createHud } from "./ui/hud";
 
@@ -38,11 +41,11 @@ renderer.onResize((width, height) => rig.setAspect(width / height));
 bus.on("clock.minute", (e) => lighting.setTime(e.igm));
 lighting.setTime(sim.snapshot.clockIgm);
 
-// Dev console handle for read-only debugging; the game never uses it.
-(window as unknown as Record<string, unknown>).__pharmasim = { sim, rig, store, bus, renderer };
-
 const hud = createHud(document.getElementById("hud")!, sim, bus);
-const picking = new Picking(sim, bus, store, rig.camera, renderer.canvas, {
+const binBoard = new RxBinBoard();
+store.scene.add(binBoard.group);
+
+const picking = new Picking(sim, bus, store, binBoard, rig.camera, renderer.canvas, {
   toast: hud.toast,
   selectionChanged: hud.selectionChanged,
   paletteChanged: hud.paletteChanged,
@@ -50,38 +53,118 @@ const picking = new Picking(sim, bus, store, rig.camera, renderer.canvas, {
 });
 hud.bindBuild(picking);
 
-// Amber queue chips float over registers with long lines (§27: queue ≥ 4).
-const chipPoint = new Vector3();
-function updateQueueChips(): void {
+// Fill interaction (§8): labeled bins appear and the camera glides to frame
+// the Rx shelf; both retract when the fill ends (done, caught, or abandoned).
+bus.on("rx.fillStarted", (e) => {
   const state = sim.snapshot;
-  if (state.phase !== "shift") return;
   const { cols, rows } = state.store.grid;
-  for (const item of state.store.furniture) {
-    if (item.defId !== "counter_register") continue;
-    const count = sim.queueLength(item.id);
-    if (count >= 4) {
-      const [wx, wz] = cellToWorld(cols, rows, item.cellX, item.cellY);
-      chipPoint.set(wx, 2.2, wz).project(rig.camera);
-      hud.updateQueueChip(
-        item.id,
-        (chipPoint.x * 0.5 + 0.5) * window.innerWidth,
-        (-chipPoint.y * 0.5 + 0.5) * window.innerHeight,
-        count,
-      );
-    } else {
-      hud.hideQueueChip(item.id);
-    }
-  }
+  const shelf = e.shelfId ? state.store.furniture.find((f) => f.id === e.shelfId) : undefined;
+  if (!shelf) return;
+  binBoard.show(shelf, cols, rows, e.bins);
+  const def = furnitureDef(shelf.defId);
+  const rect = footprintRect(def.cells, shelf.cellX, shelf.cellY, shelf.rot);
+  const [wx, wz] = rectCenterWorld(cols, rows, rect);
+  const [fx, fy] = FACING[shelf.rot]!;
+  rig.glideTo(wx + fx * 1.2, wz + fy * 1.2, 9);
+});
+bus.on("rx.fillEnded", () => {
+  binBoard.hide();
+  rig.glideBack();
+});
+
+// Screen-space overlays: amber queue chips over registers (§27: queue ≥ 4),
+// stage-queue mini-card stacks over the bench and counter lanes (§8), and
+// the bottleneck ring under the deepest station at queue ≥ 4.
+const chipPoint = new Vector3();
+function project(wx: number, wy: number, wz: number): [number, number] {
+  chipPoint.set(wx, wy, wz).project(rig.camera);
+  return [
+    (chipPoint.x * 0.5 + 0.5) * window.innerWidth,
+    (-chipPoint.y * 0.5 + 0.5) * window.innerHeight,
+  ];
 }
 
-startLoop({
+let liveStackKeys = new Set<string>();
+
+function updateOverlays(): void {
+  const state = sim.snapshot;
+  if (state.phase !== "shift") {
+    store.setBottleneck(null);
+    return;
+  }
+  const { cols, rows } = state.store.grid;
+  let worstId: string | null = null;
+  let worstDepth = 0;
+  const consider = (id: string, depth: number): void => {
+    if (depth > worstDepth) {
+      worstDepth = depth;
+      worstId = id;
+    }
+  };
+
+  const stackKeys = new Set<string>();
+  const stack = (key: string, wx: number, wz: number, count: number, label: string): void => {
+    if (count <= 0) return;
+    stackKeys.add(key);
+    const [sx, sy] = project(wx, 1.9, wz);
+    hud.updateStageStack(key, sx, sy, count, label);
+  };
+
+  for (const item of state.store.furniture) {
+    if (item.defId === "counter_register") {
+      const count = sim.queueLength(item.id);
+      consider(item.id, count);
+      if (count >= 4) {
+        const [wx, wz] = cellToWorld(cols, rows, item.cellX, item.cellY);
+        const [sx, sy] = project(wx, 2.2, wz);
+        hud.updateQueueChip(item.id, sx, sy, count);
+      } else {
+        hud.hideQueueChip(item.id);
+      }
+    } else if (item.defId === "counter_service") {
+      const { drop, pick } = CustomerSystem.laneCells(item);
+      const dropCount = sim.queueLength(CustomerSystem.dropLaneId(item.id));
+      const pickCount = sim.queueLength(CustomerSystem.pickLaneId(item.id));
+      consider(item.id, Math.max(dropCount, pickCount));
+      const [dx, dz] = cellToWorld(cols, rows, drop[0], drop[1]);
+      const [px, pz] = cellToWorld(cols, rows, pick[0], pick[1]);
+      stack(`${item.id}#drop`, dx, dz, dropCount, "drop-off");
+      stack(`${item.id}#pick`, px, pz, pickCount, "pickup");
+    } else if (item.defId === "fill_bench") {
+      const depth = sim.workflow.fillDepth;
+      consider(item.id, depth);
+      const [wx, wz] = cellToWorld(cols, rows, item.cellX, item.cellY);
+      stack(item.id, wx, wz, depth, "fill");
+    }
+  }
+  for (const key of liveStackKeys) {
+    if (!stackKeys.has(key)) hud.hideStageStack(key);
+  }
+  liveStackKeys = stackKeys;
+
+  store.setBottleneck(worstDepth >= 4 ? worstId : null);
+}
+
+const loopHooks = {
   getSpeed: () => sim.snapshot.speed,
   tick: () => sim.tick(),
-  render: (dtMs, alpha) => {
+  render: (dtMs: number, alpha: number) => {
     rig.update(dtMs);
     store.update(rig.camera, dtMs);
     npcs.update(alpha);
-    updateQueueChips();
+    updateOverlays();
     renderer.render(store.scene, rig.camera);
   },
-});
+};
+startLoop(loopHooks);
+
+// Dev console handle for read-only debugging; the game never uses it.
+(window as unknown as Record<string, unknown>).__pharmasim = {
+  sim,
+  rig,
+  store,
+  bus,
+  renderer,
+  binBoard,
+  loopHooks,
+};

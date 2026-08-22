@@ -2,6 +2,7 @@
 
 import type { Archetype } from "./customers";
 import type { DayPhase, GameSpeed, PlacedFurniture } from "./state";
+import type { RxStage } from "./workflow";
 
 export type SimEvent =
   | { type: "day.phaseChanged"; phase: DayPhase; day: number }
@@ -17,4 +18,28 @@ export type SimEvent =
   | { type: "sale.completed"; customerId: number; items: number; total: number }
   | { type: "rep.changed"; stars: number; delta: number }
   | { type: "station.changed"; stationId: string | null }
+  // --- Prescription workflow (§8, milestone 04) ---
+  | { type: "rx.stageChanged"; scriptId: number; stage: RxStage }
+  | { type: "rx.dropoff"; scriptId: number; drugId: string }
+  | { type: "rx.refused"; drugId: string; customerId: number }
+  /** Player took a script at the bench: the RxCard + bin picking begin. */
+  | {
+      type: "rx.fillStarted";
+      scriptId: number;
+      drugId: string;
+      patientName: string;
+      quantity: number;
+      /** 12 drug ids, row-major over the shelf's 4×3 bin face. */
+      bins: string[];
+      /** Rx shelf the picking frames, or null when none is placed. */
+      shelfId: string | null;
+    }
+  | { type: "rx.binPicked"; scriptId: number }
+  /** Fill left the bench (completed or aborted); the RxCard slides out. */
+  | { type: "rx.fillEnded"; scriptId: number }
+  | { type: "rx.caught"; scriptId: number }
+  | { type: "rx.ready"; scriptId: number }
+  | { type: "rx.pickedUp"; scriptId: number; total: number; counseled: boolean }
+  | { type: "rx.errorDispensed"; scriptId: number; refund: number }
+  | { type: "rx.cancelled"; scriptId: number }
   | { type: "dev.stress"; mult: number };

@@ -550,39 +550,6 @@ button {
   }
 }
 
-/* ---- End-of-day report (placeholder until the printed receipt, 04) ---- */
-
-.report {
-  min-width: 240px;
-  margin: 0 0 16px;
-  padding: 10px 0 8px;
-  border-top: 1px dashed var(--ink-25);
-  border-bottom: 1px dashed var(--ink-25);
-}
-
-.report__row {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: 24px;
-  padding: 2px 0;
-}
-
-.report__label {
-  font-size: var(--fs-14);
-  color: var(--ink-75);
-}
-
-.report__value {
-  font-family: var(--font-mono);
-  font-size: var(--fs-14);
-  font-weight: var(--w-semibold);
-}
-
-.report__value--rose {
-  color: var(--rose);
-}
-
 /* ---- Station hint + working chip ---- */
 
 .stationhint {
@@ -645,6 +612,384 @@ button {
   from {
     opacity: 0;
   }
+}
+
+/* ---- Stage-queue mini-card stacks (§8): scripts piled over a station ---- */
+
+.stagestack {
+  position: fixed;
+  top: 0;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  pointer-events: none;
+  will-change: transform;
+}
+
+.stagestack__cards {
+  position: relative;
+  width: 24px;
+  height: 28px;
+}
+
+.stagestack__card {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: var(--paper);
+  border: 1.5px solid var(--ink);
+  border-radius: 2px;
+  box-shadow: var(--chip-shadow);
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  font-weight: var(--w-semibold);
+  color: var(--ink);
+}
+
+.stagestack__label {
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(32, 48, 43, 0.78);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--paper);
+}
+
+/* ---- RxCard (§28): a sheet off the prescriber's pad, clipped in mid-fill ----
+   The drug line is the hero — the same mono face as the shelf's bin labels,
+   so matching card to bin is one visual act. */
+
+.rxcard {
+  position: absolute;
+  top: 50%;
+  right: 20px;
+  width: 252px;
+  padding: 0 18px 16px;
+  background: var(--paper-gen1);
+  border: var(--panel-border) solid var(--ink);
+  border-bottom: none;
+  filter: var(--panel-shadow);
+  transform: translateY(-50%) rotate(-0.6deg);
+  pointer-events: none;
+  /* Torn bottom edge off the pad */
+  clip-path: polygon(
+    0 0, 100% 0, 100% calc(100% - 6px),
+    92% 100%, 84% calc(100% - 5px), 76% 100%, 68% calc(100% - 6px),
+    60% 100%, 52% calc(100% - 4px), 44% 100%, 36% calc(100% - 6px),
+    28% 100%, 20% calc(100% - 5px), 12% 100%, 4% calc(100% - 6px), 0 100%
+  );
+}
+
+.rxcard--in {
+  animation: rxcard-in var(--dur-slow) var(--ease-out) both;
+}
+
+@keyframes rxcard-in {
+  from {
+    opacity: 0;
+    transform: translateY(-50%) translateX(28px) rotate(1.4deg);
+  }
+}
+
+/* Pad binding: the stitched strip the sheet tore away from */
+.rxcard__binding {
+  height: 10px;
+  margin: 0 -18px;
+  background: var(--ink);
+  background-image: repeating-linear-gradient(
+    90deg,
+    transparent 0 10px,
+    var(--paper-gen1) 10px 14px
+  );
+}
+
+.rxcard__head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0 8px;
+  border-bottom: 1.5px solid var(--ink);
+}
+
+.rxcard__mark {
+  font-family: var(--font-display);
+  font-size: var(--fs-40);
+  font-weight: var(--w-bold);
+  line-height: 0.9;
+  color: var(--pine);
+}
+
+.rxcard__clinic {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+.rxcard__clinicsub {
+  color: var(--ink-60);
+}
+
+.rxcard__row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 0 3px;
+  border-bottom: 1px dotted var(--ink-25);
+}
+
+.rxcard__label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-75);
+}
+
+.rxcard__value {
+  font-size: var(--fs-14);
+  font-weight: var(--w-semibold);
+}
+
+.rxcard__drug {
+  padding: 12px 0 10px;
+  border-bottom: 1px dotted var(--ink-25);
+  font-family: var(--font-mono);
+  font-size: var(--fs-20);
+  font-weight: var(--w-semibold);
+  line-height: 1.25;
+}
+
+.rxcard__state {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 12px;
+  font-size: var(--fs-12);
+  font-weight: var(--w-semibold);
+  color: var(--pine);
+}
+
+.rxcard__state::before {
+  content: "\25B8"; /* small pine pointer */
+}
+
+.rxcard__state--stuck {
+  color: var(--rose);
+}
+
+/* Pill-counting pips while the 6 igm fill runs */
+.rxcard__pips {
+  display: none;
+  gap: 3px;
+}
+
+.rxcard--filling .rxcard__pips {
+  display: inline-flex;
+}
+
+.rxcard__pips i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--pine);
+  animation: pip-drop 0.7s infinite;
+}
+
+.rxcard__pips i:nth-child(2) {
+  animation-delay: 0.14s;
+}
+
+.rxcard__pips i:nth-child(3) {
+  animation-delay: 0.28s;
+}
+
+@keyframes pip-drop {
+  0%,
+  60%,
+  100% {
+    transform: none;
+    opacity: 0.45;
+  }
+  30% {
+    transform: translateY(-3px);
+    opacity: 1;
+  }
+}
+
+/* ---- End-of-day receipt (§28, the signature element) ---- */
+
+.scrim--receipt {
+  align-content: center;
+}
+
+.rcpt-stage {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  max-height: calc(100vh - 48px);
+}
+
+.rcpt {
+  position: relative;
+  width: 324px;
+  padding: 20px 24px 16px;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.5;
+  filter: var(--panel-shadow);
+  overflow-y: auto;
+  pointer-events: auto;
+  cursor: pointer;
+}
+
+/* Perforated tear edges, top and bottom */
+.rcpt::before,
+.rcpt::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 7px;
+}
+
+.rcpt::before {
+  top: 0;
+  background:
+    linear-gradient(135deg, var(--glass) 3.5px, transparent 0) 0 0 / 14px 7px repeat-x,
+    linear-gradient(-135deg, var(--glass) 3.5px, transparent 0) 7px 0 / 14px 7px repeat-x;
+}
+
+.rcpt::after {
+  bottom: 0;
+  background:
+    linear-gradient(45deg, var(--glass) 3.5px, transparent 0) 0 0 / 14px 7px repeat-x,
+    linear-gradient(-45deg, var(--glass) 3.5px, transparent 0) 7px 0 / 14px 7px repeat-x;
+}
+
+.rcpt__item {
+  opacity: 0;
+}
+
+.rcpt__item--on {
+  opacity: 1;
+  transition: opacity 60ms linear;
+}
+
+.rcpt__store {
+  margin-top: 4px;
+  text-align: center;
+  font-size: var(--fs-14);
+  font-weight: var(--w-bold);
+  letter-spacing: 0.18em;
+}
+
+.rcpt__meta {
+  text-align: center;
+  font-size: 11px;
+  color: var(--ink-75);
+}
+
+.rcpt__rule {
+  margin: 9px 0;
+  border-top: 1.5px dashed var(--ink-25);
+}
+
+.rcpt__section {
+  margin-bottom: 2px;
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ink-75);
+}
+
+.rcpt__line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.rcpt__r {
+  white-space: nowrap;
+}
+
+.rcpt__line--rose .rcpt__r {
+  color: var(--rose);
+}
+
+.rcpt__line--total {
+  margin-top: 5px;
+  padding-top: 4px;
+  border-top: 1.5px solid var(--ink);
+  font-size: var(--fs-14);
+  font-weight: var(--w-bold);
+}
+
+.rcpt__line--total .rcpt__r {
+  color: var(--amber);
+}
+
+.rcpt__stamp {
+  width: fit-content;
+  margin: 10px auto 4px;
+  padding: 5px 20px 4px;
+  border: 3.5px solid currentColor;
+  border-radius: 5px;
+  font-size: var(--fs-20);
+  font-weight: var(--w-bold);
+  letter-spacing: 0.28em;
+  text-indent: 0.28em;
+  transform: rotate(-6deg);
+  mix-blend-mode: multiply;
+  opacity: 0;
+}
+
+.rcpt__stamp--profit {
+  color: var(--pine);
+}
+
+.rcpt__stamp--loss {
+  color: var(--rose);
+}
+
+.rcpt__stamp--anim.rcpt__item--on {
+  animation: stamp-thunk 240ms var(--ease-out) both;
+}
+
+@keyframes stamp-thunk {
+  from {
+    opacity: 0;
+    transform: rotate(-13deg) scale(1.8);
+  }
+  70% {
+    opacity: 0.92;
+    transform: rotate(-5.4deg) scale(0.97);
+  }
+  to {
+    opacity: 0.9;
+    transform: rotate(-6deg) scale(1);
+  }
+}
+
+.rcpt__foot {
+  margin-bottom: 4px;
+}
+
+.rcpt__next {
+  pointer-events: auto;
 }
 
 /* ---- Reduced motion ---- */

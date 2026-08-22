@@ -12,6 +12,7 @@ import {
   MeshBasicMaterial,
   MeshLambertMaterial,
   PlaneGeometry,
+  RingGeometry,
   Scene,
   Vector3,
   type OrthographicCamera,
@@ -86,6 +87,17 @@ export class StoreScene {
   private pathMesh: Mesh;
   private pathGeometry = new BufferGeometry();
 
+  /** Amber pulsing ring under the bottleneck station (§27, queue ≥ 4). */
+  private bottleneckRing: Mesh;
+  private bottleneckMat = new MeshBasicMaterial({
+    color: AMBER,
+    transparent: true,
+    depthWrite: false,
+  });
+  private bottleneckId: string | null = null;
+  private bottleneckRadius = 1;
+  private pulseT = 0;
+
   private hoveredId: string | null = null;
   private hiddenId: string | null = null;
   private buildMode = false;
@@ -134,6 +146,13 @@ export class StoreScene {
     this.gridLines.visible = false;
     this.store.add(this.gridLines);
 
+    const ringGeometry = new RingGeometry(0.82, 1, 40);
+    ringGeometry.rotateX(-Math.PI / 2);
+    this.bottleneckRing = new Mesh(ringGeometry, this.bottleneckMat);
+    this.bottleneckRing.visible = false;
+    this.bottleneckRing.renderOrder = 4;
+    this.store.add(this.bottleneckRing);
+
     // Debug A* path ribbon (P toggle)
     this.pathMesh = new Mesh(
       this.pathGeometry,
@@ -161,6 +180,37 @@ export class StoreScene {
       wall.opacity += (target - wall.opacity) * k;
       for (const material of wall.materials) material.opacity = wall.opacity;
     }
+
+    if (this.bottleneckRing.visible) {
+      this.pulseT += dtMs / 1000;
+      const pulse = 0.5 + 0.5 * Math.sin(this.pulseT * 4.4);
+      const s = this.bottleneckRadius * (1 + pulse * 0.1);
+      this.bottleneckRing.scale.set(s, 1, s);
+      this.bottleneckMat.opacity = 0.45 + pulse * 0.4;
+    }
+  }
+
+  /** Place (or clear) the amber bottleneck ring under a station (§27). */
+  setBottleneck(id: string | null): void {
+    if (id === this.bottleneckId) return;
+    this.bottleneckId = id;
+    if (!id) {
+      this.bottleneckRing.visible = false;
+      return;
+    }
+    const item = this.sim.snapshot.store.furniture.find((f) => f.id === id);
+    if (!item) {
+      this.bottleneckRing.visible = false;
+      return;
+    }
+    const def = furnitureDef(item.defId);
+    const rect = footprintRect(def.cells, item.cellX, item.cellY, item.rot);
+    const [wx, wz] = rectCenterWorld(this.cols, this.rows, rect);
+    this.bottleneckRadius = Math.max(rect.w, rect.h) / 2 + 0.35;
+    this.bottleneckRing.position.set(wx, FLOOR_Y + 0.01, wz);
+    this.bottleneckRing.scale.set(this.bottleneckRadius, 1, this.bottleneckRadius);
+    this.pulseT = 0;
+    this.bottleneckRing.visible = true;
   }
 
   get pickTargets(): Mesh[] {

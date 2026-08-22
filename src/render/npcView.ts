@@ -22,8 +22,9 @@ import {
   Vector3,
   type Scene,
 } from "three";
-import { FACING } from "../core/grid";
-import { WAITING_MODES } from "../sim/customers";
+import { FACING, footprintRect, rectCenterWorld } from "../core/grid";
+import { furnitureDef } from "../data/furniture";
+import { showsPatienceRing } from "../sim/customers";
 import type { Sim } from "../sim/sim";
 import { PartsBuilder } from "./meshes/parts";
 import { FLOOR_Y } from "./storeScene";
@@ -233,8 +234,8 @@ export class NpcView {
         nb++;
       }
 
-      // Patience ring while waiting in a queue (§27: shrinking overhead arc)
-      if (WAITING_MODES.has(c.mode)) {
+      // Patience ring while waiting (§27: shrinking overhead arc)
+      if (showsPatienceRing(c)) {
         this.pos.set(wx, baseY + RING_Y - sink, wz);
         this.m.makeTranslation(this.pos.x, this.pos.y, this.pos.z);
         this.rings.setMatrixAt(nr, this.m);
@@ -262,7 +263,7 @@ export class NpcView {
     this.updateOwner(state.workingStationId);
   }
 
-  /** Show the white-coat owner behind the register they're working. */
+  /** Show the white-coat owner behind the station they're working. */
   private updateOwner(stationId: string | null): void {
     if (!stationId) {
       this.owner.visible = false;
@@ -273,10 +274,11 @@ export class NpcView {
       this.owner.visible = false;
       return;
     }
+    const def = furnitureDef(item.defId);
+    const rect = footprintRect(def.cells, item.cellX, item.cellY, item.rot);
+    const [cx, cz] = rectCenterWorld(this.cols, this.rows, rect);
     const [fx, fy] = FACING[item.rot]!;
-    const wx = item.cellX - fx - this.cols / 2 + 0.5;
-    const wz = item.cellY - fy - this.rows / 2 + 0.5;
-    this.owner.position.set(wx, FLOOR_Y, wz);
+    this.owner.position.set(cx - fx, FLOOR_Y, cz - fy);
     this.owner.rotation.y = Math.atan2(fx, fy);
     this.owner.visible = true;
   }

@@ -20,8 +20,13 @@ export type Command =
   | { type: "furniture.sell"; id: string }
   | { type: "station.workHere"; stationId: string }
   | { type: "station.leave" }
+  /** Player picked a bin during the fill interaction; handled by Sim (workflow). */
+  | { type: "fill.pickBin"; drugId: string }
   /** Dev-only spawn stress cycle ×1/×3/×9/×27 (milestone 03); handled by Sim, not here. */
   | { type: "dev.stressToggle" };
+
+/** Stations the player can work at (§8 solo era). */
+const WORKABLE = new Set(["counter_register", "counter_service", "fill_bench"]);
 
 function leaveStation(state: GameState, emit: (event: SimEvent) => void): void {
   if (state.workingStationId === null) return;
@@ -109,7 +114,7 @@ export function handleCommand(
     case "station.workHere": {
       if (state.phase !== "shift" || state.buildMode) return;
       const item = state.store.furniture.find((f) => f.id === command.stationId);
-      if (!item || item.defId !== "counter_register") return;
+      if (!item || !WORKABLE.has(item.defId)) return;
       if (state.workingStationId === item.id) return;
       state.workingStationId = item.id;
       emit({ type: "station.changed", stationId: item.id });
@@ -119,7 +124,8 @@ export function handleCommand(
       leaveStation(state, emit);
       return;
     }
+    case "fill.pickBin":
     case "dev.stressToggle":
-      return; // handled by Sim (customer system lives outside GameState)
+      return; // handled by Sim (workflow/customer systems live outside GameState)
   }
 }

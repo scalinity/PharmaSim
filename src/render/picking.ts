@@ -10,9 +10,17 @@ import { Pathfinder } from "../core/pathfind";
 import { furnitureDef } from "../data/furniture";
 import type { SimEvent } from "../sim/events";
 import type { Sim } from "../sim/sim";
+import type { RxBinBoard } from "./rxBins";
 import { FLOOR_Y, type StoreScene } from "./storeScene";
 
 const CLICK_SLOP_PX = 5;
+
+/** Stations the player can work mid-shift (§8), with hint copy names. */
+const STATION_NAMES: Record<string, string> = {
+  counter_register: "register",
+  counter_service: "counter",
+  fill_bench: "fill bench",
+};
 
 export interface BuildSelection {
   id: string;
@@ -60,6 +68,7 @@ export class Picking {
     private sim: Sim,
     bus: EventBus<SimEvent>,
     private scene: StoreScene,
+    private binBoard: RxBinBoard,
     private camera: OrthographicCamera,
     private canvas: HTMLCanvasElement,
     private callbacks: PickingCallbacks,
@@ -168,18 +177,32 @@ export class Picking {
       return;
     }
 
-    // Mid-shift: registers are workable stations (§8 workHere).
+    // Mid-fill: the shelf's labeled bins take pointer priority (§8).
+    if (state.phase === "shift" && this.binBoard.active) {
+      const bin = this.pickBinIndex(e.clientX, e.clientY);
+      this.binBoard.setHover(bin);
+      if (bin !== -1) {
+        this.scene.setHover(null);
+        this.setCursor("pointer");
+        this.callbacks.stationHint(null);
+        return;
+      }
+    } else {
+      this.binBoard.setHover(-1);
+    }
+
+    // Mid-shift: registers, the counter and the bench are workable (§8).
     if (state.phase === "shift") {
       const id = this.pickFurnitureId(e.clientX, e.clientY);
       const item = id ? state.store.furniture.find((f) => f.id === id) : undefined;
-      const isRegister = item?.defId === "counter_register";
-      this.scene.setHover(isRegister ? id : null);
-      this.setCursor(isRegister ? "pointer" : "");
-      if (isRegister) {
+      const stationName = item ? STATION_NAMES[item.defId] : undefined;
+      this.scene.setHover(stationName ? id : null);
+      this.setCursor(stationName ? "pointer" : "");
+      if (stationName) {
         this.callbacks.stationHint(
           state.workingStationId === id
-            ? "Click to step away from the register"
-            : "Click to work the register",
+            ? `Click to step away from the ${stationName}`
+            : `Click to work the ${stationName}`,
         );
       } else {
         this.callbacks.stationHint(null);
@@ -204,16 +227,26 @@ export class Picking {
 
     if (!state.buildMode) {
       if (state.phase !== "shift") return;
-      // Work the register you click; click anywhere else to leave the post.
+      // A fill in progress: clicking a labeled bin fills from it (§8).
+      if (this.binBoard.active) {
+        const bin = this.pickBinIndex(e.clientX, e.clientY);
+        const drugId = bin === -1 ? null : this.binBoard.drugIdAt(bin);
+        if (drugId) {
+          this.sim.dispatch({ type: "fill.pickBin", drugId });
+          return;
+        }
+      }
+      // Work the station you click; click anywhere else to leave the post.
       const id = this.pickFurnitureId(e.clientX, e.clientY);
       const item = id ? state.store.furniture.find((f) => f.id === id) : undefined;
-      if (item?.defId === "counter_register") {
+      const stationName = item ? STATION_NAMES[item.defId] : undefined;
+      if (item && stationName) {
         if (state.workingStationId === item.id) {
           this.sim.dispatch({ type: "station.leave" });
-          this.callbacks.stationHint("Click to work the register");
+          this.callbacks.stationHint(`Click to work the ${stationName}`);
         } else {
           this.sim.dispatch({ type: "station.workHere", stationId: item.id });
-          this.callbacks.stationHint("Click to step away from the register");
+          this.callbacks.stationHint(`Click to step away from the ${stationName}`);
         }
       } else if (state.workingStationId) {
         this.sim.dispatch({ type: "station.leave" });
@@ -373,5 +406,11 @@ export class Picking {
     const hits = this.raycaster.intersectObjects(this.scene.pickTargets, false);
     const mesh = hits[0]?.object as Mesh | undefined;
     return mesh ? this.scene.itemIdOf(mesh) : null;
+  }
+
+  private pickBinIndex(clientX: number, clientY: number): number {
+    this.ndc.set((clientX / window.innerWidth) * 2 - 1, -(clientY / window.innerHeight) * 2 + 1);
+    this.raycaster.setFromCamera(this.ndc, this.camera);
+    return this.binBoard.pick(this.raycaster);
   }
 }

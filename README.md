@@ -35,7 +35,7 @@ and is only used when a milestone brief calls for it.
 - [x] 01 Scaffold + core loop
 - [x] 02 Store grid + placement
 - [x] 03 Customers + OTC flow
-- [ ] 04 Prescription vertical slice
+- [x] 04 Prescription vertical slice
 - [ ] 05 Inventory + economy
 - [ ] 06 Saves + app shell
 - [ ] 07 Staff + automation

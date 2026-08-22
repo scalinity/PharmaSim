@@ -5,7 +5,7 @@ import type { EventBus } from "../core/bus";
 import { DAY_END_IGM, IGM_PER_TICK } from "../core/clock";
 import type { Rot } from "../core/grid";
 import { handleCommand, type Command } from "./commands";
-import { applyRep, CustomerSystem } from "./customers";
+import { applyRep, CustomerSystem, REP_REASONS } from "./customers";
 import type { SimEvent } from "./events";
 import {
   backroomZone,
@@ -14,9 +14,11 @@ import {
   type PlacementCheck,
 } from "./placement";
 import { createGameState, type GameState } from "./state";
+import { RxWorkflow } from "./workflow";
 
 export class Sim {
   readonly customers: CustomerSystem;
+  readonly workflow: RxWorkflow;
   private state: GameState;
   private lastEmittedMinute: number;
   private emit: (event: SimEvent) => void;
@@ -25,7 +27,8 @@ export class Sim {
     this.state = createGameState();
     this.lastEmittedMinute = Math.floor(this.state.clockIgm);
     this.emit = (event) => this.bus.emit(event);
-    this.customers = new CustomerSystem(this.state);
+    this.workflow = new RxWorkflow();
+    this.customers = new CustomerSystem(this.state, this.workflow);
   }
 
   /** Read-only view of the state for HUD rendering. Never mutate through this. */
@@ -42,7 +45,16 @@ export class Sim {
       case "furniture.place":
       case "furniture.move":
       case "furniture.sell":
-        this.customers.layoutChanged(this.state);
+        this.customers.layoutChanged(this.state, this.emit);
+        this.workflow.syncStation(this.state, this.emit);
+        break;
+      case "station.workHere":
+      case "station.leave":
+      case "build.enter":
+        this.workflow.syncStation(this.state, this.emit);
+        break;
+      case "fill.pickBin":
+        this.workflow.pickBin(command.drugId, this.emit);
         break;
       case "dev.stressToggle": {
         const mult = this.customers.cycleStress(this.state);
@@ -99,6 +111,7 @@ export class Sim {
     }
 
     this.customers.tick(this.state, this.emit);
+    this.workflow.tick(this.state, this.emit);
 
     // 20:00: the clock freezes while remaining customers finish (§5),
     // then the day closes.
@@ -108,7 +121,7 @@ export class Sim {
         this.bus.emit({ type: "station.changed", stationId: null });
       }
       // §15 daily drift: 1% toward 2.5 (neglect decays, grudges fade).
-      applyRep(this.state, (2.5 - this.state.repStars) * 0.01, this.emit);
+      applyRep(this.state, (2.5 - this.state.repStars) * 0.01, this.emit, REP_REASONS.drift);
       this.state.phase = "close";
       this.bus.emit({ type: "day.phaseChanged", phase: this.state.phase, day: this.state.day });
     }

@@ -2,6 +2,7 @@
 
 import { DAY_START_IGM } from "../core/clock";
 import type { Rot } from "../core/grid";
+import { TIER1_DRUGS } from "../data/drugs";
 
 export type DayPhase = "morning" | "shift" | "close";
 export type GameSpeed = 0 | 1 | 2;
@@ -29,15 +30,36 @@ export interface StoreState {
   nextFurnitureId: number;
   /** OTC shelf stock keyed by placed-furniture id (backroom arrives in 05). */
   shelfStock: Record<string, ShelfSlot[]>;
+  /** Rx bin units per drug id (§11); decrements per fill, refilled via 05 orders. */
+  rxStock: Record<string, number>;
 }
 
-/** End-of-day report counters (§26 rep deltas; reset each morning). */
+/** One §15 reputation reason tallied for the receipt. */
+export interface RepReason {
+  count: number;
+  delta: number;
+}
+
+/** End-of-day receipt counters (§26 rep deltas, §28 lines; reset each morning). */
 export interface DayStats {
   visitors: number;
-  sales: number;
+  /** OTC checkout transactions (register sales + Rx-pickup baskets). */
+  otcSales: number;
+  otcRevenue: number;
+  /** Scripts handed over at pickup (errors included — counted separately too). */
+  fills: number;
+  copayRevenue: number;
+  rxReimbursement: number;
+  /** Copay + reimbursement reversals from dispensed errors (positive $). */
+  refunds: number;
   walkouts: number;
-  revenue: number;
+  /** Dispensed errors discovered at pickup (§8). */
+  errors: number;
+  /** Scripts turned away at drop-off for missing stock (§15). */
+  refusals: number;
   repDelta: number;
+  /** Receipt "reputation delta with reasons" tallies, keyed by reason copy. */
+  repReasons: Record<string, RepReason>;
 }
 
 export interface GameState {
@@ -79,8 +101,31 @@ const STARTER_SHELF_SKUS: readonly (readonly string[])[] = [
   ["loratadine", "cetirizine", "famotidine", "multivitamin"],
 ];
 
+/** §26 starter stock, Rx half: the Tier-1 spread, deeper on high-demand SKUs.
+ *  Together with the OTC shelves this lands near the $1,500 starter budget. */
+const STARTER_RX_UNITS: Record<1 | 2 | 3, number> = { 1: 2, 2: 4, 3: 10 };
+
+export function starterRxStock(): Record<string, number> {
+  const stock: Record<string, number> = {};
+  for (const def of TIER1_DRUGS) stock[def.id] = STARTER_RX_UNITS[def.demandWeight];
+  return stock;
+}
+
 export function emptyDayStats(): DayStats {
-  return { visitors: 0, sales: 0, walkouts: 0, revenue: 0, repDelta: 0 };
+  return {
+    visitors: 0,
+    otcSales: 0,
+    otcRevenue: 0,
+    fills: 0,
+    copayRevenue: 0,
+    rxReimbursement: 0,
+    refunds: 0,
+    walkouts: 0,
+    errors: 0,
+    refusals: 0,
+    repDelta: 0,
+    repReasons: {},
+  };
 }
 
 export function createGameState(): GameState {
@@ -115,6 +160,7 @@ export function createGameState(): GameState {
       furniture,
       nextFurnitureId: STARTING_LAYOUT.length + 1,
       shelfStock,
+      rxStock: starterRxStock(),
     },
     workingStationId: null,
     dayStats: emptyDayStats(),

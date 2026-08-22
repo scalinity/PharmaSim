@@ -1,21 +1,27 @@
-// Customer simulation (SPEC §7, §15, §17, §26): district-driven arrival
+// Customer simulation (SPEC §7, §8, §15, §17, §26): district-driven arrival
 // scheduling with rush bumps, archetypes, the browse → queue → pay → exit
-// state machine, patience with chair relief, walk-outs, shelf stock decrement,
-// and register service while the player works the station. Pure sim — no DOM,
-// no three.js. Customer objects are pooled; the per-tick path is allocation-free.
+// state machine for OTC shoppers, the drop-off → wait (sit/browse) → pickup
+// flow for Rx patients, patience with chair relief, walk-outs, shelf stock
+// decrement, and station service while the player works registers, the
+// service counter, or the fill bench. Pure sim — no DOM, no three.js.
+// Customer objects are pooled; the per-tick path is allocation-free.
 
 import { DAY_START_IGM, IGM_PER_TICK } from "../core/clock";
 import { cellIndex, doorCells, FACING, footprintRect } from "../core/grid";
 import { Pathfinder } from "../core/pathfind";
 import { districtById } from "../data/districts";
+import { drugDef } from "../data/drugs";
 import { furnitureDef } from "../data/furniture";
 import { randomFullName } from "../data/names";
 import { otcDef } from "../data/otc";
 import type { SimEvent } from "./events";
 import { backroomZone } from "./placement";
 import type { GameState, PlacedFurniture } from "./state";
+import type { RxWorkflow } from "./workflow";
 
 export type Archetype = "hurried" | "steady" | "bargain" | "chatty";
+
+export type CustomerKind = "otc" | "rx";
 
 export type CustomerMode =
   | "enter" // outside → door cell
@@ -25,17 +31,26 @@ export type CustomerMode =
   | "queue" // standing at the slot (patience drains)
   | "toChair" // walking to a reserved waiting chair (patience drains)
   | "sit" // seated (half drain, §26)
-  | "pay" // being served at the register (patience frozen)
+  | "rxWait" // standing around waiting on a script (full drain, §7)
+  | "pay" // being served at a station (patience frozen)
   | "leave"; // walking out (calm or angry)
 
 /** Modes during which the overhead patience ring is shown. */
-export const WAITING_MODES: ReadonlySet<CustomerMode> = new Set([
+const WAITING_MODES: ReadonlySet<CustomerMode> = new Set([
   "toQueue",
   "queue",
   "toChair",
   "sit",
+  "rxWait",
   "pay",
 ]);
+
+/** Ring rule for the render layer: waiting modes, plus Rx patients killing
+ *  time on the shelves while their script is in the pipeline (§7). */
+export function showsPatienceRing(c: Customer): boolean {
+  if (WAITING_MODES.has(c.mode)) return true;
+  return c.scriptId !== 0 && (c.mode === "toShelf" || c.mode === "browse");
+}
 
 export interface BasketLine {
   skuId: string;
@@ -51,7 +66,16 @@ export interface Customer {
   active: boolean;
   name: string;
   archetype: Archetype;
+  kind: CustomerKind;
   mode: CustomerMode;
+  /** Active RxScript id, or 0 (Rx patients only). */
+  scriptId: number;
+  /** Igm since drop-off; ≥60 starts the waiting-room browse (§7). */
+  waitIgm: number;
+  /** The one waiting-room browse round has been taken. */
+  hasBrowsed: boolean;
+  /** Pickup is done; the 10 igm counsel chat is running (§8, chatty). */
+  counseling: boolean;
   /** Continuous cell coordinates (integers = cell centers). */
   x: number;
   y: number;
@@ -71,7 +95,7 @@ export interface Customer {
   targets: string[]; // otc shelf furniture ids
   targetIdx: number;
   browseLeft: number;
-  queueRegId: string | null;
+  laneId: string | null;
   chairId: string | null;
   hasBag: boolean;
   angry: boolean;
@@ -105,16 +129,36 @@ const OLD_TOWN_SHARE = 20 / ((6_800 / 1000) * 9);
 
 const WALK_SPEED = 0.5; // cells per igm ≈ 1.2 m/s at 1×
 const ANGRY_SPEED = 0.68;
-const CHECKOUT_IGM = 4;
+const CHECKOUT_IGM = 4; // §26: register checkout and Rx pickup
+const DROPOFF_IGM = 3; // handing a script across the counter
+const COUNSEL_IGM = 10; // §26 counsel duration (chatty pickups)
 const BLOCKED_REPATH_IGM = 7.2; // 3 real s at 1× (§6)
 const SIT_QUEUE_POS = 3; // queue position from which customers grab a chair
 const STAND_QUEUE_POS = 1; // seated customers rejoin the line at this position
 const QUEUE_MAX_SLOTS = 12;
 const BASKET_MAX = 4;
 const EXTRA_ITEM_CHANCE = 0.6;
+const RX_SHARE = 0.35; // §26 customer mix (vaccine walk-ins fold in later)
+const RX_BROWSE_WAIT_IGM = 60; // §7: waiting Rx patients start browsing
+const COPAY = 10; // §26 flat copay
+const COUNSEL_BASKET_CHANCE = 0.5; // §8: +$4 basket chance after counsel
+const COUNSEL_BASKET_VALUE = 4;
 const REP_SERVE = 0.02;
+const REP_COUNSEL = 0.03;
 const REP_WALKOUT = -0.06;
 const REP_WALKOUT_HURRIED = -0.09;
+const REP_REFUSED = -0.08; // §15 unfillable script (stock-out)
+const REP_ERROR = -0.15; // §15 dispensed error
+
+/** Receipt copy for §15 reasons — action names stay identical everywhere (§28). */
+export const REP_REASONS = {
+  serve: "Happy serves",
+  counsel: "Counsel chats",
+  walkout: "Walk-outs",
+  refused: "Scripts refused",
+  error: "Dispensing errors",
+  drift: "Word settles",
+} as const;
 
 interface ArchetypeDef {
   id: Archetype;
@@ -151,13 +195,16 @@ function pickArchetype(): ArchetypeDef {
   return ARCHETYPES[ARCHETYPES.length - 1]!;
 }
 
-/** Apply a §15 reputation delta: clamp, track the day's total, emit. */
-export function applyRep(state: GameState, delta: number, emit: Emit): void {
+/** Apply a §15 reputation delta: clamp, tally by reason for the receipt, emit. */
+export function applyRep(state: GameState, delta: number, emit: Emit, reason: string): void {
   const next = Math.min(5, Math.max(0, state.repStars + delta));
   const applied = next - state.repStars;
   if (applied === 0) return;
   state.repStars = next;
   state.dayStats.repDelta += applied;
+  const tally = (state.dayStats.repReasons[reason] ??= { count: 0, delta: 0 });
+  tally.count++;
+  tally.delta += applied;
   emit({ type: "rep.changed", stars: state.repStars, delta: applied });
 }
 
@@ -195,7 +242,10 @@ export class CustomerSystem {
     chatty: 0,
   };
 
-  constructor(state: GameState) {
+  constructor(
+    state: GameState,
+    private workflow: RxWorkflow,
+  ) {
     const { cols, rows } = state.store.grid;
     this.cols = cols;
     this.rows = rows;
@@ -285,8 +335,35 @@ export class CustomerSystem {
 
   // --- Layout-derived data ---
 
+  /** Service-counter lane keys: one drop-off line, one pickup line (§8). */
+  static dropLaneId(counterId: string): string {
+    return `${counterId}#drop`;
+  }
+
+  static pickLaneId(counterId: string): string {
+    return `${counterId}#pick`;
+  }
+
+  /**
+   * The counter's two lane cells: the drop-off tray sits on the local-west
+   * half of the mesh, pickup on the local-east (render/meshes/furniture.ts).
+   */
+  static laneCells(counter: PlacedFurniture): { drop: [number, number]; pick: [number, number] } {
+    const { cellX: x, cellY: y } = counter;
+    switch (counter.rot) {
+      case 0:
+        return { drop: [x, y], pick: [x + 1, y] };
+      case 1:
+        return { drop: [x, y + 1], pick: [x, y] };
+      case 2:
+        return { drop: [x + 1, y], pick: [x, y] };
+      case 3:
+        return { drop: [x, y], pick: [x, y + 1] };
+    }
+  }
+
   /** Rebuild walkable/queue geometry after any furniture change. */
-  layoutChanged(state: GameState): void {
+  layoutChanged(state: GameState, emit: Emit = () => {}): void {
     const { cols } = this;
     this.staticWalk.fill(1);
     for (const item of state.store.furniture) {
@@ -309,22 +386,51 @@ export class CustomerSystem {
       }
     }
 
-    // Queue slot lines per register.
+    // Queue slot lines: one per register, two lanes per service counter.
     this.queueSlots.clear();
     for (const item of state.store.furniture) {
-      if (item.defId !== "counter_register") continue;
-      this.queueSlots.set(item.id, this.computeSlots(item));
+      const [fx, fy] = FACING[item.rot]!;
+      if (item.defId === "counter_register") {
+        this.queueSlots.set(item.id, this.computeSlots(item.cellX + fx, item.cellY + fy, fx, fy, 1));
+      } else if (item.defId === "counter_service") {
+        const { drop, pick } = CustomerSystem.laneCells(item);
+        // Lanes bend apart so the two lines never share cells.
+        this.queueSlots.set(
+          CustomerSystem.dropLaneId(item.id),
+          this.computeSlots(drop[0] + fx, drop[1] + fy, fx, fy, 1),
+        );
+        this.queueSlots.set(
+          CustomerSystem.pickLaneId(item.id),
+          this.computeSlots(pick[0] + fx, pick[1] + fy, fx, fy, -1),
+        );
+      }
     }
 
-    // Disband queues whose register vanished; stand up unseated sitters.
-    for (const [regId, q] of this.queues) {
-      if (this.queueSlots.has(regId)) continue;
+    // Disband queues whose station vanished; cancel any scripts they held.
+    for (const [laneId, q] of this.queues) {
+      if (this.queueSlots.has(laneId)) continue;
       for (const member of [...q]) {
         this.removeFromQueue(member);
+        this.cancelScript(state, member, emit);
         this.returnBasket(state, member);
         this.beginLeave(member, false);
       }
-      this.queues.delete(regId);
+      this.queues.delete(laneId);
+    }
+
+    // Script waiters lose their pipeline if the service counter is gone.
+    const counterExists = state.store.furniture.some((f) => f.defId === "counter_service");
+    if (!counterExists) {
+      for (const c of this.pool) {
+        if (!c.active || c.scriptId === 0 || c.laneId !== null || c.mode === "leave") continue;
+        this.cancelScript(state, c, emit);
+        if (c.chairId) {
+          this.chairOccupants.delete(c.chairId);
+          c.chairId = null;
+        }
+        this.returnBasket(state, c);
+        this.beginLeave(c, false);
+      }
     }
     for (const [chairId, poolIndex] of [...this.chairOccupants]) {
       if (state.store.furniture.some((f) => f.id === chairId)) continue;
@@ -343,20 +449,23 @@ export class CustomerSystem {
       else if (c.mode === "toChair" && c.chairId) {
         const chair = state.store.furniture.find((f) => f.id === c.chairId);
         if (chair) this.pathToChair(c, chair);
+      } else if (c.mode === "rxWait") {
+        // The loiter spot may now sit inside new furniture; pick a fresh one.
+        this.pathToLoiter(c);
       } else if (c.mode === "leave") this.beginLeave(c, c.angry);
     }
-    for (const regId of this.queues.keys()) this.refreshQueue(regId);
+    for (const laneId of this.queues.keys()) this.refreshQueue(laneId);
   }
 
-  /** Queue slot cells snaking out from the register's front (§27). */
-  private computeSlots(reg: PlacedFurniture): number[] {
+  /** Queue slot cells snaking out from a station front (§27). `bend` picks
+   *  which perpendicular the line prefers, so paired lanes split apart. */
+  private computeSlots(startX: number, startY: number, fx: number, fy: number, bend: -1 | 1): number[] {
     const { cols, rows } = this;
     const slots: number[] = [];
-    const facing = FACING[reg.rot]!;
-    let dx = facing[0];
-    let dy = facing[1];
-    let x = reg.cellX + dx;
-    let y = reg.cellY + dy;
+    let dx = fx;
+    let dy = fy;
+    let x = startX;
+    let y = startY;
     while (slots.length < QUEUE_MAX_SLOTS) {
       const inBounds = x >= 0 && x < cols && y >= 0 && y < rows;
       const cell = inBounds ? cellIndex(cols, x, y) : -1;
@@ -368,8 +477,8 @@ export class CustomerSystem {
         const ly = (last - lx) / cols;
         let bent = false;
         for (const [ox, oy] of [
-          [-dy, dx],
-          [dy, -dx],
+          [-dy * bend, dx * bend],
+          [dy * bend, -dx * bend],
         ] as const) {
           const nx = lx + ox;
           const ny = ly + oy;
@@ -422,14 +531,57 @@ export class CustomerSystem {
     }
 
     this.serveRegisters(state, dIgm, emit);
+    this.serveCounters(state, dIgm, emit);
+  }
+
+  /** True when `c` is between drop-off and pickup, waiting on their script. */
+  private isScriptWaiting(c: Customer): boolean {
+    return c.scriptId !== 0 && c.laneId === null;
+  }
+
+  /**
+   * Shared per-tick handling for a script waiter: patience drain, ready →
+   * pickup lane, wait > 60 igm → waiting-room browse (§7). Returns true when
+   * the caller must stop (walked out, or the mode changed underneath it).
+   */
+  private rxWaitTick(
+    state: GameState,
+    c: Customer,
+    dIgm: number,
+    drainRate: number,
+    emit: Emit,
+  ): boolean {
+    if (this.drainPatience(state, c, dIgm, drainRate, emit)) return true;
+    c.waitIgm += dIgm;
+    const script = this.workflow.script(c.scriptId);
+    if (!script) {
+      // Safety net: the script vanished — leave quietly.
+      c.scriptId = 0;
+      this.returnBasket(state, c);
+      this.beginLeave(c, false);
+      return true;
+    }
+    if (script.stage === "ready") {
+      this.goPickup(state, c, emit);
+      return true;
+    }
+    if (!c.hasBrowsed && c.waitIgm >= RX_BROWSE_WAIT_IGM && (c.mode === "sit" || c.mode === "rxWait")) {
+      this.startRxBrowse(state, c);
+      return true;
+    }
+    return false;
   }
 
   private updateCustomer(state: GameState, c: Customer, dIgm: number, emit: Emit): void {
     switch (c.mode) {
       case "enter":
-        if (this.step(c, dIgm)) this.planNextTarget(state, c);
+        if (this.step(c, dIgm)) {
+          if (c.kind === "rx") this.goDropoff(state, c, emit);
+          else this.planNextTarget(state, c);
+        }
         return;
       case "toShelf":
+        if (this.isScriptWaiting(c) && this.rxWaitTick(state, c, dIgm, 1, emit)) return;
         if (this.step(c, dIgm)) {
           const def = ARCHETYPES.find((a) => a.id === c.archetype)!;
           c.browseLeft = randRange(def.browseMin, def.browseMax);
@@ -437,6 +589,7 @@ export class CustomerSystem {
         }
         return;
       case "browse":
+        if (this.isScriptWaiting(c) && this.rxWaitTick(state, c, dIgm, 1, emit)) return;
         c.browseLeft -= dIgm;
         if (c.browseLeft <= 0) {
           this.finishBrowse(state, c);
@@ -453,7 +606,9 @@ export class CustomerSystem {
         if (this.queuePos(c) >= SIT_QUEUE_POS) this.trySit(state, c);
         return;
       case "toChair":
-        if (this.drainPatience(state, c, dIgm, 1, emit)) return;
+        if (this.isScriptWaiting(c)) {
+          if (this.rxWaitTick(state, c, dIgm, 1, emit)) return;
+        } else if (this.drainPatience(state, c, dIgm, 1, emit)) return;
         if (this.step(c, dIgm)) {
           c.mode = "sit";
           if (c.chairId) {
@@ -466,11 +621,19 @@ export class CustomerSystem {
         }
         return;
       case "sit":
+        if (this.isScriptWaiting(c)) {
+          this.rxWaitTick(state, c, dIgm, 0.5, emit); // §26 seated half drain
+          return;
+        }
         if (this.drainPatience(state, c, dIgm, 0.5, emit)) return;
         if (this.queuePos(c) <= STAND_QUEUE_POS) this.standUp(c);
         return;
+      case "rxWait":
+        if (this.rxWaitTick(state, c, dIgm, 1, emit)) return;
+        this.step(c, dIgm); // finish walking to the loiter spot
+        return;
       case "pay":
-        return; // progress lives in serveRegisters
+        return; // progress lives in serveRegisters/serveCounters
       case "leave":
         if (this.step(c, dIgm)) this.despawn(c);
         return;
@@ -480,6 +643,7 @@ export class CustomerSystem {
   /** Register service (§8, §26): 4 igm per checkout while the player works. */
   private serveRegisters(state: GameState, dIgm: number, emit: Emit): void {
     for (const [regId, q] of this.queues) {
+      if (regId.includes("#")) continue; // counter lanes live in serveCounters
       const front = q[0];
       if (!front) continue;
       const working = state.workingStationId === regId && !state.buildMode;
@@ -506,6 +670,162 @@ export class CustomerSystem {
     }
   }
 
+  /**
+   * Service counter (§8): the player works drop-offs and pickups by hand,
+   * one patient at a time. Pickup lane first — they have waited the longest.
+   */
+  private serveCounters(state: GameState, dIgm: number, emit: Emit): void {
+    for (const counter of state.store.furniture) {
+      if (counter.defId !== "counter_service") continue;
+      const working = state.workingStationId === counter.id && !state.buildMode;
+      const lanes = [
+        CustomerSystem.pickLaneId(counter.id),
+        CustomerSystem.dropLaneId(counter.id),
+      ];
+
+      if (!working) {
+        for (const laneId of lanes) {
+          const front = this.queues.get(laneId)?.[0];
+          if (!front || front.mode !== "pay") continue;
+          if (front.counseling) {
+            // Counsel cut short — the bag is already handed over; they go.
+            front.counseling = false;
+            this.leaveQueueStructures(front);
+            this.beginLeave(front, false);
+          } else {
+            front.mode = "queue"; // player stepped away
+          }
+        }
+        continue;
+      }
+
+      // One pharmacist: continue whoever is mid-serve, else start with pickup.
+      let serving: Customer | null = null;
+      let servingLane = "";
+      for (const laneId of lanes) {
+        const front = this.queues.get(laneId)?.[0];
+        if (front?.mode === "pay") {
+          serving = front;
+          servingLane = laneId;
+          break;
+        }
+      }
+      if (!serving) {
+        for (const laneId of lanes) {
+          const front = this.queues.get(laneId)?.[0];
+          const slot0 = this.queueSlots.get(laneId)?.[0];
+          if (!front || slot0 === undefined) continue;
+          if (front.mode !== "queue" || !this.atCell(front, slot0)) continue;
+          serving = front;
+          servingLane = laneId;
+          front.mode = "pay";
+          if (front.serveLeft <= 0) {
+            front.serveLeft = laneId.endsWith("#pick") ? CHECKOUT_IGM : DROPOFF_IGM;
+          }
+          const [fx, fy] = FACING[counter.rot]!;
+          front.yaw = Math.atan2(-fx, -fy);
+          break;
+        }
+      }
+      if (!serving) continue;
+
+      serving.serveLeft -= dIgm;
+      if (serving.serveLeft > 0) continue;
+
+      if (serving.counseling) this.completeCounsel(state, serving, emit);
+      else if (servingLane.endsWith("#pick")) this.completePickup(state, serving, emit);
+      else this.completeDropoff(state, serving, emit);
+    }
+  }
+
+  /** Drop-off handoff done: accept into the fill queue, or refuse (§15). */
+  private completeDropoff(state: GameState, c: Customer, emit: Emit): void {
+    const script = this.workflow.script(c.scriptId);
+    if (!script) {
+      this.leaveQueueStructures(c);
+      this.beginLeave(c, false);
+      return;
+    }
+    if (this.workflow.tryAccept(state, script, emit)) {
+      this.leaveQueueStructures(c);
+      c.waitIgm = 0;
+      this.beginScriptWait(state, c);
+    } else {
+      // Out of stock: the script is refused and logged for the receipt.
+      state.dayStats.refusals++;
+      applyRep(state, REP_REFUSED, emit, REP_REASONS.refused);
+      emit({ type: "rx.refused", drugId: script.drugId, customerId: c.id });
+      c.scriptId = 0;
+      this.leaveQueueStructures(c);
+      this.beginLeave(c, false);
+    }
+  }
+
+  /** Pickup handoff: copay + reimbursement credit together (§10), basket
+   *  rings up too; a latent wrong fill surfaces here (§8). */
+  private completePickup(state: GameState, c: Customer, emit: Emit): void {
+    const script = this.workflow.script(c.scriptId);
+    if (!script) {
+      this.leaveQueueStructures(c);
+      this.beginLeave(c, false);
+      return;
+    }
+    const drug = drugDef(script.drugId);
+    const basketTotal = c.basket.reduce((sum, line) => sum + line.price, 0);
+
+    state.dayStats.fills++;
+    state.dayStats.copayRevenue += COPAY;
+    state.dayStats.rxReimbursement += drug.reimbursement;
+    if (basketTotal > 0) {
+      state.dayStats.otcSales++;
+      state.dayStats.otcRevenue += basketTotal;
+    }
+    let cashDelta = COPAY + drug.reimbursement + basketTotal;
+
+    const wrong = script.filledWithDrugId !== script.drugId;
+    const counseled = !wrong && c.archetype === "chatty";
+    if (wrong) {
+      // §8 copy voice: an error is refunded, never depicted as harm.
+      const refund = COPAY + drug.reimbursement;
+      cashDelta -= refund;
+      state.dayStats.refunds += refund;
+      state.dayStats.errors++;
+      applyRep(state, REP_ERROR, emit, REP_REASONS.error);
+      emit({ type: "rx.errorDispensed", scriptId: script.id, refund });
+    } else {
+      applyRep(state, REP_SERVE, emit, REP_REASONS.serve);
+    }
+
+    state.cash += cashDelta;
+    emit({ type: "cash.changed", cash: state.cash });
+    emit({ type: "rx.pickedUp", scriptId: script.id, total: cashDelta, counseled });
+    this.workflow.finish(script, emit);
+    c.scriptId = 0;
+    c.basket.length = 0;
+    c.hasBag = true;
+
+    if (counseled) {
+      // Chatty patients take the 10 igm counsel chat at the counter (§8).
+      c.counseling = true;
+      c.serveLeft = COUNSEL_IGM;
+      return;
+    }
+    this.leaveQueueStructures(c);
+    this.beginLeave(c, false);
+  }
+
+  private completeCounsel(state: GameState, c: Customer, emit: Emit): void {
+    c.counseling = false;
+    applyRep(state, REP_COUNSEL, emit, REP_REASONS.counsel);
+    if (Math.random() < COUNSEL_BASKET_CHANCE) {
+      state.cash += COUNSEL_BASKET_VALUE;
+      state.dayStats.otcRevenue += COUNSEL_BASKET_VALUE;
+      emit({ type: "cash.changed", cash: state.cash });
+    }
+    this.leaveQueueStructures(c);
+    this.beginLeave(c, false);
+  }
+
   // --- Spawning / despawning ---
 
   private obtain(): Customer {
@@ -517,7 +837,12 @@ export class CustomerSystem {
       active: false,
       name: "",
       archetype: "steady",
+      kind: "otc",
       mode: "enter",
+      scriptId: 0,
+      waitIgm: 0,
+      hasBrowsed: false,
+      counseling: false,
       x: 0,
       y: 0,
       prevX: 0,
@@ -534,7 +859,7 @@ export class CustomerSystem {
       targets: [],
       targetIdx: 0,
       browseLeft: 0,
-      queueRegId: null,
+      laneId: null,
       chairId: null,
       hasBag: false,
       angry: false,
@@ -569,11 +894,15 @@ export class CustomerSystem {
     c.targets.length = 0;
     c.targetIdx = 0;
     c.browseLeft = 0;
-    c.queueRegId = null;
+    c.laneId = null;
     c.chairId = null;
     c.hasBag = false;
     c.angry = false;
     c.serveLeft = 0;
+    c.scriptId = 0;
+    c.waitIgm = 0;
+    c.hasBrowsed = false;
+    c.counseling = false;
     c.path.length = 0;
     c.pathIdx = 0;
     c.destCell = -1;
@@ -594,7 +923,25 @@ export class CustomerSystem {
     c.offY = door[1];
     c.hasOffTarget = true;
 
-    // Target shelves: 1–4 stocked shelves weighted by remaining units (§7).
+    // §26 mix: ~35% Rx patients (needs a service counter to drop off at).
+    const counterExists = state.store.furniture.some((f) => f.defId === "counter_service");
+    c.kind = counterExists && Math.random() < RX_SHARE ? "rx" : "otc";
+    if (c.kind === "rx") {
+      c.scriptId = this.workflow.createScript(c.id, c.name).id;
+    } else {
+      this.pickShelfTargets(state, c, def.targetsMin, def.targetsMax);
+    }
+
+    this.activeCountInternal++;
+    this.archetypeCounts[def.id]++;
+    state.dayStats.visitors++;
+    emit({ type: "customer.spawned", id: c.id, archetype: c.archetype });
+  }
+
+  /** Target 1–n stocked shelves weighted by remaining units (§7). */
+  private pickShelfTargets(state: GameState, c: Customer, min: number, max: number): void {
+    c.targets.length = 0;
+    c.targetIdx = 0;
     const stocked: { id: string; weight: number }[] = [];
     for (const item of state.store.furniture) {
       if (item.defId !== "otc_shelf") continue;
@@ -603,7 +950,7 @@ export class CustomerSystem {
       const units = slots.reduce((sum, s) => sum + s.units, 0);
       if (units > 0) stocked.push({ id: item.id, weight: units });
     }
-    let wanted = Math.min(randInt(def.targetsMin, def.targetsMax), stocked.length);
+    let wanted = Math.min(randInt(min, max), stocked.length);
     while (wanted-- > 0) {
       const total = stocked.reduce((sum, s) => sum + s.weight, 0);
       let u = Math.random() * total;
@@ -616,11 +963,6 @@ export class CustomerSystem {
         }
       }
     }
-
-    this.activeCountInternal++;
-    this.archetypeCounts[def.id]++;
-    state.dayStats.visitors++;
-    emit({ type: "customer.spawned", id: c.id, archetype: c.archetype });
   }
 
   private despawn(c: Customer): void {
@@ -638,7 +980,8 @@ export class CustomerSystem {
 
   // --- Behavior helpers ---
 
-  /** Walk to the next target shelf, else to a checkout queue, else out. */
+  /** Walk to the next target shelf, else to a checkout queue, else out.
+   *  Rx script waiters go back to waiting instead of checking out (§7). */
   private planNextTarget(state: GameState, c: Customer): void {
     while (c.targetIdx < c.targets.length) {
       const shelf = state.store.furniture.find((f) => f.id === c.targets[c.targetIdx]);
@@ -648,9 +991,94 @@ export class CustomerSystem {
       }
       c.targetIdx++;
     }
+    if (c.scriptId !== 0) {
+      this.beginScriptWait(state, c);
+      return;
+    }
     if (c.basket.length > 0 && this.joinQueue(state, c)) return;
     this.returnBasket(state, c);
     this.beginLeave(c, false);
+  }
+
+  // --- Rx patient flow (§7, §8) ---
+
+  private cancelScript(state: GameState, c: Customer, emit: Emit): void {
+    if (c.scriptId === 0) return;
+    this.workflow.cancel(state, c.scriptId, emit);
+    c.scriptId = 0;
+  }
+
+  /** Fresh through the door: line up at the drop-off lane. */
+  private goDropoff(state: GameState, c: Customer, emit: Emit): void {
+    const counter = state.store.furniture.find((f) => f.defId === "counter_service");
+    const laneId = counter ? CustomerSystem.dropLaneId(counter.id) : null;
+    if (!laneId || !this.queueSlots.get(laneId)?.length) {
+      this.cancelScript(state, c, emit);
+      this.beginLeave(c, false);
+      return;
+    }
+    this.joinLane(state, c, laneId);
+  }
+
+  /** Script ready: leave the chair/shelves and line up for pickup. */
+  private goPickup(state: GameState, c: Customer, emit: Emit): void {
+    if (c.chairId) {
+      this.chairOccupants.delete(c.chairId);
+      c.chairId = null;
+    }
+    const counter = state.store.furniture.find((f) => f.defId === "counter_service");
+    const laneId = counter ? CustomerSystem.pickLaneId(counter.id) : null;
+    if (!laneId || !this.queueSlots.get(laneId)?.length) {
+      this.cancelScript(state, c, emit);
+      this.returnBasket(state, c);
+      this.beginLeave(c, false);
+      return;
+    }
+    this.joinLane(state, c, laneId);
+  }
+
+  /** Settle in for the fill wait: a chair if one is free, else stand around. */
+  private beginScriptWait(state: GameState, c: Customer): void {
+    if (this.trySit(state, c)) return;
+    c.mode = "rxWait";
+    this.pathToLoiter(c);
+  }
+
+  /** §7: waits over 60 igm turn into a browse round on the OTC shelves. */
+  private startRxBrowse(state: GameState, c: Customer): void {
+    c.hasBrowsed = true;
+    if (c.chairId) {
+      this.chairOccupants.delete(c.chairId);
+      c.chairId = null;
+    }
+    this.pickShelfTargets(state, c, 1, 2);
+    this.planNextTarget(state, c);
+  }
+
+  /** Stand somewhere out of the way: not a queue slot, not the doorway. */
+  private pathToLoiter(c: Customer): void {
+    const { cols, rows } = this;
+    for (let attempt = 0; attempt < 24; attempt++) {
+      const x = Math.floor(Math.random() * cols);
+      const y = Math.floor(Math.random() * rows);
+      const cell = cellIndex(cols, x, y);
+      if (!this.staticWalk[cell] || this.doorExempt[cell]) continue;
+      const owner = this.occupied[cell]!;
+      if (owner !== 0 && owner !== c.poolIndex + 1) continue;
+      let isSlot = false;
+      for (const slots of this.queueSlots.values()) {
+        if (slots.includes(cell)) {
+          isSlot = true;
+          break;
+        }
+      }
+      if (isSlot) continue;
+      if (this.setPath(c, cell, false)) return;
+    }
+    // Nowhere obvious to stand; wait right here.
+    c.path.length = 0;
+    c.pathIdx = 0;
+    c.hasOffTarget = false;
   }
 
   /** Path to a walkable cell on the shelf's browse side. Nearest-first. */
@@ -706,38 +1134,43 @@ export class CustomerSystem {
   private joinQueue(state: GameState, c: Customer): boolean {
     let bestReg: string | null = null;
     let bestLen = Infinity;
-    for (const [regId, slots] of this.queueSlots) {
-      if (slots.length === 0) continue;
-      const len = this.queues.get(regId)?.length ?? 0;
+    for (const [laneId, slots] of this.queueSlots) {
+      if (laneId.includes("#") || slots.length === 0) continue; // registers only
+      const len = this.queues.get(laneId)?.length ?? 0;
       if (len < bestLen) {
         bestLen = len;
-        bestReg = regId;
+        bestReg = laneId;
       }
     }
     if (!bestReg) return false;
-    let q = this.queues.get(bestReg);
-    if (!q) {
-      q = [];
-      this.queues.set(bestReg, q);
-    }
-    q.push(c);
-    c.queueRegId = bestReg;
-    c.serveLeft = 0;
-    c.mode = "toQueue";
-    if (this.queuePos(c) >= SIT_QUEUE_POS && this.trySit(state, c)) return true;
-    this.pathToSlot(c);
+    this.joinLane(state, c, bestReg);
     return true;
   }
 
+  /** Enter any queue line (register or counter lane) at the back. */
+  private joinLane(state: GameState, c: Customer, laneId: string): void {
+    let q = this.queues.get(laneId);
+    if (!q) {
+      q = [];
+      this.queues.set(laneId, q);
+    }
+    q.push(c);
+    c.laneId = laneId;
+    c.serveLeft = 0;
+    c.mode = "toQueue";
+    if (this.queuePos(c) >= SIT_QUEUE_POS && this.trySit(state, c)) return;
+    this.pathToSlot(c);
+  }
+
   private queuePos(c: Customer): number {
-    if (!c.queueRegId) return -1;
-    const q = this.queues.get(c.queueRegId);
+    if (!c.laneId) return -1;
+    const q = this.queues.get(c.laneId);
     return q ? q.indexOf(c) : -1;
   }
 
   private pathToSlot(c: Customer): void {
-    if (!c.queueRegId) return;
-    const slots = this.queueSlots.get(c.queueRegId);
+    if (!c.laneId) return;
+    const slots = this.queueSlots.get(c.laneId);
     if (!slots || slots.length === 0) return;
     const pos = this.queuePos(c);
     const slot = slots[Math.min(Math.max(pos, 0), slots.length - 1)]!;
@@ -831,7 +1264,13 @@ export class CustomerSystem {
   private walkout(state: GameState, c: Customer, emit: Emit): void {
     state.dayStats.walkouts++;
     this.returnBasket(state, c);
-    applyRep(state, c.archetype === "hurried" ? REP_WALKOUT_HURRIED : REP_WALKOUT, emit);
+    this.cancelScript(state, c, emit); // the script is lost with them (§7)
+    applyRep(
+      state,
+      c.archetype === "hurried" ? REP_WALKOUT_HURRIED : REP_WALKOUT,
+      emit,
+      REP_REASONS.walkout,
+    );
     emit({ type: "customer.walkout", id: c.id, archetype: c.archetype });
     this.leaveQueueStructures(c);
     this.beginLeave(c, true);
@@ -840,11 +1279,11 @@ export class CustomerSystem {
   private completeSale(state: GameState, c: Customer, emit: Emit): void {
     const total = c.basket.reduce((sum, line) => sum + line.price, 0);
     state.cash += total;
-    state.dayStats.sales++;
-    state.dayStats.revenue += total;
+    state.dayStats.otcSales++;
+    state.dayStats.otcRevenue += total;
     emit({ type: "cash.changed", cash: state.cash });
     emit({ type: "sale.completed", customerId: c.id, items: c.basket.length, total });
-    applyRep(state, REP_SERVE, emit); // happy serve (§15)
+    applyRep(state, REP_SERVE, emit, REP_REASONS.serve); // happy serve (§15)
     c.basket.length = 0;
     c.hasBag = true;
     this.leaveQueueStructures(c);
@@ -852,7 +1291,7 @@ export class CustomerSystem {
   }
 
   private leaveQueueStructures(c: Customer): void {
-    const regId = c.queueRegId;
+    const regId = c.laneId;
     this.removeFromQueue(c);
     if (c.chairId) {
       this.chairOccupants.delete(c.chairId);
@@ -862,13 +1301,13 @@ export class CustomerSystem {
   }
 
   private removeFromQueue(c: Customer): void {
-    if (!c.queueRegId) return;
-    const q = this.queues.get(c.queueRegId);
+    if (!c.laneId) return;
+    const q = this.queues.get(c.laneId);
     if (q) {
       const i = q.indexOf(c);
       if (i !== -1) q.splice(i, 1);
     }
-    c.queueRegId = null;
+    c.laneId = null;
   }
 
   /** Put unpurchased basket items back on their shelves. */

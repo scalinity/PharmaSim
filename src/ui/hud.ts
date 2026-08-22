@@ -1,19 +1,23 @@
 // HUD layout root: top bar (day chip, clock tape, cash, stars, speed), the
 // bottom dock (Build), the build palette + move/sell context card, toasts,
-// and the morning/close phase panels. Reads sim state via snapshot, mutates
-// only through sim.dispatch, updates via cached refs on bus events.
+// the RxCard during fills, stage-queue mini-card stacks, and the morning /
+// end-of-day (printing receipt) phase screens. Reads sim state via snapshot,
+// mutates only through sim.dispatch, updates via cached refs on bus events.
 
 import type { EventBus } from "../core/bus";
 import { dayProgress, formatClock, seasonForDay } from "../core/clock";
+import { drugDef } from "../data/drugs";
 import { furnitureDef } from "../data/furniture";
 import type { SimEvent } from "../sim/events";
 import type { Sim } from "../sim/sim";
 import type { DayPhase, GameSpeed } from "../sim/state";
 import { Panel } from "./components/Panel";
 import { PillButton } from "./components/PillButton";
+import { createRxCard } from "./components/RxCard";
 import { createToastHost, type ToastTone } from "./components/Toast";
 import { h } from "./dom";
 import { createBuildPalette } from "./screens/buildPalette";
+import { buildReceipt } from "./screens/receipt";
 
 const STAR_GLYPHS = "★★★★★";
 
@@ -40,6 +44,9 @@ export interface HudHandle {
   /** Position/update the amber over-register queue chip (shown at ≥4). */
   updateQueueChip(id: string, screenX: number, screenY: number, count: number): void;
   hideQueueChip(id: string): void;
+  /** Position/update a stage-queue mini-card stack (§8) over a station. */
+  updateStageStack(key: string, screenX: number, screenY: number, count: number, label: string): void;
+  hideStageStack(key: string): void;
 }
 
 function formatCash(cash: number): string {
@@ -175,32 +182,8 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     ]),
   ]);
 
-  // End-of-day report (placeholder until the printed receipt lands in 04).
-  const reportValues = {
-    visitors: h("span", { cls: "report__value" }),
-    sales: h("span", { cls: "report__value" }),
-    walkouts: h("span", { cls: "report__value" }),
-    revenue: h("span", { cls: "report__value" }),
-    repDelta: h("span", { cls: "report__value" }),
-  };
-  const reportRow = (label: string, value: HTMLElement): HTMLElement =>
-    h("div", { cls: "report__row" }, [h("span", { cls: "report__label", text: label }), value]);
-  const closeStage = h("div", { cls: "scrim" }, [
-    Panel({ title: "Day complete" }, [
-      h("p", {
-        cls: "panel__text",
-        text: "Doors are locked and the register is counted.",
-      }),
-      h("div", { cls: "report" }, [
-        reportRow("Visitors", reportValues.visitors),
-        reportRow("Sales", reportValues.sales),
-        reportRow("Walk-outs", reportValues.walkouts),
-        reportRow("Revenue", reportValues.revenue),
-        reportRow("Reputation Δ", reportValues.repDelta),
-      ]),
-      PillButton("Next day", () => sim.dispatch({ type: "day.advance" })),
-    ]),
-  ]);
+  // End-of-day: the printing receipt (§28 signature), rebuilt each close.
+  const closeStage = h("div", { cls: "scrim scrim--receipt" });
 
   // --- Station hint chip (§28 minor UI) + queue chips over registers ---
 
@@ -216,9 +199,11 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
   }
 
   const queueChips = new Map<string, { el: HTMLElement; count: number }>();
+  const stageStacks = new Map<string, { el: HTMLElement; count: number; label: string }>();
 
   root.append(topbar, palette.root, contextCard, morningStage, closeStage, stationHintEl, dock);
   const toast = createToastHost(root);
+  const rxCard = createRxCard(root);
 
   // --- Updates (cached refs only) ---
 
@@ -237,23 +222,21 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
   function setPhase(phase: DayPhase): void {
     morningStage.hidden = phase !== "morning";
     closeStage.hidden = phase !== "close";
+    closeStage.replaceChildren();
     if (phase === "close") {
-      const stats = sim.snapshot.dayStats;
-      reportValues.visitors.textContent = String(stats.visitors);
-      reportValues.sales.textContent = String(stats.sales);
-      reportValues.walkouts.textContent = String(stats.walkouts);
-      reportValues.walkouts.classList.toggle("report__value--rose", stats.walkouts > 0);
-      reportValues.revenue.textContent = formatCash(stats.revenue);
-      const delta = stats.repDelta;
-      reportValues.repDelta.textContent = `${delta >= 0 ? "+" : "−"}${Math.abs(delta).toFixed(2)}`;
-      reportValues.repDelta.classList.toggle("report__value--rose", delta < 0);
+      closeStage.append(buildReceipt(sim, () => sim.dispatch({ type: "day.advance" })));
     }
     if (phase !== "shift") {
       hoverHint = null;
       refreshStationHint();
+      rxCard.hide();
       for (const [id, chip] of queueChips) {
         chip.el.remove();
         queueChips.delete(id);
+      }
+      for (const [key, stack] of stageStacks) {
+        stack.el.remove();
+        stageStacks.delete(key);
       }
     }
   }
@@ -320,10 +303,35 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
       queueChips.delete(e.id);
     }
   });
+  const STATION_HINT_NAMES: Record<string, string> = {
+    counter_register: "register",
+    counter_service: "counter",
+    fill_bench: "fill bench",
+  };
   bus.on("station.changed", (e) => {
-    workingHint = e.stationId ? "Working the register — click anywhere else to step away" : null;
+    const item = e.stationId
+      ? sim.snapshot.store.furniture.find((f) => f.id === e.stationId)
+      : undefined;
+    const name = item ? (STATION_HINT_NAMES[item.defId] ?? "station") : null;
+    workingHint = name ? `Working the ${name} — click anywhere else to step away` : null;
     refreshStationHint();
   });
+
+  // --- Prescription workflow (§8): the RxCard + workflow toasts ---
+
+  bus.on("rx.fillStarted", (e) => {
+    rxCard.show(e.patientName, drugDef(e.drugId).name, e.quantity, e.shelfId !== null);
+  });
+  bus.on("rx.binPicked", () => rxCard.setFilling());
+  bus.on("rx.fillEnded", () => rxCard.hide());
+  bus.on("rx.caught", () => toast("Caught at verification — refilled"));
+  bus.on("rx.errorDispensed", (e) => {
+    toast(`Dispensing error caught — $${e.refund} refunded`, "error");
+  });
+  bus.on("rx.refused", (e) => {
+    toast(`${drugDef(e.drugId).name} is out of stock — script refused`, "error");
+  });
+
   bus.on("dev.stress", (e) => toast(e.mult === 1 ? "Stress spawn off" : `Stress spawn ×${e.mult}`));
 
   // --- Keys: Space pause toggle, 1 / 2 speeds, N dev stress spawn ---
@@ -386,6 +394,35 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
       if (chip) {
         chip.el.remove();
         queueChips.delete(id);
+      }
+    },
+    updateStageStack: (key, screenX, screenY, count, label) => {
+      let stack = stageStacks.get(key);
+      if (!stack) {
+        stack = { el: h("div", { cls: "stagestack" }), count: -1, label: "" };
+        root.append(stack.el);
+        stageStacks.set(key, stack);
+      }
+      if (stack.count !== count || stack.label !== label) {
+        stack.count = count;
+        stack.label = label;
+        const cards = h("div", { cls: "stagestack__cards", attrs: { "aria-hidden": "true" } });
+        for (let i = Math.min(count, 4) - 1; i >= 1; i--) {
+          const ghost = h("span", { cls: "stagestack__card" });
+          ghost.style.transform = `translate(${i * 3}px, ${-i * 3}px) rotate(${i * 1.6}deg)`;
+          cards.append(ghost);
+        }
+        const top = h("span", { cls: "stagestack__card stagestack__card--top", text: String(count) });
+        cards.append(top);
+        stack.el.replaceChildren(cards, h("span", { cls: "stagestack__label", text: label }));
+      }
+      stack.el.style.transform = `translate(${screenX.toFixed(1)}px, ${screenY.toFixed(1)}px) translate(-50%, -100%)`;
+    },
+    hideStageStack: (key) => {
+      const stack = stageStacks.get(key);
+      if (stack) {
+        stack.el.remove();
+        stageStacks.delete(key);
       }
     },
   };
