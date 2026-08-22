@@ -39,6 +39,10 @@ const BOOT_KEY = "pharmasim.boot";
 /** Ambient yaw drift behind the title card, rad/s. */
 const TITLE_ORBIT = 0.055;
 
+if ("__TAURI_INTERNALS__" in window || "__TAURI__" in window) {
+  document.documentElement.classList.add("app-shell");
+}
+
 const storage = createStorage();
 const bootIntoPlay = window.sessionStorage.getItem(BOOT_KEY) === "play";
 window.sessionStorage.removeItem(BOOT_KEY);

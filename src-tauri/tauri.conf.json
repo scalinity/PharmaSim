@@ -14,6 +14,11 @@
       {
         "label": "main",
         "title": "PharmaSim",
+        "fullscreen": false,
+        "decorations": true,
+        "hiddenTitle": true,
+        "titleBarStyle": "Overlay",
+        "maximized": true,
         "width": 1168,
         "height": 690,
         "minWidth": 1024,

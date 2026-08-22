@@ -56,6 +56,11 @@ button {
   z-index: 20;
 }
 
+/* Overlay title bar: keep the Day chip clear of the traffic lights. */
+html.app-shell .topbar {
+  left: 78px;
+}
+
 .topbar > * {
   pointer-events: auto;
 }
@@ -600,7 +605,7 @@ button {
 .scrim {
   position: absolute;
   inset: 0;
-  z-index: 10;
+  z-index: 35;
   display: grid;
   place-items: center;
   background: var(--glass);
@@ -829,7 +834,10 @@ button {
 /* ---- End-of-day receipt (§28, the signature element) ---- */
 
 .scrim--receipt {
-  align-content: center;
+  align-content: safe center;
+  justify-items: center;
+  padding: 16px;
+  overflow: hidden;
 }
 
 .rcpt-stage {
@@ -837,11 +845,14 @@ button {
   flex-direction: column;
   align-items: center;
   gap: 16px;
-  max-height: calc(100vh - 48px);
+  max-height: 100%;
+  min-height: 0;
 }
 
 .rcpt {
   position: relative;
+  flex: 1 1 auto;
+  min-height: 0;
   width: 324px;
   padding: 20px 24px 16px;
   background: var(--paper);
@@ -989,6 +1000,7 @@ button {
 }
 
 .rcpt__next {
+  flex: 0 0 auto;
   pointer-events: auto;
 }
 
