@@ -3012,21 +3012,27 @@ html.app-shell .topbar {
   font-weight: var(--w-semibold);
 }
 
-.reno__chips {
+/* Era paint chips (components/ChipStrip.ts) — shared with the reveal card;
+   the strip's spacing belongs to each context, the chip itself is one rule. */
+.chips {
   display: flex;
   gap: 5px;
-  margin: 9px 0 8px;
 }
 
-.reno__chip {
+.chips__chip {
   width: 34px;
   height: 18px;
   border: 1px solid var(--ink-25);
 }
 
-.reno__card--later .reno__chip {
-  /* Later generations are still behind the counter: chips face down. */
-  background: rgba(32, 48, 43, 0.08) !important;
+.reno__paper .chips {
+  margin: 9px 0 8px;
+}
+
+.reno__card--later .chips__chip {
+  /* Later generations are still behind the counter: chips face down.
+     ChipStrip leaves them uncolored, so no inline style to out-shout. */
+  background: rgba(32, 48, 43, 0.08);
   border-style: dashed;
 }
 
@@ -3119,16 +3125,8 @@ html.app-shell .topbar {
   line-height: 1.15;
 }
 
-.reveal__chips {
-  display: flex;
-  gap: 5px;
+.reveal .chips {
   margin: 0 0 10px;
-}
-
-.reveal__chip {
-  width: 34px;
-  height: 18px;
-  border: 1px solid var(--ink-25);
 }
 
 /* ---- Legacy: the family album (§22, §28) ----

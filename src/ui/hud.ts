@@ -21,7 +21,7 @@ import { eraDef } from "../sim/renovation";
 import type { Sim } from "../sim/sim";
 import { ROLE_LABELS } from "../sim/staff";
 import type { DayPhase, GameSpeed } from "../sim/state";
-import { eraSwatches } from "../data/eras";
+import { ChipStrip } from "./components/ChipStrip";
 import { fridgePips } from "./components/Meter";
 import { Panel } from "./components/Panel";
 import { PillButton } from "./components/PillButton";
@@ -274,16 +274,6 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
   /** Era just raised this morning (§13): the reveal card shows once. */
   let revealEra: 1 | 2 | 3 | 4 | null = null;
 
-  function morningChips(era: number): HTMLElement {
-    const strip = h("div", { cls: "reveal__chips", attrs: { "aria-hidden": "true" } });
-    for (const hex of eraSwatches(era)) {
-      const chip = h("span", { cls: "reveal__chip" });
-      chip.style.background = hex;
-      strip.append(chip);
-    }
-    return strip;
-  }
-
   /** The morning card: crew day, era reveal, or the ordinary open (§13, §28). */
   function refreshMorning(): void {
     const state = sim.snapshot;
@@ -307,7 +297,7 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
         Panel({ cls: "reveal" }, [
           h("p", { cls: "reveal__eyebrow", text: "the scaffolding is down" }),
           h("h2", { cls: "reveal__name", text: def.name }),
-          morningChips(revealEra),
+          ChipStrip(revealEra),
           h("p", { cls: "panel__text", text: def.look }),
           PillButton("Open store", () => sim.dispatch({ type: "store.open" })),
         ]),

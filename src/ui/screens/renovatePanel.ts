@@ -9,7 +9,7 @@ import type { EventBus } from "../../core/bus";
 import type { SimEvent } from "../../sim/events";
 import { ERA_DEFS, renovationLock, type EraDef } from "../../sim/renovation";
 import type { Sim } from "../../sim/sim";
-import { eraSwatches } from "../../data/eras";
+import { ChipStrip } from "../components/ChipStrip";
 import { Panel } from "../components/Panel";
 import { h } from "../dom";
 import { money } from "../format";
@@ -44,16 +44,6 @@ export function createRenovatePanel(sim: Sim, bus: EventBus<SimEvent>): Renovate
   const root = h("section", { cls: "reno", attrs: { "aria-label": "Renovate" } }, [sheet]);
   root.hidden = true;
 
-  function chipStrip(era: number): HTMLElement {
-    const strip = h("div", { cls: "reno__chips", attrs: { "aria-hidden": "true" } });
-    for (const hex of eraSwatches(era)) {
-      const chip = h("span", { cls: "reno__chip" });
-      chip.style.background = hex;
-      strip.append(chip);
-    }
-    return strip;
-  }
-
   function buildCard(def: EraDef): HTMLElement {
     const state = sim.snapshot;
     const status: "built" | "current" | "pending" | "next" | "later" =
@@ -72,7 +62,7 @@ export function createRenovatePanel(sim: Sim, bus: EventBus<SimEvent>): Renovate
         h("span", { cls: "reno__gen", text: `Gen ${def.era}` }),
         h("h3", { cls: "reno__name", text: def.name }),
       ]),
-      chipStrip(def.era),
+      ChipStrip(def.era, status !== "later"),
       h("p", { cls: "reno__look", text: def.look }),
     ];
     if (def.gates) body.push(h("p", { cls: "reno__gates", text: def.gates }));
