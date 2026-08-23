@@ -25,6 +25,10 @@ const OUTAGE_KEY_LEVEL = 0.2;
 const BG_WINTER_DUSK = new Color(0xb7c2c8);
 const WINTER_EDGE_LEVEL = 0.62;
 
+// One outage-easing step per clock minute: ~2.4 minutes/s at 1×, so the
+// drop lands in a bit over a real second — visibly a cut, never a hitch.
+const OUTAGE_EASE_PER_MINUTE = 0.34;
+
 const ARC_RADIUS = 30;
 
 export class Lighting {
@@ -86,13 +90,10 @@ export class Lighting {
   /** Position and tint the lights for an in-game minute of day. */
   setTime(igm: number): void {
     this.lastIgm = igm;
-    // One easing step per clock minute: ~2.4 minutes/s at 1×, so the drop
-    // lands in a bit over a real second — visibly a cut, never a hitch.
-    const step = 0.34;
     if (this.outageMix < this.outageTarget) {
-      this.outageMix = Math.min(this.outageTarget, this.outageMix + step);
+      this.outageMix = Math.min(this.outageTarget, this.outageMix + OUTAGE_EASE_PER_MINUTE);
     } else if (this.outageMix > this.outageTarget) {
-      this.outageMix = Math.max(this.outageTarget, this.outageMix - step);
+      this.outageMix = Math.max(this.outageTarget, this.outageMix - OUTAGE_EASE_PER_MINUTE);
     }
     const mix = this.outageMix;
 

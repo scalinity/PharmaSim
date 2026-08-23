@@ -120,8 +120,8 @@ export function listWholesale(skuId: string): number {
 
 // --- §16 regional shortage: one Rx category squeezed at a time (§26) ---
 
-export const SHORTAGE_WHOLESALE_MULT = 1.5;
-export const SHORTAGE_FILL_RATE = 0.6;
+const SHORTAGE_WHOLESALE_MULT = 1.5;
+const SHORTAGE_FILL_RATE = 0.6;
 
 /** Is this SKU's category squeezed by a shortage today? Shortages are an Rx
  *  affair — OTC SKUs always come back false. */

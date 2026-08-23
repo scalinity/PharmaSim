@@ -143,8 +143,9 @@ type Emit = (event: SimEvent) => void;
 const NPC_CAP = 40;
 const SPAWN_END_IGM = 1170; // 19:30 (§5)
 /** §16/§26 rush windows — exported so the clock strip's shading (§28) and
- *  the arrival sampler can never drift apart. */
-export const RUSH_WINDOWS: readonly [number, number][] = [
+ *  the arrival sampler can never drift apart; deeply readonly so the shared
+ *  reference genuinely cannot. */
+export const RUSH_WINDOWS: readonly (readonly [number, number])[] = [
   [720, 840], // 12:00–14:00
   [1020, 1140], // 17:00–19:00
 ];

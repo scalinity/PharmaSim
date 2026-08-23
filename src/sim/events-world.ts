@@ -8,9 +8,9 @@
 import { DAY_END_IGM, DAYS_PER_SEASON, seasonForDay, type Season } from "../core/clock";
 import { DRUG_DEFS } from "../data/drugs";
 import { isRefrigerated } from "./coldchain";
-import { listWholesale, post, round2 } from "./economy";
+import { categoryLabel, listWholesale, post, round2 } from "./economy";
 import type { SimEvent } from "./events";
-import type { GameState } from "./state";
+import type { GameState, StormEvent } from "./state";
 
 type Emit = (event: SimEvent) => void;
 
@@ -39,8 +39,8 @@ const VISITOR_SEASON_MULT: Record<Season, number> = {
   Winter: 1.2,
 };
 
-export const STORM_VISITOR_MULT = 0.6; // §26: visitors ×0.6 on a storm day
-export const FLU_VACCINE_MULT = 4; // §26: flu-season walk-ins ×4
+const STORM_VISITOR_MULT = 0.6; // §26: visitors ×0.6 on a storm day
+const FLU_VACCINE_MULT = 4; // §26: flu-season walk-ins ×4
 
 /** Season's pull on one Rx category's script generation (§16, §26). */
 export function rxDemandMult(state: GameState, category: string): number {
@@ -109,6 +109,15 @@ const OUTAGE_MIN_IGM = 120; // §26: outage 2–5 igh
 const OUTAGE_SPAN_IGM = 181;
 const OUTAGE_EARLIEST_IGM = 540; // windows sit inside the shift: 09:00 on
 
+/** One §26 outage window off whichever randomness the caller owes — the
+ *  seeded year plan and the dev console must roll identical shapes. */
+function rollOutageWindow(rand: () => number): { outageStartIgm: number; outageEndIgm: number } {
+  const duration = OUTAGE_MIN_IGM + Math.floor(rand() * OUTAGE_SPAN_IGM);
+  const outageStartIgm =
+    OUTAGE_EARLIEST_IGM + Math.floor(rand() * (DAY_END_IGM - duration - OUTAGE_EARLIEST_IGM + 1));
+  return { outageStartIgm, outageEndIgm: outageStartIgm + duration };
+}
+
 /** §16: 1–2 shortages this season, 4–8 days each, one category apiece.
  *  Each squeeze is clamped inside its window — two split the fortnight and
  *  genuinely never stack, and none spills into the next season's plans. A
@@ -155,12 +164,9 @@ function planYearStorms(state: GameState, yearIdx: number): void {
     days.add(first + 1 + Math.floor(rng() * (DAYS_PER_YEAR - 1)));
   }
   for (const day of [...days].sort((a, b) => a - b)) {
-    const duration = OUTAGE_MIN_IGM + Math.floor(rng() * OUTAGE_SPAN_IGM);
-    const startIgm =
-      OUTAGE_EARLIEST_IGM +
-      Math.floor(rng() * (DAY_END_IGM - duration - OUTAGE_EARLIEST_IGM + 1));
+    const window = rollOutageWindow(rng);
     if (day <= state.day) continue;
-    state.events.storms.push({ day, outageStartIgm: startIgm, outageEndIgm: startIgm + duration });
+    state.events.storms.push({ day, ...window });
   }
 }
 
@@ -253,7 +259,16 @@ function beginOutage(state: GameState, emit: Emit): void {
  *  announcement when it crosses the end. Both edges are driven purely off
  *  persisted state, so there is nothing mid-flight for a save to lose. */
 export function tickWorld(state: GameState, emit: Emit): void {
-  const storm = state.events.storms.find((s) => s.day === state.day);
+  // Indexed scan, no closure: this runs on the 10 Hz sim path (§30), and
+  // the schedule holds at most a couple of upcoming storms.
+  const storms = state.events.storms;
+  let storm: StormEvent | null = null;
+  for (let i = 0; i < storms.length; i++) {
+    if (storms[i]!.day === state.day) {
+      storm = storms[i]!;
+      break;
+    }
+  }
   if (!storm) return;
   const record = state.events.outage;
   const active = state.clockIgm >= storm.outageStartIgm && state.clockIgm < storm.outageEndIgm;
@@ -299,22 +314,15 @@ export function forceShortage(state: GameState, emit: Emit): string {
   const endDay = state.day + duration - 1;
   state.events.shortages.push({ category, startDay: state.day, endDay });
   emit({ type: "shortage.started", category, day: state.day, endDay });
-  return `Forced a ${category} shortage — ${duration} days`;
+  // The same words the ticker and the Orders panel use (§28 copy voice).
+  return `${categoryLabel(category)} shortage forced — ${duration} days`;
 }
 
 /** Dev: put a storm on tomorrow's calendar, so tonight's receipt carries
  *  the forecast and tomorrow's shift loses power. Returns the toast line. */
 export function forceStorm(state: GameState): string {
   if (stormTomorrow(state)) return "A storm is already due tomorrow";
-  const duration = OUTAGE_MIN_IGM + Math.floor(Math.random() * OUTAGE_SPAN_IGM);
-  const startIgm =
-    OUTAGE_EARLIEST_IGM +
-    Math.floor(Math.random() * (DAY_END_IGM - duration - OUTAGE_EARLIEST_IGM + 1));
-  state.events.storms.push({
-    day: state.day + 1,
-    outageStartIgm: startIgm,
-    outageEndIgm: startIgm + duration,
-  });
+  state.events.storms.push({ day: state.day + 1, ...rollOutageWindow(Math.random) });
   state.events.storms.sort((a, b) => a.day - b.day);
   return "Storm scheduled for tomorrow — the forecast prints tonight";
 }
