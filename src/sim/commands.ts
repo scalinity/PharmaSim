@@ -5,7 +5,7 @@
 import { DAY_START_IGM } from "../core/clock";
 import type { Rot } from "../core/grid";
 import { EXPANSIONS, furnitureDef } from "../data/furniture";
-import { fridgeFree, hasFridge } from "./coldchain";
+import { coldClampUnits, hasFridge } from "./coldchain";
 import {
   bankStatus,
   catalog,
@@ -89,16 +89,16 @@ function leaveStation(state: GameState, emit: (event: SimEvent) => void): void {
  *  enforced at order time against held stock plus what's already inbound). */
 function acceptableLines(state: GameState, lines: readonly OrderLine[]): OrderLine[] {
   const orderable = new Map(catalog(state).map((entry) => [entry.skuId, entry]));
-  let coldFree = fridgeFree(state);
+  let coldClaimed = 0;
   const out: OrderLine[] = [];
   for (const l of lines) {
     const entry = orderable.get(l.skuId);
     let units = Math.floor(l.units);
     if (!entry || entry.lock !== null || units <= 0) continue;
     if (entry.refrigerated) {
-      units = Math.min(units, coldFree);
+      units = coldClampUnits(state, units, coldClaimed);
       if (units <= 0) continue;
-      coldFree -= units;
+      coldClaimed += units;
     }
     out.push({ skuId: l.skuId, units });
   }

@@ -8,8 +8,8 @@ import type { EventBus } from "../../core/bus";
 import { furnitureDef } from "../../data/furniture";
 import { otcDef } from "../../data/otc";
 import {
+  coldClampUnits,
   fridgeCapacity,
-  fridgeFree,
   refrigeratedHeld,
   refrigeratedInbound,
 } from "../../sim/coldchain";
@@ -156,16 +156,21 @@ export function createOrdersPanel(sim: Sim, bus: EventBus<SimEvent>): OrdersPane
     return h("div", { cls: "qty" }, [less, row.field, more]);
   }
 
+  /** Cold units the rest of the cart claims, excluding this row (§14). */
+  function coldClaimedElsewhere(skuId: string): number {
+    let claimed = 0;
+    for (const [id, u] of cart) {
+      if (id !== skuId && rows.get(id)?.entry.refrigerated) claimed += u;
+    }
+    return claimed;
+  }
+
   function commit(row: Row): void {
     let units = readNumber(row.field, 9999);
     if (row.entry.refrigerated && units > 0) {
-      // The fridge is the ceiling (§14): this row may only claim whatever
-      // cold space the rest of the cart hasn't already spoken for.
-      let free = fridgeFree(sim.snapshot);
-      for (const [skuId, u] of cart) {
-        if (skuId !== row.entry.skuId && rows.get(skuId)?.entry.refrigerated) free -= u;
-      }
-      const capped = Math.max(0, Math.min(units, free));
+      // The fridge is the ceiling (§14): the same clamp the order command
+      // applies, so the stub never promises units the command would trim.
+      const capped = coldClampUnits(sim.snapshot, units, coldClaimedElsewhere(row.entry.skuId));
       if (capped !== units) {
         units = capped;
         row.field.value = units === 0 ? "" : String(units);

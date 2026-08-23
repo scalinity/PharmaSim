@@ -77,6 +77,18 @@ export function fridgeFree(state: GameState): number {
   );
 }
 
+/** The §14 order-time clamp itself, shared by the Orders panel's cart and
+ *  the order command so the number the player sees is the number the
+ *  command accepts: units this line may claim, after the cold space the
+ *  rest of the cart has already spoken for. */
+export function coldClampUnits(
+  state: GameState,
+  wanted: number,
+  claimedElsewhere: number,
+): number {
+  return Math.max(0, Math.min(wanted, fridgeFree(state) - claimedElsewhere));
+}
+
 /** §14: walk-ins come once L4, a fridge and a station are all in place; a
  *  pharmacist (or the player) still has to work the shots. The license check
  *  is inlined (not licenses.ts's ownsLicense) so this module stays a leaf
