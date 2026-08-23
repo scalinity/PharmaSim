@@ -122,7 +122,12 @@ const MIGRATIONS: readonly ((file: RawSave) => RawSave)[] = [
 
 function copyMap<T>(source: Record<string, T>, copy: (value: T) => T): Record<string, T> {
   const out: Record<string, T> = {};
-  for (const key of Object.keys(source)) out[key] = copy(source[key]!);
+  for (const key of Object.keys(source)) {
+    // A parsed file can carry "__proto__" as an own key; assigning it here
+    // would swap the copy's prototype instead of storing a value.
+    if (key === "__proto__") continue;
+    out[key] = copy(source[key]!);
+  }
   return out;
 }
 
@@ -255,7 +260,12 @@ function validate(file: RawSave): SaveFile {
   requireArray(file.licenses, "licenses");
   requireObject(file.loans, "loan balances");
   requireObject(file.settings, "settings");
-  requireObject(file.stats, "stats");
+  const lifetime = requireObject(file.stats, "stats");
+  // stats is the one free-form Record a hand editor is likely to touch;
+  // a non-number value would render as "Issued · day yesterday".
+  for (const value of Object.values(lifetime)) {
+    if (typeof value !== "number") reject("readable stats");
+  }
 
   const store = requireObject(file.store, "store");
   requireObject(store.grid, "store grid");
