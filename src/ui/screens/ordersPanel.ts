@@ -56,7 +56,7 @@ const SECTIONS: readonly Section[] = [
   {
     title: "Tier 1 \u00b7 community formulary",
     note: `The insurer's price is fixed; every fill also takes the ${money(COPAY)} copay at the register.`,
-    keep: (e) => e.kind === "rx" && e.tier === 1,
+    keep: (e) => e.kind === "rx" && e.tier === 1 && !e.refrigerated,
   },
   {
     title: "Front store \u00b7 you set the price",
@@ -77,7 +77,7 @@ const SECTIONS: readonly Section[] = [
   {
     title: "Tier 3 \u00b7 controlled substances",
     note: "Needs the licence and a locked cabinet in this store.",
-    keep: (e) => e.kind === "rx" && e.tier === 3,
+    keep: (e) => e.kind === "rx" && e.tier === 3 && !e.refrigerated,
   },
 ];
 
