@@ -301,6 +301,25 @@ function validate(file: RawSave): SaveFile {
   for (const key of ["ledger", "stockOuts", "balks", "repReasons"]) {
     requireObject(stats[key], `day ${key}`);
   }
+  // The scalar counters too: a hand-edited or truncated field would
+  // otherwise hydrate as undefined, go NaN on its first increment, and be
+  // dropped from every later save by JSON.stringify — silent, permanent
+  // loss of the counter with no error anywhere.
+  for (const key of [
+    "cashOpen",
+    "visitors",
+    "otcSales",
+    "otcUnits",
+    "fills",
+    "vaccinations",
+    "walkouts",
+    "errors",
+    "refusals",
+    "familyLoan",
+    "repDelta",
+  ]) {
+    if (typeof stats[key] !== "number") reject(`day ${key}`);
+  }
 
   return file as unknown as SaveFile;
 }
