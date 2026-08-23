@@ -87,11 +87,10 @@ export function beginRenovation(state: GameState, emit: Emit): void {
   if (renovationLock(state) !== null) return;
   const target = renovationTarget(state)!;
   state.pendingEra = target.era as 2 | 3 | 4;
-  state.stats[`era.${target.era}`] = state.day;
   post(state, "renovation", -target.cost, emit);
-  // §22: the first renovation anywhere, and reaching Gen 4, are moments.
+  // §22: the first renovation is its moment — the note is written in the
+  // scaffolding-day voice, so it pins to tonight's receipt.
   recordMoment(state, "first_renovation", emit);
-  if (target.era === 4) recordMoment(state, "first_gen4", emit);
   emit({
     type: "era.renovationStarted",
     era: target.era as 2 | 3 | 4,
@@ -106,5 +105,12 @@ export function completeRenovation(state: GameState, emit: Emit): void {
   if (state.pendingEra === null) return;
   state.era = state.pendingEra;
   state.pendingEra = null;
+  // Recorded on the morning the era stands, like every sibling stats key
+  // ("the day this became true") — the proposal card stamps "Raised" from it.
+  state.stats[`era.${state.era}`] = state.day;
+  // §22: reaching Gen 4 is a moment of its own, and its note speaks of a
+  // store that already looks like this — so it belongs to today, not to
+  // yesterday's scaffolding.
+  if (state.era === 4) recordMoment(state, "first_gen4", emit);
   emit({ type: "era.changed", era: state.era });
 }
