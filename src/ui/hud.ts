@@ -409,13 +409,19 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     const held = refrigeratedHeld(state.store);
     const inbound = refrigeratedInbound(state.store);
     const boxes = fridgeCardId === null ? 0 : sim.restockableUnits(fridgeCardId);
+    // Over-capacity is a legal transient after selling a fridge (§14: no
+    // spoilage, ordering blocked) — the count says so instead of lying flat.
+    const over = held + inbound - capacity;
     const lines = [
       h("p", { cls: "shelfcard__eyebrow", text: "Medical fridge" }),
       fridgePips(Math.min(held + inbound, capacity), capacity),
       h("p", {
         cls: "shelfcard__cold",
         text:
-          `${held} of ${capacity} cold units` + (inbound > 0 ? ` · ${inbound} arriving at dawn` : ""),
+          over > 0
+            ? `${held} of ${capacity} cold units — ${over} over capacity`
+            : `${held} of ${capacity} cold units` +
+              (inbound > 0 ? ` · ${inbound} arriving at dawn` : ""),
       }),
       h("p", {
         cls: "shelfcard__hint",

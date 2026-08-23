@@ -290,20 +290,32 @@ export function createOrdersPanel(sim: Sim, bus: EventBus<SimEvent>): OrdersPane
 
     fridgeMeterHost.replaceChildren();
     if (capacity === 0) {
+      // Cold stock boxed by the last fridge's sale is stranded, not gone —
+      // say so rather than hide it behind the buy-a-fridge note.
+      const stranded = refrigeratedHeld(state.store);
       fridgeMeterHost.append(
         h("p", {
           cls: "oform__coldnote",
-          text: `No medical fridge on the floor — the Build palette sells one for ${money(furnitureDef("fridge_medical").cost)}.`,
+          text:
+            stranded > 0
+              ? `No medical fridge on the floor — ${stranded} cold ${stranded === 1 ? "unit is" : "units are"} boxed in the backroom until one returns.`
+              : `No medical fridge on the floor — the Build palette sells one for ${money(furnitureDef("fridge_medical").cost)}.`,
         }),
       );
       return;
     }
-    const free = Math.max(0, capacity - spoken);
+    // Selling a fridge can leave more cold stock than the survivors hold
+    // (§14: nothing spoils, ordering stays blocked) — read it out honestly
+    // instead of clamping the number alongside the pips.
+    const over = spoken - capacity;
     fridgeMeterHost.append(
       fridgePips(Math.min(spoken, capacity), capacity),
       h("span", {
         cls: "oform__coldnum",
-        text: `${spoken} of ${capacity} cold units spoken for · ${free} to order`,
+        text:
+          over > 0
+            ? `${spoken} of ${capacity} cold units — ${over} over capacity, nothing to order`
+            : `${spoken} of ${capacity} cold units spoken for · ${capacity - spoken} to order`,
       }),
     );
   }
