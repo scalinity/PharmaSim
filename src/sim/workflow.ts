@@ -59,18 +59,33 @@ function shuffle<T>(items: T[]): T[] {
  * §17): each fillable drug pulls with its slice of the district's daily
  * category generation, so an L2 wall writes mental-health scripts and a
  * stocked cabinet brings the controlled ones — never before.
+ *
+ * The pool is memoized on license coverage (licenses owned + a cabinet on
+ * the floor), so per-spawn work is one key build instead of re-deriving 49
+ * demand slices — while a mid-shift license purchase still lands on the
+ * very next spawn.
  */
+let drawPoolKey = "";
+let drawPool: DrugDef[] = [];
+let drawWeights: number[] = [];
+let drawTotal = 0;
+
 function drawScriptDrug(state: GameState): DrugDef {
-  const district = districtById(STORE_DISTRICT_ID);
-  const pool = fillableDrugs(state);
-  let total = 0;
-  for (const def of pool) total += drugDailyDemand(district, def);
-  let u = Math.random() * total;
-  for (const def of pool) {
-    u -= drugDailyDemand(district, def);
-    if (u <= 0) return def;
+  const cabinet = state.store.furniture.some((f) => f.defId === "cabinet_controlled");
+  const key = state.licenses.join(",") + (cabinet ? "|cabinet" : "");
+  if (key !== drawPoolKey) {
+    const district = districtById(STORE_DISTRICT_ID);
+    drawPoolKey = key;
+    drawPool = fillableDrugs(state);
+    drawWeights = drawPool.map((def) => drugDailyDemand(district, def));
+    drawTotal = drawWeights.reduce((sum, w) => sum + w, 0);
   }
-  return pool[0]!;
+  let u = Math.random() * drawTotal;
+  for (let i = 0; i < drawPool.length; i++) {
+    u -= drawWeights[i]!;
+    if (u <= 0) return drawPool[i]!;
+  }
+  return drawPool[0]!;
 }
 
 /** Look-alike ids for a drug: §25 `confusableWith` both ways, padded with
@@ -88,6 +103,9 @@ export function confusableNeighbors(correctId: string): string[] {
       (def) =>
         def.category === correct.category &&
         def.id !== correct.id &&
+        // Cold-chain SKUs can't be stocked until the fridge lands (M09);
+        // a decoy bin shouldn't advertise them.
+        !def.refrigerated &&
         !confusables.includes(def.id),
     ).map((def) => def.id),
   );
