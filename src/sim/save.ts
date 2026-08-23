@@ -81,9 +81,13 @@ type RawSave = Record<string, unknown>;
 const MIGRATIONS: readonly ((file: RawSave) => RawSave)[] = [
   // 1 → 2 (milestone 07): the solo era had no staff. The roster starts empty
   // and the hiring pool unrefreshed — the first morning after loading draws
-  // the week's candidates.
+  // the week's candidates. A file whose store isn't even an object passes
+  // through untouched so validate() can refuse it with its own sentence.
   (file) => {
-    (file.store as RawSave).staff = [];
+    const store = file.store;
+    if (typeof store === "object" && store !== null && !Array.isArray(store)) {
+      (store as RawSave).staff = [];
+    }
     file.hiring = {
       seed: Math.floor(Math.random() * 0x7fffffff),
       refreshedOnDay: 0,
