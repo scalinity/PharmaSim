@@ -353,14 +353,22 @@ export class CustomerSystem {
 
   /** True while someone is mid-checkout (or mid-shot) at this station — a
    *  worker walking off mid-serve wastes the customer's progress, so staff
-   *  finish first. */
+   *  finish first. Called from per-tick staff AI, so the station's lanes
+   *  are matched against the live queue keys (`${stationId}#…`) instead of
+   *  building every possible lane id per call (§30). */
   frontIsPaying(stationId: string): boolean {
     if (this.queues.get(stationId)?.[0]?.mode === "pay") return true;
-    return (
-      this.queues.get(CustomerSystem.dropLaneId(stationId))?.[0]?.mode === "pay" ||
-      this.queues.get(CustomerSystem.pickLaneId(stationId))?.[0]?.mode === "pay" ||
-      this.queues.get(CustomerSystem.vaxLaneId(stationId))?.[0]?.mode === "pay"
-    );
+    for (const [laneId, q] of this.queues) {
+      if (
+        q[0]?.mode === "pay" &&
+        laneId.length > stationId.length &&
+        laneId.charCodeAt(stationId.length) === 0x23 && // '#'
+        laneId.startsWith(stationId)
+      ) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /** Whoever is behind this station: the player (base speed), a staffer
