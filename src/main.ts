@@ -76,13 +76,10 @@ renderer.onResize((width, height) => rig.setAspect(width / height));
 
 bus.on("clock.minute", (e) => lighting.setTime(e.igm));
 // §27 winter edge dimming follows the calendar; §16 outages drop the key to
-// 20% cold. The morning snap covers a day that closed mid-ease (§13).
+// 20% cold. Both *listeners* are registered further down, behind the saves
+// block — day.phaseChanged is the autosave's own event, and persistence must
+// stay ahead of every later subscriber in its chain (§23).
 lighting.setSeason(seasonForDay(sim.snapshot.day) === "Winter");
-bus.on("day.phaseChanged", (e) => {
-  lighting.setSeason(seasonForDay(e.day) === "Winter");
-  if (e.phase === "morning") lighting.setOutage(false, true);
-});
-bus.on("outage.changed", (e) => lighting.setOutage(e.on));
 lighting.setTime(sim.snapshot.clockIgm);
 lighting.fitFloor(sim.snapshot.store.grid.cols, sim.snapshot.store.grid.rows);
 bus.on("expansion.bought", (e) => lighting.fitFloor(e.cols, e.rows));
@@ -141,6 +138,17 @@ window.addEventListener("beforeunload", () => {
   if (handingOver || !started) return;
   void storage.save(snapshot);
 });
+
+// The render layer's calendar listeners live *behind* the saves block on
+// purpose: emit runs in registration order, and nothing — not even a
+// throwing color lerp — may starve the autosave of day.phaseChanged (§23).
+bus.on("day.phaseChanged", (e) => {
+  lighting.setSeason(seasonForDay(e.day) === "Winter");
+  // The snap covers a day that closed mid-ease (§13): a closed store never
+  // ticks the clock minutes the ease rides on.
+  if (e.phase === "morning") lighting.setOutage(false, true);
+});
+bus.on("outage.changed", (e) => lighting.setOutage(e.on));
 
 const hud = createHud(hudRoot, sim, bus);
 const binBoard = new RxBinBoard();
