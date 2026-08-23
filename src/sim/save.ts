@@ -300,9 +300,13 @@ function validate(file: RawSave): SaveFile {
   requireArray(file.licenses, "licenses");
   requireObject(file.loans, "loan balances");
   requireObject(file.settings, "settings");
-  // A hand-edited era or crew flag outside §13's range would reskin nothing
-  // and renovate forever; the album's entries feed the receipt by day.
-  if (file.pendingEra !== null && ![2, 3, 4].includes(file.pendingEra as number)) {
+  // era indexes the render layer's palette table and §13's tier table, and
+  // both throw on a miss — a hand-edited generation outside 1–4 would crash
+  // the boot before the title screen could offer a way out.
+  if (![1, 2, 3, 4].includes(file.era as number)) reject("store generation");
+  // §13 only ever renovates one tier up: any other pending value would
+  // reskin nothing, or downgrade the store at the next morning.
+  if (file.pendingEra !== null && file.pendingEra !== (file.era as number) + 1) {
     reject("renovation state");
   }
   requireArray(file.legacy, "legacy moments");
