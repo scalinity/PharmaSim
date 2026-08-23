@@ -5,8 +5,9 @@
 // mutates only through sim.dispatch, updates via cached refs on bus events.
 
 import type { EventBus } from "../core/bus";
-import { dayProgress, formatClock, seasonForDay } from "../core/clock";
+import { DAYS_PER_SEASON, dayProgress, formatClock, seasonForDay, type Season } from "../core/clock";
 import { drugDef } from "../data/drugs";
+import { legacyMomentDef } from "../data/flavor";
 import { furnitureDef, STATION_NAMES } from "../data/furniture";
 import { otcDef } from "../data/otc";
 import {
@@ -16,19 +17,21 @@ import {
   refrigeratedInbound,
 } from "../sim/coldchain";
 import { RUSH_WINDOWS } from "../sim/customers";
+import { categoryLabel } from "../sim/economy";
 import type { SimEvent } from "../sim/events";
+import { outageActive } from "../sim/events-world";
 import { binFixtureFor, SHELF_SLOT_UNITS, shelvedUnits, stockOf } from "../sim/inventory";
 import { eraDef } from "../sim/renovation";
 import type { Sim } from "../sim/sim";
 import { ROLE_LABELS } from "../sim/staff";
-import type { DayPhase, GameSpeed } from "../sim/state";
+import type { DayPhase, GameSpeed, GameState } from "../sim/state";
 import { ChipStrip } from "./components/ChipStrip";
 import { fridgePips } from "./components/Meter";
 import { Panel } from "./components/Panel";
 import { PillButton } from "./components/PillButton";
 import { PriceTag } from "./components/PriceTag";
 import { createRxCard } from "./components/RxCard";
-import { createTicker, worldHeadlines } from "./components/Ticker";
+import { createTicker, type TickerItem } from "./components/Ticker";
 import { createToastHost, type ToastTone } from "./components/Toast";
 import { h } from "./dom";
 import { money } from "./format";
@@ -88,6 +91,65 @@ export interface HudHandle {
 
 function formatCash(cash: number): string {
   return `$${cash.toLocaleString("en-US")}`;
+}
+
+// --- The wire's content (§16): derived from state alone, so a reloaded
+//     session reads the same news. The Ticker component stays a dumb strip.
+
+/** §16 season headlines — the standing story while nothing else is on. */
+const SEASON_HEADLINES: Record<Season, string> = {
+  Spring: "Allergy season settles in — antihistamines move fast",
+  Summer: "Summer lull — the floor runs a little quieter",
+  Fall: "Back to school — pediatric antibiotics in demand",
+  Winter: "Flu season — the whole town wants shots and cold relief",
+};
+
+/** How long a legacy moment stays on the wire (§22: news, not a memorial). */
+const LEGACY_NEWS_DAYS = 1;
+
+/** The active headlines: the season's standing line, active and just-eased
+ *  shortages, today's storm and its outage, and fresh legacy moments. The
+ *  forecast itself is the receipt's to break (§16: it prints on the
+ *  previous evening's paper, where the wire is already quiet). */
+function worldHeadlines(state: Readonly<GameState>): TickerItem[] {
+  const items: TickerItem[] = [];
+  const events = state.events;
+
+  const season = seasonForDay(state.day);
+  const seasonStart = Math.floor((state.day - 1) / DAYS_PER_SEASON) * DAYS_PER_SEASON + 1;
+  items.push({ day: seasonStart, text: SEASON_HEADLINES[season] });
+
+  for (const s of events.shortages) {
+    if (state.day > s.endDay) {
+      items.push({
+        day: s.endDay + 1,
+        text: `${categoryLabel(s.category)} shortage eases — wholesale back to list`,
+      });
+    } else if (state.day >= s.startDay) {
+      items.push({
+        day: s.startDay,
+        text: `Regional ${categoryLabel(s.category)} shortage — wholesale ×1.5, orders fill 60%`,
+      });
+    }
+  }
+
+  for (const storm of events.storms) {
+    if (storm.day === state.day) {
+      items.push(
+        outageActive(state)
+          ? { day: state.day, text: "Power is out across Old Town — registers on the cash box" }
+          : { day: state.day, text: "Storm over Old Town — a thin crowd and a fragile grid" },
+      );
+    }
+  }
+
+  for (const moment of state.legacy) {
+    if (state.day - moment.day <= LEGACY_NEWS_DAYS) {
+      items.push({ day: moment.day, text: legacyMomentDef(moment.id).title });
+    }
+  }
+
+  return items;
 }
 
 export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>): HudHandle {

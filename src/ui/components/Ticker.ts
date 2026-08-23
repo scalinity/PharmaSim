@@ -1,14 +1,10 @@
 // News ticker (SPEC §16, §28 component kit): a strip of wire-service tape
-// under the top bar, cycling the world's active headlines one at a time in
-// Plex Mono — season turns, shortages, storms, legacy moments, and (later)
-// competitor moves — each stamped with its in-game day. The strip is a fixed
-// height and swaps content in place, so cycling never shifts the layout.
+// under the top bar, cycling headlines one at a time in Plex Mono, each
+// stamped with its in-game day. A dumb component like the rest of the kit —
+// the world's actual headlines are derived beside the HUD that owns them.
+// The strip is a fixed height and swaps content in place, so cycling never
+// shifts the layout.
 
-import { DAYS_PER_SEASON, seasonForDay, type Season } from "../../core/clock";
-import { legacyMomentDef } from "../../data/flavor";
-import { categoryLabel } from "../../sim/economy";
-import { outageActive } from "../../sim/events-world";
-import type { GameState } from "../../sim/state";
 import { h } from "../dom";
 
 const CYCLE_MS = 6500;
@@ -23,67 +19,6 @@ export interface TickerHandle {
   /** Replace the rotation. An unchanged list keeps its place mid-cycle. */
   set(items: TickerItem[]): void;
   setVisible(on: boolean): void;
-}
-
-/** §16 season headlines — the standing story while nothing else is on. */
-const SEASON_HEADLINES: Record<Season, string> = {
-  Spring: "Allergy season settles in — antihistamines move fast",
-  Summer: "Summer lull — the floor runs a little quieter",
-  Fall: "Back to school — pediatric antibiotics in demand",
-  Winter: "Flu season — the whole town wants shots and cold relief",
-};
-
-/** How long a legacy moment stays on the wire (§22: news, not a memorial). */
-const LEGACY_NEWS_DAYS = 1;
-
-/**
- * The wire's content, derived from state alone so a reloaded session reads
- * the same news: the season's standing line, active and just-eased
- * shortages, tonight's storm forecast, today's storm and its outage, and
- * fresh legacy moments.
- */
-export function worldHeadlines(state: GameState): TickerItem[] {
-  const items: TickerItem[] = [];
-  const events = state.events;
-
-  const season = seasonForDay(state.day);
-  const seasonStart = Math.floor((state.day - 1) / DAYS_PER_SEASON) * DAYS_PER_SEASON + 1;
-  items.push({ day: seasonStart, text: SEASON_HEADLINES[season] });
-
-  for (const s of events.shortages) {
-    if (state.day > s.endDay) {
-      items.push({
-        day: s.endDay + 1,
-        text: `${categoryLabel(s.category)} shortage eases — wholesale back to list`,
-      });
-    } else if (state.day >= s.startDay) {
-      items.push({
-        day: s.startDay,
-        text: `Regional ${categoryLabel(s.category)} shortage — wholesale ×1.5, orders fill 60%`,
-      });
-    }
-  }
-
-  // The forecast itself is the receipt's to break (§16: it prints on the
-  // previous evening's paper, where the wire is already quiet) — the ticker
-  // picks the storm up on the day it lands.
-  for (const storm of events.storms) {
-    if (storm.day === state.day) {
-      items.push(
-        outageActive(state)
-          ? { day: state.day, text: "Power is out across Old Town — registers on the cash box" }
-          : { day: state.day, text: "Storm over Old Town — a thin crowd and a fragile grid" },
-      );
-    }
-  }
-
-  for (const moment of state.legacy) {
-    if (state.day - moment.day <= LEGACY_NEWS_DAYS) {
-      items.push({ day: moment.day, text: legacyMomentDef(moment.id).title });
-    }
-  }
-
-  return items;
 }
 
 export function createTicker(): TickerHandle {
@@ -111,10 +46,12 @@ export function createTicker(): TickerHandle {
     textEl.textContent = item.text;
   }
 
+  /** (Re)arm the cycle timer — or tear it down while the strip is hidden
+   *  or has nothing to rotate, so a hidden ticker does no work at all. */
   function schedule(): void {
     window.clearInterval(timer);
     timer = 0;
-    if (items.length < 2) return;
+    if (!visible || items.length < 2) return;
     timer = window.setInterval(() => {
       index = (index + 1) % items.length;
       show(true);
@@ -134,8 +71,10 @@ export function createTicker(): TickerHandle {
       schedule();
     },
     setVisible(on) {
+      if (visible === on) return;
       visible = on;
       root.hidden = !on || items[index] === undefined;
+      schedule();
     },
   };
 }
