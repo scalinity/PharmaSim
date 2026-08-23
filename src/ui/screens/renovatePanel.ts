@@ -19,9 +19,17 @@ export interface RenovatePanelHandle {
   setVisible(on: boolean): void;
 }
 
+/** The closes-today warning under the buy pill (§13, §28 copy voice). */
+const BUY_NOTE =
+  "Closes the store for the rest of today. Reopens tomorrow, a generation newer.";
+
 export function createRenovatePanel(sim: Sim, bus: EventBus<SimEvent>): RenovatePanelHandle {
   let visible = false;
-  let pending = false;
+  let pending: "none" | "live" | "full" = "none";
+  /** Live bits of the "next" card, updated in place on cash ticks so the
+   *  buy button stays the same node under a pointer mid-click. */
+  let buyButton: HTMLButtonElement | null = null;
+  let buyNote: HTMLElement | null = null;
 
   const list = h("div", { cls: "reno__list" });
 
@@ -98,17 +106,10 @@ export function createRenovatePanel(sim: Sim, bus: EventBus<SimEvent>): Renovate
       buy.disabled = lock !== null;
       buy.addEventListener("pointerdown", (e) => e.preventDefault());
       buy.addEventListener("click", () => sim.dispatch({ type: "era.renovate" }));
-      body.push(
-        h("div", { cls: "reno__foot reno__foot--buy" }, [
-          buy,
-          h("p", {
-            cls: "reno__note",
-            text:
-              lock ??
-              "Closes the store for the rest of today. Reopens tomorrow, a generation newer.",
-          }),
-        ]),
-      );
+      const note = h("p", { cls: "reno__note", text: lock ?? BUY_NOTE });
+      buyButton = buy;
+      buyNote = note;
+      body.push(h("div", { cls: "reno__foot reno__foot--buy" }, [buy, note]));
     } else {
       body.push(h("p", { cls: "reno__note reno__note--far", text: `After Gen ${def.era - 1}.` }));
     }
@@ -119,24 +120,44 @@ export function createRenovatePanel(sim: Sim, bus: EventBus<SimEvent>): Renovate
     ]);
   }
 
+  /** Full rebuild — statuses moved (a purchase, a new morning, a new era). */
   function refresh(): void {
+    buyButton = null;
+    buyNote = null;
     list.replaceChildren(...ERA_DEFS.map(buildCard));
   }
 
-  /** Coalesce cash-tick churn into one repaint per frame (licenses style). */
-  function invalidate(): void {
-    if (!visible || pending) return;
-    pending = true;
-    requestAnimationFrame(() => {
-      pending = false;
-      if (visible) refresh();
-    });
+  /** Cash tick: only the lock line and the pill's disabled state can have
+   *  changed — written through cached refs (licenses style, §30) so the
+   *  button is never detached between a pointerdown and its click. */
+  function refreshLive(): void {
+    if (buyButton === null || buyNote === null) return;
+    const lock = renovationLock(sim.snapshot);
+    buyButton.disabled = lock !== null;
+    const text = lock ?? BUY_NOTE;
+    if (buyNote.textContent !== text) buyNote.textContent = text;
   }
 
-  bus.on("cash.changed", invalidate);
-  bus.on("day.phaseChanged", invalidate);
-  bus.on("era.renovationStarted", invalidate);
-  bus.on("era.changed", invalidate);
+  /** Coalesce event churn into one repaint per frame; a full rebuild
+   *  request outranks a live one within the same frame. */
+  function invalidate(kind: "live" | "full"): void {
+    if (!visible) return;
+    if (pending === "none") {
+      requestAnimationFrame(() => {
+        const run = pending;
+        pending = "none";
+        if (!visible) return;
+        if (run === "full") refresh();
+        else if (run === "live") refreshLive();
+      });
+    }
+    if (pending !== "full") pending = kind;
+  }
+
+  bus.on("cash.changed", () => invalidate("live"));
+  bus.on("day.phaseChanged", () => invalidate("full"));
+  bus.on("era.renovationStarted", () => invalidate("full"));
+  bus.on("era.changed", () => invalidate("full"));
 
   return {
     root,
