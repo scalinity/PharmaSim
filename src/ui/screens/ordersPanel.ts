@@ -270,10 +270,24 @@ export function createOrdersPanel(sim: Sim, bus: EventBus<SimEvent>): OrdersPane
   // The §14 fridge meter rides under the cold-chain section's note and
   // tracks held stock, tomorrow's van and the cart being written right now.
   const fridgeMeterHost = h("div", { cls: "oform__fridge" });
+  // refreshAll runs once per frame under sale churn while the panel is open;
+  // rebuilding 40+ pips only when the numbers actually moved keeps the meter
+  // out of the per-frame allocation budget (§30).
+  let meterSpoken = -1;
+  let meterCapacity = -1;
 
   function refreshFridgeMeter(): void {
     const state = sim.snapshot;
     const capacity = fridgeCapacity(state);
+    let cartCold = 0;
+    for (const [skuId, units] of cart) {
+      if (rows.get(skuId)?.entry.refrigerated) cartCold += units;
+    }
+    const spoken = refrigeratedHeld(state.store) + refrigeratedInbound(state.store) + cartCold;
+    if (spoken === meterSpoken && capacity === meterCapacity) return;
+    meterSpoken = spoken;
+    meterCapacity = capacity;
+
     fridgeMeterHost.replaceChildren();
     if (capacity === 0) {
       fridgeMeterHost.append(
@@ -284,11 +298,6 @@ export function createOrdersPanel(sim: Sim, bus: EventBus<SimEvent>): OrdersPane
       );
       return;
     }
-    let cartCold = 0;
-    for (const [skuId, units] of cart) {
-      if (rows.get(skuId)?.entry.refrigerated) cartCold += units;
-    }
-    const spoken = refrigeratedHeld(state.store) + refrigeratedInbound(state.store) + cartCold;
     const free = Math.max(0, capacity - spoken);
     fridgeMeterHost.append(
       fridgePips(Math.min(spoken, capacity), capacity),
