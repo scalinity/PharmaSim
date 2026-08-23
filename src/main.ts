@@ -144,9 +144,11 @@ window.addEventListener("beforeunload", () => {
 // throwing color lerp — may starve the autosave of day.phaseChanged (§23).
 bus.on("day.phaseChanged", (e) => {
   lighting.setSeason(seasonForDay(e.day) === "Winter");
-  // The snap covers a day that closed mid-ease (§13): a closed store never
-  // ticks the clock minutes the ease rides on.
-  if (e.phase === "morning") lighting.setOutage(false, true);
+  // Snap at every untimed boundary, not just the morning: the ease rides
+  // clock minutes, and a close reached mid-ease (a renovation's early close,
+  // or a window ending at 20:00) never ticks another one — the receipt
+  // would otherwise print over a half-blacked-out floor (§13, §16).
+  if (e.phase !== "shift") lighting.setOutage(false, true);
 });
 bus.on("outage.changed", (e) => lighting.setOutage(e.on));
 
