@@ -184,23 +184,27 @@ function updateOverlays(): void {
   const { cols, rows } = state.store.grid;
 
   // Shelves that want a trip to the backroom say so (§11 restock nudge).
-  for (const item of state.buildMode ? [] : state.store.furniture) {
-    if (
-      item.defId !== "otc_shelf" &&
-      item.defId !== "rx_shelf" &&
-      item.defId !== "cabinet_controlled"
-    ) {
-      continue;
+  // Chips are cleared by the HUD on entering build mode, so the loop can be
+  // skipped outright there — no per-frame [] stand-in (§30).
+  if (!state.buildMode) {
+    for (const item of state.store.furniture) {
+      if (
+        item.defId !== "otc_shelf" &&
+        item.defId !== "rx_shelf" &&
+        item.defId !== "cabinet_controlled"
+      ) {
+        continue;
+      }
+      const units = sim.restockableUnits(item.id);
+      const empty = sim.hasEmptySlot(item.id);
+      if (units === 0 && !empty) {
+        hud.hideStockChip(item.id);
+        continue;
+      }
+      const [wx, wz] = cellToWorld(cols, rows, item.cellX, item.cellY);
+      const [sx, sy] = project(wx, 2.4, wz);
+      hud.updateStockChip(item.id, sx, sy, units, empty);
     }
-    const units = sim.restockableUnits(item.id);
-    const empty = sim.hasEmptySlot(item.id);
-    if (units === 0 && !empty) {
-      hud.hideStockChip(item.id);
-      continue;
-    }
-    const [wx, wz] = cellToWorld(cols, rows, item.cellX, item.cellY);
-    const [sx, sy] = project(wx, 2.4, wz);
-    hud.updateStockChip(item.id, sx, sy, units, empty);
   }
 
   if (state.phase !== "shift") {

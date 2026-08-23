@@ -166,9 +166,11 @@ export function restockableUnits(state: GameState, furnitureId: string): number 
     return units;
   }
   if (item.defId === "rx_shelf" || item.defId === "cabinet_controlled") {
+    // for-in, not Object.entries: the overlay layer asks every frame (§30).
     let units = 0;
-    for (const [skuId, s] of Object.entries(store.stock)) {
-      if (!isOtc(skuId) && binDefFor(skuId) === item.defId) units += s.backroom;
+    for (const skuId in store.stock) {
+      if (isOtc(skuId) || binDefFor(skuId) !== item.defId) continue;
+      units += store.stock[skuId]!.backroom;
     }
     return units;
   }
@@ -186,8 +188,10 @@ export function hasEmptySlot(state: GameState, furnitureId: string): boolean {
     return slots.some((skuId) => shelvedUnits(store, skuId) === 0);
   }
   if (item?.defId === "rx_shelf" || item?.defId === "cabinet_controlled") {
-    for (const [skuId, line] of Object.entries(store.stock)) {
+    // for-in, not Object.entries: the overlay layer asks every frame (§30).
+    for (const skuId in store.stock) {
       if (isOtc(skuId) || binDefFor(skuId) !== item.defId) continue;
+      const line = store.stock[skuId]!;
       if (line.shelved === 0 && line.backroom > 0) return true;
     }
   }
