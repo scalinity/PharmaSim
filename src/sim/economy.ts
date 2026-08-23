@@ -7,6 +7,7 @@ import { districtById } from "../data/districts";
 import { DRUG_DEFS, type DrugDef } from "../data/drugs";
 import { furnitureDef } from "../data/furniture";
 import { OTC_DEFS, otcDef } from "../data/otc";
+import { hasFridge } from "./coldchain";
 import type { SimEvent } from "./events";
 import type { DayStats, GameState, OrderLine } from "./state";
 
@@ -182,7 +183,7 @@ function rxLock(state: GameState, def: DrugDef): string | null {
       return "Needs a controlled cabinet";
     }
   }
-  if (def.refrigerated && !state.store.furniture.some((f) => f.defId === "fridge_medical")) {
+  if (def.refrigerated && !hasFridge(state)) {
     return "Requires medical refrigeration";
   }
   return null;

@@ -10,6 +10,7 @@
 import { IGM_PER_TICK } from "../core/clock";
 import { districtById } from "../data/districts";
 import { DRUG_DEFS, drugDef, type DrugDef } from "../data/drugs";
+import { hasFridge } from "./coldchain";
 import { STORE_DISTRICT_ID } from "./economy";
 import type { SimEvent } from "./events";
 import { binFixtureFor, returnShelved, takeShelved } from "./inventory";
@@ -76,8 +77,8 @@ let drawTotal = 0;
 
 function drawScriptDrug(state: GameState): DrugDef {
   const cabinet = state.store.furniture.some((f) => f.defId === "cabinet_controlled");
-  const fridge = state.store.furniture.some((f) => f.defId === "fridge_medical");
-  const key = state.licenses.join(",") + (cabinet ? "|cabinet" : "") + (fridge ? "|fridge" : "");
+  const key =
+    state.licenses.join(",") + (cabinet ? "|cabinet" : "") + (hasFridge(state) ? "|fridge" : "");
   if (key !== drawPoolKey) {
     const district = districtById(STORE_DISTRICT_ID);
     drawPoolKey = key;

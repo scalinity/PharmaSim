@@ -5,6 +5,7 @@
 
 import type { District } from "../data/districts";
 import { DRUG_DEFS, type DrugDef } from "../data/drugs";
+import { hasFridge } from "./coldchain";
 import type { GameState } from "./state";
 
 export interface LicenseDef {
@@ -139,9 +140,7 @@ export function canBuyLicense(state: GameState, def: LicenseDef): boolean {
  */
 export function canFillDrug(state: GameState, def: DrugDef): boolean {
   if (def.category === "vaccines") return false;
-  if (def.refrigerated && !state.store.furniture.some((f) => f.defId === "fridge_medical")) {
-    return false;
-  }
+  if (def.refrigerated && !hasFridge(state)) return false;
   if (def.tier === 2) return ownsLicense(state, "L2");
   if (def.tier === 3) {
     return (

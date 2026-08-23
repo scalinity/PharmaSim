@@ -6,7 +6,6 @@
 // command enforce. Pure sim — no DOM, no three.js.
 
 import { DRUG_DEFS } from "../data/drugs";
-import { ownsLicense } from "./licenses";
 import type { GameState, StoreState } from "./state";
 
 /** §26: refrigerated units one fridge holds; a second fridge doubles it. */
@@ -28,12 +27,22 @@ export function isRefrigerated(skuId: string): boolean {
   return REFRIGERATED_IDS.has(skuId);
 }
 
-export function fridgeCapacity(state: GameState): number {
+/** The one fridge gate every §14 consumer shares — ordering locks, demand
+ *  generation, the vaccination service, and the sell-clearing rule. */
+export function hasFridge(state: GameState): boolean {
+  return state.store.furniture.some((f) => f.defId === "fridge_medical");
+}
+
+export function fridgeCount(state: GameState): number {
   let fridges = 0;
   for (const item of state.store.furniture) {
     if (item.defId === "fridge_medical") fridges++;
   }
-  return fridges * FRIDGE_CAPACITY;
+  return fridges;
+}
+
+export function fridgeCapacity(state: GameState): number {
+  return fridgeCount(state) * FRIDGE_CAPACITY;
 }
 
 /** Refrigerated units the store holds — in the fridge bins or still boxed in
@@ -66,11 +75,13 @@ export function fridgeFree(state: GameState): number {
 }
 
 /** §14: walk-ins come once L4, a fridge and a station are all in place; a
- *  pharmacist (or the player) still has to work the shots. */
+ *  pharmacist (or the player) still has to work the shots. The license check
+ *  is inlined (not licenses.ts's ownsLicense) so this module stays a leaf
+ *  that licenses.ts itself can import without a cycle. */
 export function vaccinationUnlocked(state: GameState): boolean {
   return (
-    ownsLicense(state, "L4") &&
-    state.store.furniture.some((f) => f.defId === "fridge_medical") &&
+    state.licenses.includes("L4") &&
+    hasFridge(state) &&
     state.store.furniture.some((f) => f.defId === "vaccine_station")
   );
 }

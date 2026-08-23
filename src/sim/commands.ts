@@ -5,7 +5,7 @@
 import { DAY_START_IGM } from "../core/clock";
 import type { Rot } from "../core/grid";
 import { EXPANSIONS, furnitureDef } from "../data/furniture";
-import { fridgeFree } from "./coldchain";
+import { fridgeFree, hasFridge } from "./coldchain";
 import {
   bankStatus,
   catalog,
@@ -190,10 +190,7 @@ export function handleCommand(
       ) {
         clearControlled(state.store);
       }
-      if (
-        item.defId === "fridge_medical" &&
-        !state.store.furniture.some((f) => f.defId === "fridge_medical")
-      ) {
+      if (item.defId === "fridge_medical" && !hasFridge(state)) {
         clearRefrigerated(state.store);
       }
       if (state.workingStationId === item.id) leaveStation(state, emit);
