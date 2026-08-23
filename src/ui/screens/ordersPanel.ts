@@ -539,8 +539,14 @@ export function createOrdersPanel(sim: Sim, bus: EventBus<SimEvent>): OrdersPane
     for (const [skuId, units] of Object.entries(draft)) {
       const row = rows.get(skuId);
       if (!row || row.entry.lock !== null) continue;
-      row.field.value = String(units);
-      cart.set(skuId, units);
+      // The draft obeys the same §14 cold clamp typed input does — the stub
+      // must never total units (or block on cash) the command would trim.
+      const capped = row.entry.refrigerated
+        ? coldClampUnits(sim.snapshot, units, coldClaimedElsewhere(skuId))
+        : units;
+      if (capped <= 0) continue;
+      row.field.value = String(capped);
+      cart.set(skuId, capped);
       row.root.classList.add("orow--ordered");
     }
     refreshFridgeMeter();
