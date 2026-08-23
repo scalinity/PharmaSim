@@ -26,14 +26,21 @@ export function startLoop(hooks: LoopHooks): void {
     const dtMs = Math.min(now - last, MAX_FRAME_MS);
     last = now;
 
-    accumulator += dtMs * hooks.getSpeed();
-    while (accumulator >= TICK_MS) {
-      hooks.tick();
-      accumulator -= TICK_MS;
-    }
+    // Re-armed in a finally: a throw escaping a tick or a render (a bad
+    // listener somewhere down an emit chain) must cost that frame, not the
+    // session — with the re-arm as a plain last statement, one exception
+    // would silently stop the loop for good.
+    try {
+      accumulator += dtMs * hooks.getSpeed();
+      while (accumulator >= TICK_MS) {
+        hooks.tick();
+        accumulator -= TICK_MS;
+      }
 
-    hooks.render(dtMs, accumulator / TICK_MS);
-    requestAnimationFrame(frame);
+      hooks.render(dtMs, accumulator / TICK_MS);
+    } finally {
+      requestAnimationFrame(frame);
+    }
   }
 
   requestAnimationFrame(frame);
