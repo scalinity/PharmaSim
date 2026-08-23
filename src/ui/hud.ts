@@ -9,7 +9,12 @@ import { dayProgress, formatClock, seasonForDay } from "../core/clock";
 import { drugDef } from "../data/drugs";
 import { furnitureDef } from "../data/furniture";
 import { otcDef } from "../data/otc";
-import { fridgeCapacity, refrigeratedHeld, refrigeratedInbound } from "../sim/coldchain";
+import {
+  fridgeCapacity,
+  fridgeCount,
+  refrigeratedHeld,
+  refrigeratedInbound,
+} from "../sim/coldchain";
 import type { SimEvent } from "../sim/events";
 import { binFixtureFor, SHELF_SLOT_UNITS, shelvedUnits, stockOf } from "../sim/inventory";
 import type { Sim } from "../sim/sim";
@@ -412,8 +417,14 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     // Over-capacity is a legal transient after selling a fridge (§14: no
     // spoilage, ordering blocked) — the count says so instead of lying flat.
     const over = held + inbound - capacity;
+    // Cold stock pools across fridges (like the cabinet), so the card shows
+    // store-wide numbers — the eyebrow says so once a second fridge stands.
+    const fridges = fridgeCount(state);
     const lines = [
-      h("p", { cls: "shelfcard__eyebrow", text: "Medical fridge" }),
+      h("p", {
+        cls: "shelfcard__eyebrow",
+        text: fridges > 1 ? `Cold chain · ${fridges} fridges` : "Medical fridge",
+      }),
       fridgePips(Math.min(held + inbound, capacity), capacity),
       h("p", {
         cls: "shelfcard__cold",
