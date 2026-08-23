@@ -110,8 +110,10 @@ const OUTAGE_SPAN_IGM = 181;
 const OUTAGE_EARLIEST_IGM = 540; // windows sit inside the shift: 09:00 on
 
 /** §16: 1–2 shortages this season, 4–8 days each, one category apiece.
- *  Two squeezes split the fortnight so they never stack. A save migrated
- *  mid-season keeps a squeeze it is inside of, but never a finished one. */
+ *  Each squeeze is clamped inside its window — two split the fortnight and
+ *  genuinely never stack, and none spills into the next season's plans. A
+ *  save migrated mid-season keeps a squeeze it is inside of, never a
+ *  finished one. */
 function planSeasonShortages(state: GameState, seasonIdx: number): void {
   const rng = mulberry32(state.events.seed ^ (Math.imul(seasonIdx + 1, 0x9e3779b1) | 1));
   const count = rng() < 0.5 ? 1 : 2;
@@ -119,9 +121,11 @@ function planSeasonShortages(state: GameState, seasonIdx: number): void {
   const half = DAYS_PER_SEASON / 2;
   let lastPick = -1;
   for (let i = 0; i < count; i++) {
-    const duration = SHORTAGE_MIN_DAYS + Math.floor(rng() * SHORTAGE_SPAN_DAYS);
     const windowStart = count === 2 && i === 1 ? first + half : first;
     const windowLen = count === 2 ? half : DAYS_PER_SEASON;
+    // Split seasons cap a squeeze at their 7-day half; an 8-day roll would
+    // otherwise share a day with its sibling or outlive the season.
+    const duration = Math.min(SHORTAGE_MIN_DAYS + Math.floor(rng() * SHORTAGE_SPAN_DAYS), windowLen);
     const startDay = windowStart + Math.floor(rng() * Math.max(1, windowLen - duration + 1));
     let pick = Math.floor(rng() * SHORTAGE_CATEGORIES.length);
     if (pick === lastPick) pick = (pick + 1) % SHORTAGE_CATEGORIES.length;
