@@ -10,12 +10,13 @@ import { DAY_START_IGM, IGM_PER_TICK } from "../core/clock";
 import { cellIndex, doorCells, FACING, footprintRect } from "../core/grid";
 import { Pathfinder } from "../core/pathfind";
 import { districtById } from "../data/districts";
-import { drugDef } from "../data/drugs";
+import { drugDef, TIER1_DRUGS } from "../data/drugs";
 import { furnitureDef } from "../data/furniture";
 import { randomFullName } from "../data/names";
 import { otcDef } from "../data/otc";
-import { COPAY, post } from "./economy";
+import { COPAY, post, STORE_DISTRICT_ID } from "./economy";
 import type { SimEvent } from "./events";
+import { drugDailyDemand, fillableDrugs } from "./licenses";
 import {
   balksAt,
   otcPrice,
@@ -136,9 +137,23 @@ const RUSH_WINDOWS: readonly [number, number][] = [
   [1020, 1140], // 17:00–19:00
 ];
 const RUSH_MULT = 1.6;
-/** The store's slice of Old Town OTC intent until §17 routing lands (M12/13);
- *  tuned so base visitors = 20/day at the §26 baseline. */
-const OLD_TOWN_SHARE = 20 / ((6_800 / 1000) * 9);
+
+/**
+ * The store's slice of Old Town demand until §17 routing lands (M12/13),
+ * tuned to the §26 baseline: 20 visitors/day at 2.5★ with the Tier-1
+ * formulary, mixed ~65% OTC / ~35% Rx. OTC intent and Rx generation are
+ * separate §17 streams, so each gets its own share constant — and the Rx
+ * side is anchored to Tier-1 coverage, which is what makes a new license
+ * grow the day naturally: more fillable categories, more scripts routed
+ * here, no artificial multiplier (milestone 08).
+ */
+const BASE_OTC_VISITORS = 13; // 20 × 0.65 (§26 mix)
+const BASE_RX_VISITORS = 7; // 20 × 0.35
+const OLD_TOWN = districtById(STORE_DISTRICT_ID);
+const OTC_SHARE = BASE_OTC_VISITORS / ((OLD_TOWN.population / 1000) * OLD_TOWN.otcIntent);
+const RX_SHARE_TUNE =
+  BASE_RX_VISITORS /
+  TIER1_DRUGS.reduce((sum, def) => sum + drugDailyDemand(OLD_TOWN, def), 0);
 
 const WALK_SPEED = 0.5; // cells per igm ≈ 1.2 m/s at 1×
 const ANGRY_SPEED = 0.68;
@@ -151,7 +166,6 @@ const STAND_QUEUE_POS = 1; // seated customers rejoin the line at this position
 const QUEUE_MAX_SLOTS = 12;
 const BASKET_MAX = 4;
 const EXTRA_ITEM_CHANCE = 0.6;
-const RX_SHARE = 0.35; // §26 customer mix (vaccine walk-ins fold in later)
 const RX_BROWSE_WAIT_IGM = 60; // §7: waiting Rx patients start browsing
 const COUNSEL_BASKET_CHANCE = 0.5; // §8: +$4 basket chance after counsel
 const COUNSEL_BASKET_VALUE = 4;
@@ -246,6 +260,9 @@ export class CustomerSystem {
 
   private arrivals: number[] = [];
   private arrivalIdx = 0;
+  /** Today's Rx slice of the visitor mix — set by beginDay from formulary
+   *  breadth (§17); starts at the §26 baseline for a mid-morning load. */
+  private rxShare = 0.35;
   private stressLevel = 0; // 0..3 → ×1 / ×3 / ×9 / ×27 spawn multiplier
   private pathScratch: number[] = [];
   /** Bound after construction (Sim wires the two systems together, §9). */
@@ -328,11 +345,19 @@ export class CustomerSystem {
   // --- Day scheduling (§7, §17, §26) ---
 
   beginDay(state: GameState): void {
-    const oldTown = districtById("oldTown");
-    const districtVisits = (oldTown.population / 1000) * oldTown.otcIntent;
+    // Two §17 streams share the day: OTC intent, and the Rx scripts the
+    // store's licenses and equipment can actually capture (§12, milestone 08).
+    const otcVisitors = (OLD_TOWN.population / 1000) * OLD_TOWN.otcIntent * OTC_SHARE;
+    let rxVisitors = 0;
+    for (const def of fillableDrugs(state)) {
+      rxVisitors += drugDailyDemand(OLD_TOWN, def);
+    }
+    rxVisitors *= RX_SHARE_TUNE;
+    this.rxShare = rxVisitors / (otcVisitors + rxVisitors);
+
     const repMult = 0.4 + 0.24 * state.repStars;
     const dayNoise = randRange(0.85, 1.15);
-    let n = Math.round(districtVisits * OLD_TOWN_SHARE * repMult * dayNoise);
+    let n = Math.round((otcVisitors + rxVisitors) * repMult * dayNoise);
     n *= 3 ** this.stressLevel;
     this.arrivals = this.sampleArrivals(n, DAY_START_IGM);
     this.arrivalIdx = 0;
@@ -413,6 +438,29 @@ export class CustomerSystem {
       case 3:
         return { drop: [x, y], pick: [x, y + 1] };
     }
+  }
+
+  /**
+   * The floor itself grew (§6 expansion, morning-only so nobody is inside):
+   * every cell-indexed structure is sized to cols×rows and cell indices
+   * change meaning, so the buffers are rebuilt from the new grid before the
+   * usual layout re-derivation runs.
+   */
+  gridChanged(state: GameState): void {
+    const { cols, rows } = state.store.grid;
+    if (cols === this.cols && rows === this.rows) return;
+    this.cols = cols;
+    this.rows = rows;
+    this.pathfinder = new Pathfinder(cols, rows);
+    this.staticWalk = new Uint8Array(cols * rows);
+    this.scratchWalk = new Uint8Array(cols * rows);
+    this.occupied = new Int32Array(cols * rows);
+    this.doorExempt = new Uint8Array(cols * rows);
+    this.doors = doorCells(cols, rows);
+    for (const [x, y] of this.doors) this.doorExempt[cellIndex(cols, x, y)] = 1;
+    this.queues.clear();
+    this.chairOccupants.clear();
+    this.layoutChanged(state);
   }
 
   /** Rebuild walkable/queue geometry after any furniture change. */
@@ -1001,11 +1049,12 @@ export class CustomerSystem {
     c.offY = door[1];
     c.hasOffTarget = true;
 
-    // §26 mix: ~35% Rx patients (needs a service counter to drop off at).
+    // §26 mix, ~35% Rx at the Tier-1 baseline; today's actual split follows
+    // formulary breadth (§17). Rx needs a service counter to drop off at.
     const counterExists = state.store.furniture.some((f) => f.defId === "counter_service");
-    c.kind = counterExists && Math.random() < RX_SHARE ? "rx" : "otc";
+    c.kind = counterExists && Math.random() < this.rxShare ? "rx" : "otc";
     if (c.kind === "rx") {
-      c.scriptId = this.workflow.createScript(c.id, c.name).id;
+      c.scriptId = this.workflow.createScript(state, c.id, c.name).id;
     } else {
       this.pickShelfTargets(state, c, def.targetsMin, def.targetsMax);
     }

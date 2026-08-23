@@ -2589,6 +2589,245 @@ html.app-shell .topbar {
   color: var(--paper);
 }
 
+/* ---- Licenses: the office wall (§12, §28) ----
+   The one screen whose ground is not paper: certificates need a wall to hang
+   on, so this sheet is the store's own walnut wainscot. Owned licenses hang
+   as engraved certificates in walnut-and-brass frames; locked ones are still
+   State Board application forms — dashed, pinned, with the requirements as a
+   live checklist. Buying swaps the paper, not just a badge. */
+
+.lic {
+  position: absolute;
+  top: 68px;
+  bottom: 76px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(1060px, calc(100% - 24px));
+  display: flex;
+  align-items: flex-start;
+  z-index: 15;
+  pointer-events: none;
+}
+
+/* The wall board ends where the frames end — it is a hanging board, not a
+   floor-to-ceiling scrim; it only scrolls when a short window forces it. */
+.lic__wall {
+  flex: 1;
+  max-height: 100%;
+  overflow-y: auto;
+  pointer-events: auto;
+  padding: 18px 22px 24px;
+  background:
+    linear-gradient(rgba(32, 48, 43, 0.16), rgba(32, 48, 43, 0.16)),
+    #6b4a32;
+  border: 3px solid #52381f;
+  border-radius: 3px;
+  filter: var(--panel-shadow);
+}
+
+.lic__head {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  margin-bottom: 16px;
+}
+
+/* A small engraved brass plaque names the wall. */
+.lic__plaque {
+  padding: 4px 16px;
+  background: linear-gradient(#d8b276, #c2a161);
+  border: 1px solid #8a6a34;
+  border-radius: 3px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+  font-family: var(--font-display);
+  font-size: var(--fs-16);
+  font-weight: var(--w-semibold);
+  letter-spacing: 0.08em;
+  color: var(--ink);
+}
+
+.lic__eyebrow {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(241, 234, 216, 0.8);
+}
+
+.lic__grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+@media (max-width: 1100px) {
+  .lic__grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+/* --- The two paper artifacts --- */
+
+.cert {
+  display: flex;
+}
+
+.cert__paper {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  padding: 14px 16px 16px;
+  color: var(--ink);
+}
+
+/* Owned: certificate stock in a walnut frame with a brass inner bevel. */
+.cert--owned {
+  padding: 7px;
+  background: #4a3421;
+  border-radius: 2px;
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.4);
+}
+
+.cert--owned .cert__paper {
+  background: var(--paper-gen1);
+  border: 1.5px solid var(--ink);
+  box-shadow: inset 0 0 0 3px var(--paper-gen1), inset 0 0 0 4px rgba(201, 168, 106, 0.9);
+}
+
+/* Locked: an application form pinned to the wall, waiting on its checklist. */
+.cert--form {
+  position: relative;
+}
+
+.cert--form .cert__paper {
+  background: var(--paper);
+  border: 1.5px dashed var(--ink-60);
+  box-shadow: var(--chip-shadow);
+}
+
+.cert--form::before {
+  content: "";
+  position: absolute;
+  top: -5px;
+  left: 50%;
+  width: 10px;
+  height: 10px;
+  transform: translateX(-50%);
+  background: radial-gradient(circle at 35% 30%, #e6c98f, #8a6a34);
+  border-radius: 50%;
+  box-shadow: 0 2px 3px rgba(0, 0, 0, 0.45);
+  z-index: 1;
+}
+
+.cert__eyebrow {
+  margin: 0 0 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-75);
+}
+
+.cert__name {
+  margin: 0 0 4px;
+  font-family: var(--font-display);
+  font-size: var(--fs-20);
+  font-weight: var(--w-semibold);
+  line-height: 1.15;
+}
+
+.cert__grant {
+  margin: 0;
+  font-size: var(--fs-14);
+  line-height: 1.45;
+}
+
+.cert__note {
+  margin: 6px 0 0;
+  font-size: var(--fs-12);
+  font-style: italic;
+  color: var(--ink-75);
+}
+
+/* The requirements checklist — the exact distance to the frame (§12). */
+.cert__gates {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--ink-25);
+}
+
+.cert__gate {
+  display: flex;
+  gap: 7px;
+  margin: 0 0 4px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  line-height: 1.45;
+}
+
+.cert__gate--met {
+  color: var(--ink-60);
+}
+
+.cert__glyph {
+  flex: none;
+  font-weight: var(--w-semibold);
+}
+
+.cert__gate--met .cert__glyph {
+  color: var(--pine);
+}
+
+/* Grid rows stretch, so the buy pill settles to the form's bottom edge. */
+.cert__buy {
+  align-self: flex-start;
+  margin-top: 12px;
+  margin-bottom: 0;
+}
+
+.cert--form .cert__gates {
+  margin-bottom: auto;
+}
+
+.cert__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-top: auto;
+  padding-top: 14px;
+}
+
+/* The board's embossed seal — the pine cross's mark in relief. */
+.cert__seal {
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 2px solid var(--pine);
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 2px var(--paper-gen1), inset 0 0 0 3.5px var(--pine);
+  font-family: var(--font-display);
+  font-size: var(--fs-16);
+  font-weight: var(--w-bold);
+  color: var(--pine);
+}
+
+/* Issued date in the receipt's rubber-stamp voice (§28). */
+.cert__stamp {
+  padding: 2px 8px;
+  border: 2px solid var(--amber);
+  border-radius: 3px;
+  transform: rotate(-3deg);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: var(--w-semibold);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--amber);
+  mix-blend-mode: multiply;
+}
+
 /* ---- Reduced motion ---- */
 
 @media (prefers-reduced-motion: reduce) {

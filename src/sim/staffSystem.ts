@@ -45,7 +45,11 @@ const RESTOCK_SCAN_IGM = 5;
 const COUNSEL_SLACK_IGM = 3; // agent timer backs up the customer's, not vice versa
 
 const FRONT_DEFS: ReadonlySet<string> = new Set(["counter_register", "counter_service"]);
-const RESTOCK_DEFS: ReadonlySet<string> = new Set(["otc_shelf", "rx_shelf"]);
+const RESTOCK_DEFS: ReadonlySet<string> = new Set([
+  "otc_shelf",
+  "rx_shelf",
+  "cabinet_controlled",
+]);
 
 /** What an agent is walking toward / standing at. */
 type TargetKind = "post" | "shelf" | "break" | "counsel";
@@ -239,6 +243,23 @@ export class StaffSystem {
       };
       this.agentList.push(agent);
     }
+  }
+
+  /**
+   * The floor grew (§6 expansion, morning-only): resize every cell-indexed
+   * buffer, then settle the crew at fresh break spots — their old cell
+   * indices meant different squares on the old column count.
+   */
+  gridChanged(state: GameState, emit: Emit): void {
+    const { cols, rows } = state.store.grid;
+    if (cols === this.cols && rows === this.rows) return;
+    this.cols = cols;
+    this.rows = rows;
+    this.pathfinder = new Pathfinder(cols, rows);
+    this.walk = new Uint8Array(cols * rows);
+    this.doors = doorCells(cols, rows);
+    this.layoutChanged(state, emit);
+    this.agentList.forEach((agent, i) => this.placeAtBreak(agent, i, emit));
   }
 
   /** Rebuild the walk map and break spots after any furniture change. */

@@ -4,7 +4,7 @@
 
 import { DAY_START_IGM } from "../core/clock";
 import type { Rot } from "../core/grid";
-import { furnitureDef } from "../data/furniture";
+import { EXPANSIONS, furnitureDef } from "../data/furniture";
 import {
   bankStatus,
   catalog,
@@ -15,6 +15,7 @@ import {
 import type { SimEvent } from "./events";
 import {
   clampMultiplier,
+  clearControlled,
   clearShelf,
   isOtc,
   queueDelivery,
@@ -22,6 +23,7 @@ import {
   refreshPriceIndex,
   restock,
 } from "./inventory";
+import { canBuyLicense, licenseDef, ownsLicense } from "./licenses";
 import { validatePlacement } from "./placement";
 import { refreshHiringPool, ROLE_STATIONS, type StaffMember } from "./staff";
 import { emptyDayStats, type GameState, type GameSpeed, type OrderLine } from "./state";
@@ -48,6 +50,12 @@ export type Command =
   | { type: "reorder.setRule"; skuId: string; min: number; target: number }
   | { type: "loan.draw"; amount: number }
   | { type: "loan.repay"; amount: number }
+  // --- Licenses + expansion (§6, §12) ---
+  /** Buy a §12 license, anytime its star/cash/prerequisite gates are met. */
+  | { type: "license.buy"; id: string }
+  /** Buy the next §6 floor expansion. Morning only — the grid can't change
+   *  under live paths. */
+  | { type: "expansion.buy" }
   // --- Staff (§9) ---
   | { type: "staff.hire"; candidateId: string }
   | { type: "staff.fire"; staffId: string }
@@ -155,8 +163,10 @@ export function handleCommand(
       const item = state.store.furniture[index]!;
       const refund = Math.round(furnitureDef(item.defId).cost / 2);
       state.store.furniture.splice(index, 1);
-      // Stock on a sold shelf goes back in a box, not in the bin.
+      // Stock on a sold shelf goes back in a box, not in the bin. A sold
+      // cabinet boxes its Tier-3 stock the same way (§25).
       if (item.defId === "otc_shelf") clearShelf(state.store, item.id);
+      if (item.defId === "cabinet_controlled") clearControlled(state.store);
       if (state.workingStationId === item.id) leaveStation(state, emit);
       // Anyone stationed at a sold fixture is off duty until reassigned.
       for (const member of state.store.staff) {
@@ -234,6 +244,37 @@ export function handleCommand(
       state.loans.bank = round2(state.loans.bank - amount);
       post(state, "bank.payment", -amount, emit);
       emit({ type: "loan.changed", bank: state.loans.bank, family: state.loans.family });
+      return;
+    }
+    case "license.buy": {
+      if (state.phase === "close" || ownsLicense(state, command.id)) return;
+      const def = licenseDef(command.id);
+      if (!canBuyLicense(state, def)) return;
+      state.licenses.push(def.id);
+      state.stats[`license.${def.id}`] = state.day;
+      post(state, "license", -def.cost, emit);
+      // A §22 legacy moment — milestone 10 hangs the flavor on this event.
+      emit({ type: "license.bought", id: def.id, name: def.name, cost: def.cost, day: state.day });
+      return;
+    }
+    case "expansion.buy": {
+      if (state.phase !== "morning") return;
+      const level = state.store.grid.expansions;
+      const next = EXPANSIONS[level];
+      if (!next || state.cash < next.cost) return;
+      state.store.grid.cols = next.cols;
+      state.store.grid.rows = next.rows;
+      state.store.grid.expansions = level + 1;
+      state.stats[`expansion.E${level + 1}`] = state.day;
+      post(state, "expansion", -next.cost, emit);
+      emit({
+        type: "expansion.bought",
+        level: level + 1,
+        cols: next.cols,
+        rows: next.rows,
+        cost: next.cost,
+        day: state.day,
+      });
       return;
     }
     case "staff.hire": {

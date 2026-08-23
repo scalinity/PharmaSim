@@ -76,6 +76,8 @@ renderer.onResize((width, height) => rig.setAspect(width / height));
 
 bus.on("clock.minute", (e) => lighting.setTime(e.igm));
 lighting.setTime(sim.snapshot.clockIgm);
+lighting.fitFloor(sim.snapshot.store.grid.cols, sim.snapshot.store.grid.rows);
+bus.on("expansion.bought", (e) => lighting.fitFloor(e.cols, e.rows));
 
 const hud = createHud(hudRoot, sim, bus);
 const binBoard = new RxBinBoard();
@@ -182,7 +184,13 @@ function updateOverlays(): void {
 
   // Shelves that want a trip to the backroom say so (§11 restock nudge).
   for (const item of state.buildMode ? [] : state.store.furniture) {
-    if (item.defId !== "otc_shelf" && item.defId !== "rx_shelf") continue;
+    if (
+      item.defId !== "otc_shelf" &&
+      item.defId !== "rx_shelf" &&
+      item.defId !== "cabinet_controlled"
+    ) {
+      continue;
+    }
     const units = sim.restockableUnits(item.id);
     const empty = sim.hasEmptySlot(item.id);
     if (units === 0 && !empty) {

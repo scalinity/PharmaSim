@@ -40,6 +40,8 @@ export const LEDGER_REASONS = [
   { id: "utilities", group: "cost", label: "Utilities" },
   { id: "loan.interest", group: "cost", label: "Loan interest" },
   { id: "fixtures", group: "cost", label: "Fixtures" },
+  { id: "license", group: "cost", label: "Licenses" },
+  { id: "expansion", group: "cost", label: "Expansion" },
   { id: "bank.draw", group: "financing", label: "Credit line draw" },
   { id: "bank.payment", group: "financing", label: "Credit line payment" },
   { id: "family.loan", group: "financing", label: "Family loan" },
@@ -175,6 +177,13 @@ function rxLock(state: GameState, def: DrugDef): string | null {
     }
   }
   return null;
+}
+
+/** Live lock for one SKU — the Orders panel re-checks its rows as licenses
+ *  and cabinets come and go mid-session (§11, §12). Null = orderable. */
+export function skuLock(state: GameState, skuId: string): string | null {
+  const drug = DRUG_BY_ID.get(skuId);
+  return drug ? rxLock(state, drug) : null;
 }
 
 /**

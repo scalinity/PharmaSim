@@ -35,6 +35,11 @@
 //    · store.staff (roster, §9/§24) · hiring (weekly candidate pool + its
 //      per-save seed)                                                 (M07)
 //
+//  Version 3 (milestone 08) adds progression:
+//    · stats (§24 lifetime counters: license/expansion purchase days) (M08)
+//    licenses, grid.expansions and placed cabinets already round-tripped in
+//    v1/v2 shapes — the step only has to seed `stats` from what's owned.
+//
 //  §24's fuller schema (worldSeed, stores[], competitors, patientPools, dc,
 //  aitech, legacy, stats) is not here because those systems do not exist yet.
 //  They arrive field-by-field with the milestones that own them —
@@ -53,7 +58,7 @@ import {
   type StoreState,
 } from "./state";
 
-export const SAVE_VERSION = 2;
+export const SAVE_VERSION = 3;
 
 export interface SaveFile {
   version: number;
@@ -65,6 +70,7 @@ export interface SaveFile {
   repStars: number;
   licenses: string[];
   era: 1 | 2 | 3 | 4;
+  stats: Record<string, number>;
   store: StoreState;
   hiring: HiringPool;
   dayStats: DayStats;
@@ -93,6 +99,20 @@ const MIGRATIONS: readonly ((file: RawSave) => RawSave)[] = [
       refreshedOnDay: 0,
       candidates: [],
     } satisfies HiringPool;
+    return file;
+  },
+  // 2 → 3 (milestone 08): progression saves nothing new beyond `stats` — a
+  // pre-08 store owned its licenses without a record of when, so each one is
+  // backdated to day 1 (L1 genuinely was). Grid size and any cabinet already
+  // live in store.grid / store.furniture untouched.
+  (file) => {
+    const stats: Record<string, number> = {};
+    if (Array.isArray(file.licenses)) {
+      for (const id of file.licenses) {
+        if (typeof id === "string") stats[`license.${id}`] = 1;
+      }
+    }
+    file.stats = stats;
     return file;
   },
 ];
@@ -179,6 +199,7 @@ export function serialize(state: GameState): SaveFile {
     repStars: state.repStars,
     licenses: [...state.licenses],
     era: state.era,
+    stats: { ...state.stats },
     store: copyStore(state.store),
     hiring: copyHiring(state.hiring),
     dayStats: copyDayStats(state.dayStats),
@@ -199,6 +220,7 @@ export function hydrate(file: SaveFile): GameState {
     buildMode: false,
     licenses: [...file.licenses],
     era: file.era,
+    stats: { ...file.stats },
     store: copyStore(file.store),
     hiring: copyHiring(file.hiring),
     workingStationId: null,
@@ -233,6 +255,7 @@ function validate(file: RawSave): SaveFile {
   requireArray(file.licenses, "licenses");
   requireObject(file.loans, "loan balances");
   requireObject(file.settings, "settings");
+  requireObject(file.stats, "stats");
 
   const store = requireObject(file.store, "store");
   requireObject(store.grid, "store grid");

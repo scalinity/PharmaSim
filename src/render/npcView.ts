@@ -91,9 +91,6 @@ export class NpcView {
   private ringProgress: InstancedBufferAttribute;
   private owner: Mesh;
 
-  private cols: number;
-  private rows: number;
-
   // Scratch — no per-frame allocations (§30).
   private m = new Matrix4();
   private pos = new Vector3();
@@ -108,10 +105,6 @@ export class NpcView {
     private sim: Sim,
     scene: Scene,
   ) {
-    const { cols, rows } = sim.snapshot.store.grid;
-    this.cols = cols;
-    this.rows = rows;
-
     const material = new MeshLambertMaterial({ flatShading: true });
 
     this.bodies = new InstancedMesh(new CapsuleGeometry(0.19, 0.62, 3, 10), material, MAX_NPCS);
@@ -166,7 +159,8 @@ export class NpcView {
   /** Compose all instance matrices for the frame. alpha = tick interpolation. */
   update(alpha: number): void {
     const state = this.sim.snapshot;
-    const { cols, rows } = this;
+    // Read fresh — a §6 expansion re-centers the grid under everyone's feet.
+    const { cols, rows } = state.store.grid;
     let n = 0; // body/head instance cursor
     let nb = 0; // box layer cursor (accents + bags)
     let nr = 0; // ring cursor
@@ -275,8 +269,9 @@ export class NpcView {
       return;
     }
     const def = furnitureDef(item.defId);
+    const { cols, rows } = this.sim.snapshot.store.grid;
     const rect = footprintRect(def.cells, item.cellX, item.cellY, item.rot);
-    const [cx, cz] = rectCenterWorld(this.cols, this.rows, rect);
+    const [cx, cz] = rectCenterWorld(cols, rows, rect);
     const [fx, fy] = FACING[item.rot]!;
     this.owner.position.set(cx - fx, FLOOR_Y, cz - fy);
     this.owner.rotation.y = Math.atan2(fx, fy);

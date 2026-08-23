@@ -28,16 +28,25 @@ export class Lighting {
     this.key.shadow.mapSize.set(1024, 1024);
     this.key.shadow.normalBias = 0.03;
     const cam = this.key.shadow.camera;
-    cam.left = -9;
-    cam.right = 9;
-    cam.top = 9;
-    cam.bottom = -9;
     cam.near = 4;
     cam.far = 70;
     scene.add(this.key);
     scene.add(this.key.target);
+    this.fitFloor(10, 7);
 
     this.scene.background = this.background;
+  }
+
+  /** Size the shadow box to the floor — a §6 expansion outgrows a fixed one
+   *  (the box is light-aligned, so it must cover the floor's half-diagonal). */
+  fitFloor(cols: number, rows: number): void {
+    const radius = Math.ceil(Math.hypot(cols, rows) / 2) + 1;
+    const cam = this.key.shadow.camera;
+    cam.left = -radius;
+    cam.right = radius;
+    cam.top = radius;
+    cam.bottom = -radius;
+    cam.updateProjectionMatrix();
   }
 
   /** Position and tint the lights for an in-game minute of day. */

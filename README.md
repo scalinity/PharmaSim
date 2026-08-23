@@ -39,7 +39,7 @@ and is only used when a milestone brief calls for it.
 - [x] 05 Inventory + economy
 - [x] 06 Saves + app shell
 - [x] 07 Staff + automation
-- [ ] 08 Licenses + expansion
+- [x] 08 Licenses + expansion
 - [ ] 09 Cold chain + vaccinations
 - [ ] 10 Modernization + legacy
 - [ ] 11 Events + atmosphere

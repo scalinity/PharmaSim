@@ -23,8 +23,8 @@ const STATION_NAMES: Record<string, string> = {
   verify_desk: "verify desk",
 };
 
-/** Fixtures a click restocks from the backroom (§11). */
-const RESTOCK_DEFS = new Set(["otc_shelf", "rx_shelf"]);
+/** Fixtures a click restocks from the backroom (§11, §25). */
+const RESTOCK_DEFS = new Set(["otc_shelf", "rx_shelf", "cabinet_controlled"]);
 
 export interface BuildSelection {
   id: string;
@@ -216,11 +216,12 @@ export class Picking {
         this.callbacks.stationHint(null);
         this.callbacks.shelfHover(item.id, e.clientX, e.clientY);
       } else {
+        const into = item.defId === "cabinet_controlled" ? "the cabinet" : "the bins";
         this.callbacks.shelfHover(null, 0, 0);
         this.callbacks.stationHint(
           units > 0
-            ? `Click to move ${units} ${units === 1 ? "box" : "boxes"} into the bins`
-            : "The backroom has nothing for these bins",
+            ? `Click to move ${units} ${units === 1 ? "box" : "boxes"} into ${into}`
+            : `The backroom has nothing for ${into}`,
         );
       }
       return;
@@ -245,7 +246,7 @@ export class Picking {
   /** A shelf click restocks, except while its bins are being picked from. */
   private isRestockable(defId: string): boolean {
     if (!RESTOCK_DEFS.has(defId)) return false;
-    return !(defId === "rx_shelf" && this.binBoard.active);
+    return !(defId !== "otc_shelf" && this.binBoard.active);
   }
 
   private clearHints(): void {
@@ -395,6 +396,10 @@ export class Picking {
       return;
     }
     const { cols, rows } = this.sim.snapshot.store.grid;
+    // A §6 expansion outgrows the preallocated search buffers; resize lazily.
+    if (this.pathfinder.cols !== cols || this.pathfinder.rows !== rows) {
+      this.pathfinder = new Pathfinder(cols, rows);
+    }
     const walkable = new Uint8Array(cols * rows).fill(1);
     for (const item of this.sim.snapshot.store.furniture) {
       const def = furnitureDef(item.defId);

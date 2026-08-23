@@ -68,6 +68,12 @@ export class Sim {
         this.staff.layoutChanged(this.state, this.emit);
         this.workflow.syncStation(this.state, this.emit);
         break;
+      case "expansion.buy":
+        // §6: the grid itself grew (morning-only, nobody on the floor) —
+        // both agent systems rebuild their cell-indexed world.
+        this.customers.gridChanged(this.state);
+        this.staff.gridChanged(this.state, this.emit);
+        break;
       case "station.workHere":
       case "station.leave":
       case "build.enter":

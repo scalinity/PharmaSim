@@ -8,6 +8,7 @@ import {
   BufferAttribute,
   BufferGeometry,
   Group,
+  Material,
   Mesh,
   MeshBasicMaterial,
   MeshLambertMaterial,
@@ -42,9 +43,14 @@ const WALL_T = 0.16;
 const WALL_H = 2.3;
 const WAINSCOT_H = 0.85;
 const CAP_H = 0.06;
-const DOOR_W = 2; // matches the two door cells
 const FADE_DOT = 0.2; // wall outward · toward-camera above this starts the fade
 const FADE_MIN = 0.06;
+
+/** Door gap width in cells — two while cols is even, one when odd (§6
+ *  doorCells: the door stays south-center through every expansion). */
+function doorWidth(cols: number): number {
+  return cols % 2 === 0 ? 2 : 1;
+}
 
 interface WallSide {
   group: Group;
@@ -60,6 +66,9 @@ export class StoreScene {
   private furnitureLayer = new Group();
   private meshes = new Map<string, Mesh>();
   private walls: WallSide[] = [];
+  /** Slab, floor tiles, walls, grid lines — everything sized to the grid,
+   *  torn down and rebuilt whole when an expansion grows the floor (§6). */
+  private shell = new Group();
 
   private furnitureMat = new MeshLambertMaterial({ vertexColors: true, flatShading: true });
   private hoverMat = new MeshLambertMaterial({
@@ -83,7 +92,7 @@ export class StoreScene {
   private footprint: Mesh;
 
   private zoneMesh: Mesh;
-  private gridLines: Mesh;
+  private gridLines!: Mesh; // assigned by buildShell()
   private pathMesh: Mesh;
   private pathGeometry = new BufferGeometry();
 
@@ -116,8 +125,7 @@ export class StoreScene {
 
     this.scene.add(this.store);
     this.buildGround();
-    this.buildFloor();
-    this.buildWalls();
+    this.buildShell();
 
     this.furnitureLayer.position.y = FLOOR_Y;
     this.store.add(this.furnitureLayer);
@@ -142,10 +150,6 @@ export class StoreScene {
     this.zoneMesh.renderOrder = 2;
     this.store.add(this.zoneMesh);
 
-    this.gridLines = this.buildGridLines();
-    this.gridLines.visible = false;
-    this.store.add(this.gridLines);
-
     const ringGeometry = new RingGeometry(0.82, 1, 40);
     ringGeometry.rotateX(-Math.PI / 2);
     this.bottleneckRing = new Mesh(ringGeometry, this.bottleneckMat);
@@ -168,6 +172,37 @@ export class StoreScene {
     bus.on("furniture.moved", (e) => this.moveItem(e.item));
     bus.on("furniture.sold", (e) => this.removeItem(e.id));
     bus.on("build.changed", (e) => this.setBuildMode(e.active));
+    bus.on("expansion.bought", (e) => this.gridChanged(e.cols, e.rows));
+  }
+
+  /** §6 expansion: tear the shell down, rebuild it at the new size, and
+   *  re-seat every furniture mesh — world coordinates are grid-centered, so
+   *  each piece shifts when the center moves even though its cell doesn't. */
+  private gridChanged(cols: number, rows: number): void {
+    this.cols = cols;
+    this.rows = rows;
+
+    this.store.remove(this.shell);
+    this.shell.traverse((child) => {
+      if (!(child instanceof Mesh)) return;
+      (child.geometry as BufferGeometry).dispose();
+      // The floor tiles share the furniture material; everything else in the
+      // shell owns its material and goes down with it.
+      if (child.material !== this.furnitureMat && child.material instanceof Material) {
+        child.material.dispose();
+      }
+    });
+    this.shell = new Group();
+    this.walls = [];
+    this.buildShell();
+
+    const state = this.sim.snapshot;
+    for (const item of state.store.furniture) {
+      const mesh = this.meshes.get(item.id);
+      if (mesh) this.placeMesh(mesh, item);
+    }
+    this.setBottleneck(null);
+    this.refreshZone();
   }
 
   /** Per-frame: fade whichever walls face the camera (dollhouse, SPEC §27). */
@@ -377,6 +412,7 @@ export class StoreScene {
 
   // --- Shell construction ---
 
+  /** The lot the store sits on — static, whatever the floor grows to. */
   private buildGround(): void {
     const ground = new Mesh(
       new PlaneGeometry(80, 80),
@@ -385,17 +421,27 @@ export class StoreScene {
     ground.rotation.x = -Math.PI / 2;
     ground.receiveShadow = true;
     this.scene.add(ground);
+  }
 
+  /** Everything sized to cols×rows, built fresh into this.shell. */
+  private buildShell(): void {
+    this.buildSlabAndFloor();
+    this.buildWalls();
+    this.gridLines = this.buildGridLines();
+    this.gridLines.visible = this.buildMode;
+    this.shell.add(this.gridLines);
+    this.store.add(this.shell);
+  }
+
+  private buildSlabAndFloor(): void {
     const slab = new Mesh(
       new BoxGeometry(this.cols + 2 * WALL_T + 0.5, SLAB_H, this.rows + 2 * WALL_T + 0.5),
       new MeshLambertMaterial({ color: CREAM, flatShading: true }),
     );
     slab.position.y = SLAB_H / 2;
     slab.receiveShadow = true;
-    this.store.add(slab);
-  }
+    this.shell.add(slab);
 
-  private buildFloor(): void {
     const b = new PartsBuilder();
     for (let y = 0; y < this.rows; y++) {
       for (let x = 0; x < this.cols; x++) {
@@ -408,15 +454,15 @@ export class StoreScene {
     const floor = new Mesh(b.build(), this.furnitureMat);
     floor.position.y = FLOOR_Y;
     floor.receiveShadow = true;
-    this.store.add(floor);
+    this.shell.add(floor);
 
     // Brass threshold strip across the door gap
     const threshold = new Mesh(
-      new BoxGeometry(DOOR_W, 0.02, WALL_T),
+      new BoxGeometry(doorWidth(this.cols), 0.02, WALL_T),
       new MeshLambertMaterial({ color: BRASS, flatShading: true }),
     );
     threshold.position.set(0, FLOOR_Y, this.rows / 2 + WALL_T / 2);
-    this.store.add(threshold);
+    this.shell.add(threshold);
   }
 
   /** Cell grid drawn as thin quads (1-px GL lines vanish at this zoom). */
@@ -453,13 +499,14 @@ export class StoreScene {
   private buildWalls(): void {
     const hx = this.cols / 2;
     const hz = this.rows / 2;
+    const doorW = doorWidth(this.cols);
     const sides: { normal: Vector3; segments: [cx: number, cz: number, len: number][] }[] = [
       { normal: new Vector3(0, 0, -1), segments: [[0, -hz - WALL_T / 2, this.cols + 2 * WALL_T]] },
       {
         normal: new Vector3(0, 0, 1),
         segments: [
-          [-(DOOR_W / 2 + (this.cols - DOOR_W) / 4), hz + WALL_T / 2, (this.cols - DOOR_W) / 2],
-          [DOOR_W / 2 + (this.cols - DOOR_W) / 4, hz + WALL_T / 2, (this.cols - DOOR_W) / 2],
+          [-(doorW / 2 + (this.cols - doorW) / 4), hz + WALL_T / 2, (this.cols - doorW) / 2],
+          [doorW / 2 + (this.cols - doorW) / 4, hz + WALL_T / 2, (this.cols - doorW) / 2],
         ],
       },
       { normal: new Vector3(-1, 0, 0), segments: [[-hx - WALL_T / 2, 0, this.rows]] },
@@ -508,12 +555,12 @@ export class StoreScene {
         const postMat = wainscotMat;
         for (const dir of [-1, 1]) {
           const post = new Mesh(new BoxGeometry(0.14, WALL_H + 0.18, WALL_T + 0.1), postMat);
-          post.position.set(dir * (DOOR_W / 2 + 0.07), SLAB_H + (WALL_H + 0.18) / 2, hz + WALL_T / 2);
+          post.position.set(dir * (doorW / 2 + 0.07), SLAB_H + (WALL_H + 0.18) / 2, hz + WALL_T / 2);
           group.add(post);
         }
       }
 
-      this.store.add(group);
+      this.shell.add(group);
       this.walls.push({
         group,
         materials: [wainscotMat, upperMat, capMat],

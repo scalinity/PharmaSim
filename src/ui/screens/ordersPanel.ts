@@ -13,6 +13,7 @@ import {
   COPAY,
   listWholesale,
   orderTotal,
+  skuLock,
   supplierDiscount,
   unitCost,
   unitMargin,
@@ -330,6 +331,9 @@ export function createOrdersPanel(sim: Sim, bus: EventBus<SimEvent>): OrdersPane
 
   function refreshRow(row: Row): void {
     const state = sim.snapshot;
+    // Locks move mid-session — a bought license or a placed cabinet opens
+    // rows this panel built while they were still gated (§12).
+    row.entry.lock = skuLock(state, row.entry.skuId);
     const stock = stockOf(state.store, row.entry.skuId);
     const sell =
       row.entry.kind === "otc" ? otcPrice(state.store, row.entry.skuId) : row.entry.listPrice;

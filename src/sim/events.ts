@@ -30,9 +30,11 @@ export type SimEvent =
       drugId: string;
       patientName: string;
       quantity: number;
-      /** 12 drug ids, row-major over the shelf's 4×3 bin face. */
+      /** Drug ids, row-major over the fixture's 3-wide bin face: 12 on the
+       *  Rx shelf's 4×3, 9 on the controlled cabinet's 3×3 (§8, §25). */
       bins: string[];
-      /** Rx shelf the picking frames, or null when none is placed. */
+      /** Bin fixture the picking frames (Rx shelf, or the controlled cabinet
+       *  for a Tier-3 script), or null when none is placed. */
       shelfId: string | null;
     }
   | { type: "rx.binPicked"; scriptId: number }
@@ -54,6 +56,9 @@ export type SimEvent =
   | { type: "order.delivered"; units: number; skus: number }
   | { type: "otc.priceChanged"; skuId: string; multiplier: number }
   | { type: "loan.changed"; bank: number; family: number }
+  // --- Licenses + expansion (§6, §12, milestone 08; legacy moments for 10, §22) ---
+  | { type: "license.bought"; id: string; name: string; cost: number; day: number }
+  | { type: "expansion.bought"; level: number; cols: number; rows: number; cost: number; day: number }
   // --- Staff (§9, milestone 07) ---
   | { type: "staff.hired"; member: StaffMember }
   | { type: "staff.fired"; id: string; name: string }

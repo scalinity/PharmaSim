@@ -4,6 +4,7 @@
 // next-morning deliveries, stock-out recording, and the trailing sales and
 // fill-rate history the city model reads later (§17). Pure sim — no DOM.
 
+import { DRUG_DEFS } from "../data/drugs";
 import { OTC_DEFS, otcDef } from "../data/otc";
 import { round2 } from "./economy";
 import type { SimEvent } from "./events";
@@ -29,6 +30,20 @@ const OTC_IDS: ReadonlySet<string> = new Set(OTC_DEFS.map((def) => def.id));
 
 export function isOtc(skuId: string): boolean {
   return OTC_IDS.has(skuId);
+}
+
+/** Tier-3 SKUs live in the controlled cabinet, not the Rx shelf (§25). */
+const CONTROLLED_IDS: ReadonlySet<string> = new Set(
+  DRUG_DEFS.filter((def) => def.tier === 3).map((def) => def.id),
+);
+
+export function isControlled(skuId: string): boolean {
+  return CONTROLLED_IDS.has(skuId);
+}
+
+/** Which bin fixture holds this Rx SKU's stock out front. */
+function binDefFor(skuId: string): "rx_shelf" | "cabinet_controlled" {
+  return isControlled(skuId) ? "cabinet_controlled" : "rx_shelf";
 }
 
 const EMPTY: StockLine = { backroom: 0, shelved: 0 };
@@ -150,10 +165,10 @@ export function restockableUnits(state: GameState, furnitureId: string): number 
     }
     return units;
   }
-  if (item.defId === "rx_shelf") {
+  if (item.defId === "rx_shelf" || item.defId === "cabinet_controlled") {
     let units = 0;
     for (const [skuId, s] of Object.entries(store.stock)) {
-      if (!isOtc(skuId)) units += s.backroom;
+      if (!isOtc(skuId) && binDefFor(skuId) === item.defId) units += s.backroom;
     }
     return units;
   }
@@ -170,9 +185,10 @@ export function hasEmptySlot(state: GameState, furnitureId: string): boolean {
     const slots = store.shelfSlots[furnitureId] ?? [];
     return slots.some((skuId) => shelvedUnits(store, skuId) === 0);
   }
-  if (item?.defId === "rx_shelf") {
+  if (item?.defId === "rx_shelf" || item?.defId === "cabinet_controlled") {
     for (const [skuId, line] of Object.entries(store.stock)) {
-      if (!isOtc(skuId) && line.shelved === 0 && line.backroom > 0) return true;
+      if (isOtc(skuId) || binDefFor(skuId) !== item.defId) continue;
+      if (line.shelved === 0 && line.backroom > 0) return true;
     }
   }
   return false;
@@ -206,9 +222,9 @@ export function restock(state: GameState, furnitureId: string): number {
     return moved;
   }
 
-  if (item.defId === "rx_shelf") {
+  if (item.defId === "rx_shelf" || item.defId === "cabinet_controlled") {
     for (const [skuId, s] of Object.entries(store.stock)) {
-      if (isOtc(skuId) || s.backroom <= 0) continue;
+      if (isOtc(skuId) || binDefFor(skuId) !== item.defId || s.backroom <= 0) continue;
       moved += s.backroom;
       s.shelved += s.backroom;
       s.backroom = 0;
@@ -226,6 +242,16 @@ export function clearShelf(store: StoreState, furnitureId: string): void {
   }
   delete store.shelfSlots[furnitureId];
   refreshPriceIndex(store);
+}
+
+/** The controlled cabinet was sold: its Tier-3 stock goes back in the box —
+ *  and back off the market, since nothing can hold it out front (§25). */
+export function clearControlled(store: StoreState): void {
+  for (const [skuId, s] of Object.entries(store.stock)) {
+    if (!isControlled(skuId) || s.shelved <= 0) continue;
+    s.backroom += s.shelved;
+    s.shelved = 0;
+  }
 }
 
 // --- Orders and deliveries (§11) ---

@@ -22,6 +22,7 @@ import { createToastHost, type ToastTone } from "./components/Toast";
 import { h } from "./dom";
 import { money } from "./format";
 import { createBuildPalette } from "./screens/buildPalette";
+import { createLicensesPanel } from "./screens/licensesPanel";
 import { createOrdersPanel } from "./screens/ordersPanel";
 import { buildReceipt } from "./screens/receipt";
 import { createStaffPanel } from "./screens/staffPanel";
@@ -192,7 +193,18 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
   );
   teamPill.addEventListener("pointerdown", (e) => e.preventDefault());
   teamPill.addEventListener("click", () => toggleTeam());
-  const dock = h("div", { cls: "dock" }, [buildPill, ordersPill, teamPill]);
+
+  const licensesPill = h(
+    "button",
+    {
+      cls: "pill pill--secondary pill--dock",
+      attrs: { type: "button", "aria-pressed": "false", "aria-label": "Licenses (L)" },
+    },
+    [h("span", { cls: "keycap", attrs: { "aria-hidden": "true" }, text: "L" }), "Licenses"],
+  );
+  licensesPill.addEventListener("pointerdown", (e) => e.preventDefault());
+  licensesPill.addEventListener("click", () => toggleLicenses());
+  const dock = h("div", { cls: "dock" }, [buildPill, ordersPill, teamPill, licensesPill]);
 
   // --- Build palette + move/sell context card ---
 
@@ -252,6 +264,8 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
   let ordersOpen = false;
   const team = createStaffPanel(sim, bus);
   let teamOpen = false;
+  const licenses = createLicensesPanel(sim, bus);
+  let licensesOpen = false;
 
   function setOrders(open: boolean): void {
     const allowed = sim.snapshot.phase !== "close" && !sim.snapshot.buildMode;
@@ -260,7 +274,10 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     ordersPill.classList.toggle("pill--primary", ordersOpen);
     ordersPill.classList.toggle("pill--secondary", !ordersOpen);
     ordersPill.setAttribute("aria-pressed", String(ordersOpen));
-    if (ordersOpen) setTeam(false);
+    if (ordersOpen) {
+      setTeam(false);
+      setLicenses(false);
+    }
   }
 
   function toggleOrders(): void {
@@ -274,11 +291,31 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     teamPill.classList.toggle("pill--primary", teamOpen);
     teamPill.classList.toggle("pill--secondary", !teamOpen);
     teamPill.setAttribute("aria-pressed", String(teamOpen));
-    if (teamOpen) setOrders(false);
+    if (teamOpen) {
+      setOrders(false);
+      setLicenses(false);
+    }
   }
 
   function toggleTeam(): void {
     setTeam(!teamOpen);
+  }
+
+  function setLicenses(open: boolean): void {
+    const allowed = sim.snapshot.phase !== "close" && !sim.snapshot.buildMode;
+    licensesOpen = open && allowed;
+    licenses.setVisible(licensesOpen);
+    licensesPill.classList.toggle("pill--primary", licensesOpen);
+    licensesPill.classList.toggle("pill--secondary", !licensesOpen);
+    licensesPill.setAttribute("aria-pressed", String(licensesOpen));
+    if (licensesOpen) {
+      setOrders(false);
+      setTeam(false);
+    }
+  }
+
+  function toggleLicenses(): void {
+    setLicenses(!licensesOpen);
   }
 
   const shelfCard = h("div", { cls: "shelfcard" });
@@ -361,6 +398,7 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     palette.root,
     orders.root,
     team.root,
+    licenses.root,
     contextCard,
     morningStage,
     closeStage,
@@ -395,6 +433,7 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     if (phase === "close") {
       setOrders(false);
       setTeam(false);
+      setLicenses(false);
     }
     if (phase !== "shift") {
       hoverHint = null;
@@ -451,6 +490,7 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     if (active) {
       setOrders(false);
       setTeam(false);
+      setLicenses(false);
       setShelfCard(null, 0, 0);
       clearStockChips();
     }
@@ -543,6 +583,26 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     toast("An empty shelf cost you a sale. Orders now takes min/target levels.", "error");
   });
 
+  // --- Licenses + expansion (§6, §12) ---
+
+  /** What just opened up — the same words the panel and Orders use (§28). */
+  const LICENSE_TOASTS: Record<string, string> = {
+    L2: "Expanded Formulary licensed — Tier-2 SKUs open in Orders",
+    L3: "Controlled Substances licensed — the cabinet is in the Build palette",
+    L4: "Immunization Certification licensed — the station arrives with its equipment",
+    L5: "Multi-Branch Operation licensed",
+    L6: "Distribution Operations licensed",
+  };
+
+  bus.on("license.bought", (e) => {
+    toast(LICENSE_TOASTS[e.id] ?? `${e.name} licensed`);
+    palette.refresh(); // an L3 wall unlocks the cabinet row
+  });
+  bus.on("expansion.bought", (e) => {
+    toast(`Walls moved — the floor is now ${e.cols}×${e.rows}`);
+    palette.refresh();
+  });
+
   // --- Staff (§9) ---
 
   bus.on("staff.hired", (e) => {
@@ -588,6 +648,8 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
       toggleOrders();
     } else if (e.code === "KeyT" && !e.repeat) {
       toggleTeam();
+    } else if (e.code === "KeyL" && !e.repeat) {
+      toggleLicenses();
     } else if (e.code === "KeyN" && !e.repeat) {
       sim.dispatch({ type: "dev.stressToggle" });
     }
@@ -614,6 +676,10 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
       }
       if (teamOpen) {
         setTeam(false);
+        return true;
+      }
+      if (licensesOpen) {
+        setLicenses(false);
         return true;
       }
       // Build mode owns Escape for its ghost, selection and its own exit

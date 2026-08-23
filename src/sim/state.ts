@@ -130,6 +130,9 @@ export interface GameState {
   buildMode: boolean;
   licenses: string[];
   era: 1 | 2 | 3 | 4;
+  /** Lifetime counters and milestone days (§24) — `license.L3` → day bought,
+   *  `expansion.E2` → day built. Milestone 10's legacy panel reads these. */
+  stats: Record<string, number>;
   store: StoreState;
   /** This week's job applications, redrawn Monday mornings (§9). */
   hiring: HiringPool;
@@ -239,6 +242,7 @@ export function createGameState(): GameState {
     buildMode: false,
     licenses: ["L1"],
     era: 1,
+    stats: { "license.L1": 1 },
     store: {
       grid: { cols: 10, rows: 7, expansions: 0 },
       furniture,

@@ -2,10 +2,12 @@
 // leads with a footprint pictograph in the floor grid's own language — cells
 // filled ink for backroom items, pine for the shop floor, outlined for
 // anywhere — then name, spec line, and the price in mono. Unaffordable and
-// gated rows stay listed with the reason in place of the spec line.
+// gated rows stay listed with the reason in place of the spec line. The
+// sheet's last section is the floor itself: the next §6 expansion, bought
+// like any other line item (morning only — walls can't move mid-shift).
 
 import { rotatedSize } from "../../core/grid";
-import { FURNITURE_DEFS, type FurnitureDef } from "../../data/furniture";
+import { EXPANSIONS, FURNITURE_DEFS, type FurnitureDef } from "../../data/furniture";
 import type { Sim } from "../../sim/sim";
 import { Panel } from "../components/Panel";
 import { h } from "../dom";
@@ -44,6 +46,10 @@ function specLine(def: FurnitureDef): string {
 function pictograph(def: FurnitureDef): HTMLElement {
   const [w, hgt] = rotatedSize(def.cells, 0);
   const zone = def.wallMounted ? "wall" : def.zone;
+  return cellPrint(w, hgt, zone);
+}
+
+function cellPrint(w: number, hgt: number, zone: string): HTMLElement {
   const grid = h("span", { cls: `prow__print prow__print--${zone}`, attrs: { "aria-hidden": "true" } });
   grid.style.gridTemplateColumns = `repeat(${w}, 9px)`;
   for (let i = 0; i < w * hgt; i++) grid.append(h("i", { cls: "prow__cell" }));
@@ -84,6 +90,70 @@ export function createBuildPalette(
     }
   });
 
+  // --- The floor itself: the next \u00a76 expansion as the sheet's last line ---
+
+  const floorMeta = h("span", { cls: "prow__meta" });
+  const floorName = h("span", { cls: "prow__name" });
+  const floorCost = h("span", { cls: "prow__cost" });
+  let floorPrint = cellPrint(1, 1, "any");
+  const floorRow = h("button", { cls: "prow", attrs: { type: "button" } }, [
+    floorPrint,
+    h("span", { cls: "prow__body" }, [floorName, floorMeta]),
+    floorCost,
+  ]);
+  floorRow.addEventListener("pointerdown", (e) => e.preventDefault());
+  floorRow.addEventListener("click", () => {
+    if (floorRow.getAttribute("aria-disabled") !== "true") {
+      sim.dispatch({ type: "expansion.buy" });
+    }
+  });
+  list.append(h("div", { cls: "palette__rule", attrs: { "aria-hidden": "true" } }), floorRow);
+
+  /** Why the next expansion can't be bought right now, or null. */
+  function floorLock(): string | null {
+    const state = sim.snapshot;
+    const next = EXPANSIONS[state.store.grid.expansions];
+    if (!next) return null;
+    if (state.phase !== "morning") return "Morning work only";
+    if (state.cash < next.cost) {
+      return `Short $${(next.cost - state.cash).toLocaleString("en-US")}`;
+    }
+    return null;
+  }
+
+  function setFloorPrint(next: HTMLElement): void {
+    floorPrint.replaceWith(next);
+    floorPrint = next;
+  }
+
+  function refreshFloorRow(): void {
+    const state = sim.snapshot;
+    const { cols, rows: gridRows, expansions } = state.store.grid;
+    const next = EXPANSIONS[expansions];
+    if (!next) {
+      setFloorPrint(cellPrint(2, 2, "any"));
+      floorName.textContent = "Floor at full size";
+      floorMeta.textContent = `${cols}\u00d7${gridRows}`;
+      floorMeta.classList.remove("prow__meta--money");
+      floorCost.textContent = "";
+      floorRow.classList.add("prow--off");
+      floorRow.setAttribute("aria-disabled", "true");
+      return;
+    }
+    // The pictograph is the growth itself: a strip of new columns or rows.
+    const dCols = next.cols - cols;
+    const dRows = next.rows - gridRows;
+    setFloorPrint(dCols > 0 ? cellPrint(dCols, 1, "any") : cellPrint(1, dRows, "any"));
+    floorName.textContent = `Expansion ${expansions + 1} \u2014 ${next.cols}\u00d7${next.rows}`;
+    floorCost.textContent = `$${next.cost.toLocaleString("en-US")}`;
+    const lock = floorLock();
+    floorMeta.textContent =
+      lock ?? (dCols > 0 ? `+${dCols} columns \u00b7 walls move now` : `+${dRows} rows \u00b7 walls move now`);
+    floorMeta.classList.toggle("prow__meta--money", lock?.startsWith("Short") ?? false);
+    floorRow.classList.toggle("prow--off", lock !== null);
+    floorRow.setAttribute("aria-disabled", String(lock !== null));
+  }
+
   const panel = Panel({ cls: "palette" }, [
     h("p", { cls: "palette__eyebrow", text: "Shopfitter's catalog" }),
     h("h2", { cls: "panel__title", text: "Build" }),
@@ -107,6 +177,7 @@ export function createBuildPalette(
         row.meta.classList.remove("prow__meta--money");
       }
     }
+    refreshFloorRow();
   }
 
   return {

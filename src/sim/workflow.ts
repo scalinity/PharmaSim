@@ -8,9 +8,12 @@
 // implicit at handoff with the owner's 90% catch. Pure sim — no DOM.
 
 import { IGM_PER_TICK } from "../core/clock";
-import { DRUG_DEFS, TIER1_DRUGS, drugDef, type DrugDef } from "../data/drugs";
+import { districtById } from "../data/districts";
+import { DRUG_DEFS, drugDef, type DrugDef } from "../data/drugs";
+import { STORE_DISTRICT_ID } from "./economy";
 import type { SimEvent } from "./events";
 import { returnShelved, takeShelved } from "./inventory";
+import { drugDailyDemand, fillableDrugs } from "./licenses";
 import { OWNER_CATCH_RATE } from "./staff";
 import type { GameState } from "./state";
 
@@ -40,6 +43,8 @@ export const FILL_IGM = 6; // §26 task durations
 export const VERIFY_IGM = 8;
 export const BIN_ROWS = 4; // shelf bin face (render/meshes/furniture.ts)
 export const BIN_COLS = 3;
+/** The cabinet's face is a 3×3 of lockbox bins — Tier 3 is nine SKUs (§25). */
+export const CABINET_BIN_ROWS = 3;
 
 function shuffle<T>(items: T[]): T[] {
   for (let i = items.length - 1; i > 0; i--) {
@@ -49,15 +54,23 @@ function shuffle<T>(items: T[]): T[] {
   return items;
 }
 
-/** Weighted Tier-1 draw — the demand generator's whole world until M08. */
-function drawTier1Drug(): DrugDef {
-  const total = TIER1_DRUGS.reduce((sum, def) => sum + def.demandWeight, 0);
+/**
+ * Weighted draw over what the store is licensed and equipped to fill (§12,
+ * §17): each fillable drug pulls with its slice of the district's daily
+ * category generation, so an L2 wall writes mental-health scripts and a
+ * stocked cabinet brings the controlled ones — never before.
+ */
+function drawScriptDrug(state: GameState): DrugDef {
+  const district = districtById(STORE_DISTRICT_ID);
+  const pool = fillableDrugs(state);
+  let total = 0;
+  for (const def of pool) total += drugDailyDemand(district, def);
   let u = Math.random() * total;
-  for (const def of TIER1_DRUGS) {
-    u -= def.demandWeight;
+  for (const def of pool) {
+    u -= drugDailyDemand(district, def);
     if (u <= 0) return def;
   }
-  return TIER1_DRUGS[TIER1_DRUGS.length - 1]!;
+  return pool[0]!;
 }
 
 /** Look-alike ids for a drug: §25 `confusableWith` both ways, padded with
@@ -82,21 +95,30 @@ export function confusableNeighbors(correctId: string): string[] {
 }
 
 /**
- * Bin layout for one fill: 12 drug ids over the shelf's 4×3 face. The correct
- * bin's confusables are always placed orthogonally adjacent, shuffled each
- * script; the rest is a Tier-1 spread.
+ * Bin layout for one fill: drug ids over the fixture's face, row-major. A
+ * shelf fill spreads 4×3 across the store's licensed formulary; a controlled
+ * fill is the cabinet's 3×3 of Tier-3 lockboxes. Either way the correct bin's
+ * confusables are always placed orthogonally adjacent, shuffled each script —
+ * a tramadol fill keeps trazodone within a hand's reach of the right bin
+ * even though trazodone shelves outside the cabinet (§8, §25).
  */
-export function generateBins(correctId: string): string[] {
+export function generateBins(state: GameState, correctId: string): string[] {
+  const correct = drugDef(correctId);
   const neighbors = confusableNeighbors(correctId);
+  const rows = correct.tier === 3 ? CABINET_BIN_ROWS : BIN_ROWS;
+  const fillerPool =
+    correct.tier === 3
+      ? DRUG_DEFS.filter((def) => def.tier === 3)
+      : fillableDrugs(state).filter((def) => def.tier !== 3);
 
   // Cells with enough orthogonal room for every required neighbor.
-  const cellCount = BIN_ROWS * BIN_COLS;
+  const cellCount = rows * BIN_COLS;
   const adjacentOf = (cell: number): number[] => {
     const row = Math.floor(cell / BIN_COLS);
     const col = cell % BIN_COLS;
     const out: number[] = [];
     if (row > 0) out.push(cell - BIN_COLS);
-    if (row < BIN_ROWS - 1) out.push(cell + BIN_COLS);
+    if (row < rows - 1) out.push(cell + BIN_COLS);
     if (col > 0) out.push(cell - 1);
     if (col < BIN_COLS - 1) out.push(cell + 1);
     return out;
@@ -115,7 +137,7 @@ export function generateBins(correctId: string): string[] {
   });
 
   const used = new Set(bins.filter((id) => id !== ""));
-  const filler = shuffle(TIER1_DRUGS.filter((def) => !used.has(def.id)).map((def) => def.id));
+  const filler = shuffle(fillerPool.filter((def) => !used.has(def.id)).map((def) => def.id));
   for (let cell = 0; cell < cellCount; cell++) {
     if (bins[cell] === "") bins[cell] = filler.pop()!;
   }
@@ -173,8 +195,8 @@ export class RxWorkflow {
   }
 
   /** New script written for an arriving Rx patient (stage: dropoff). */
-  createScript(customerId: number, patientName: string): RxScript {
-    const drug = drawTier1Drug();
+  createScript(state: GameState, customerId: number, patientName: string): RxScript {
+    const drug = drawScriptDrug(state);
     const script: RxScript = {
       id: this.nextScriptId++,
       customerId,
@@ -354,12 +376,14 @@ export class RxWorkflow {
     this.fillingId = id;
     this.fillLeft = -1;
 
-    // Frame the Rx shelf nearest the worked bench (§8 camera glide).
+    // Frame the bin fixture nearest the worked bench (§8 camera glide):
+    // Tier-3 scripts fill from the controlled cabinet, the rest from a shelf.
+    const binDef = drugDef(script.drugId).tier === 3 ? "cabinet_controlled" : "rx_shelf";
     const bench = state.store.furniture.find((f) => f.id === state.workingStationId);
     let shelfId: string | null = null;
     let best = Infinity;
     for (const item of state.store.furniture) {
-      if (item.defId !== "rx_shelf") continue;
+      if (item.defId !== binDef) continue;
       const dist = bench
         ? Math.abs(item.cellX - bench.cellX) + Math.abs(item.cellY - bench.cellY)
         : 0;
@@ -375,7 +399,7 @@ export class RxWorkflow {
       drugId: script.drugId,
       patientName: script.patientName,
       quantity: script.quantity,
-      bins: generateBins(script.drugId),
+      bins: generateBins(state, script.drugId),
       shelfId,
     });
     emit({ type: "rx.stageChanged", scriptId: script.id, stage: script.stage });
