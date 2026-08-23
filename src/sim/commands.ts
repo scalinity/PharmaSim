@@ -268,6 +268,9 @@ export function handleCommand(
       const level = state.store.grid.expansions;
       const next = EXPANSIONS[level];
       if (!next || state.cash < next.cost) return;
+      // A hand-edited save can carry an expansions count that lags its
+      // cols/rows; growing is the only direction this command ever moves.
+      if (next.cols < state.store.grid.cols || next.rows < state.store.grid.rows) return;
       // The door rides the south wall's center, so it moves when cols does —
       // furniture legal on the old floor must not end up in the new gap.
       if (doorwayBlocked(state, next.cols, next.rows)) return;
