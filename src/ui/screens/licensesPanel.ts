@@ -8,13 +8,7 @@
 
 import type { EventBus } from "../../core/bus";
 import type { SimEvent } from "../../sim/events";
-import {
-  canBuyLicense,
-  licenseGates,
-  ownsLicense,
-  LICENSE_DEFS,
-  type LicenseDef,
-} from "../../sim/licenses";
+import { licenseGates, ownsLicense, LICENSE_DEFS, type LicenseDef } from "../../sim/licenses";
 import type { Sim } from "../../sim/sim";
 import { h } from "../dom";
 import { money } from "../format";
@@ -89,8 +83,9 @@ export function createLicensesPanel(sim: Sim, bus: EventBus<SimEvent>): Licenses
     if (def.note) children.push(h("p", { cls: "cert__note", text: def.note }));
 
     card.gates = [];
+    const gates = licenseGates(sim.snapshot, def);
     const gateList = h("div", { cls: "cert__gates" });
-    for (const gate of licenseGates(sim.snapshot, def)) {
+    for (const gate of gates) {
       const glyph = h("span", {
         cls: "cert__glyph",
         attrs: { "aria-hidden": "true" },
@@ -111,7 +106,7 @@ export function createLicensesPanel(sim: Sim, bus: EventBus<SimEvent>): Licenses
       text: `Buy for ${money(def.cost)}`,
       attrs: { type: "button" },
     });
-    buy.disabled = !canBuyLicense(sim.snapshot, def);
+    buy.disabled = !gates.every((gate) => gate.met);
     buy.addEventListener("pointerdown", (e) => e.preventDefault());
     buy.addEventListener("click", () => sim.dispatch({ type: "license.buy", id: def.id }));
     card.buyButton = buy;
@@ -144,13 +139,21 @@ export function createLicensesPanel(sim: Sim, bus: EventBus<SimEvent>): Licenses
     }
     if (owned) return;
     const gates = licenseGates(state, card.def);
+    // The pairing below is by index; if a def ever grows a conditional gate,
+    // re-laying the form beats mispairing glyphs against labels.
+    if (gates.length !== card.gates.length) {
+      buildForm(card);
+      return;
+    }
     card.gates.forEach((ref, i) => {
       const gate = gates[i]!;
       ref.line.classList.toggle("cert__gate--met", gate.met);
       ref.glyph.textContent = gate.met ? "✓" : "◻";
       if (ref.text.textContent !== gate.text) ref.text.textContent = gate.text;
     });
-    if (card.buyButton) card.buyButton.disabled = !canBuyLicense(state, card.def);
+    // Buyable = every gate ticked — derived from the array already in hand
+    // rather than a second licenseGates pass.
+    if (card.buyButton) card.buyButton.disabled = !gates.every((gate) => gate.met);
   }
 
   function refreshAll(): void {
