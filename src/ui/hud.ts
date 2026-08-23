@@ -17,9 +17,11 @@ import {
 } from "../sim/coldchain";
 import type { SimEvent } from "../sim/events";
 import { binFixtureFor, SHELF_SLOT_UNITS, shelvedUnits, stockOf } from "../sim/inventory";
+import { eraDef } from "../sim/renovation";
 import type { Sim } from "../sim/sim";
 import { ROLE_LABELS } from "../sim/staff";
 import type { DayPhase, GameSpeed } from "../sim/state";
+import { eraSwatches } from "../render/eras";
 import { fridgePips } from "./components/Meter";
 import { Panel } from "./components/Panel";
 import { PillButton } from "./components/PillButton";
@@ -29,9 +31,11 @@ import { createToastHost, type ToastTone } from "./components/Toast";
 import { h } from "./dom";
 import { money } from "./format";
 import { createBuildPalette } from "./screens/buildPalette";
+import { createLegacyPanel } from "./screens/legacyPanel";
 import { createLicensesPanel } from "./screens/licensesPanel";
 import { createOrdersPanel } from "./screens/ordersPanel";
 import { buildReceipt } from "./screens/receipt";
+import { createRenovatePanel } from "./screens/renovatePanel";
 import { createStaffPanel } from "./screens/staffPanel";
 
 const STAR_GLYPHS = "★★★★★";
@@ -213,7 +217,37 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
   );
   licensesPill.addEventListener("pointerdown", (e) => e.preventDefault());
   licensesPill.addEventListener("click", () => toggleLicenses());
-  const dock = h("div", { cls: "dock" }, [buildPill, ordersPill, teamPill, licensesPill]);
+
+  const renovatePill = h(
+    "button",
+    {
+      cls: "pill pill--secondary pill--dock",
+      attrs: { type: "button", "aria-pressed": "false", "aria-label": "Renovate (V)" },
+    },
+    [h("span", { cls: "keycap", attrs: { "aria-hidden": "true" }, text: "V" }), "Renovate"],
+  );
+  renovatePill.addEventListener("pointerdown", (e) => e.preventDefault());
+  renovatePill.addEventListener("click", () => toggleRenovate());
+
+  const legacyPill = h(
+    "button",
+    {
+      cls: "pill pill--secondary pill--dock",
+      attrs: { type: "button", "aria-pressed": "false", "aria-label": "Legacy (G)" },
+    },
+    [h("span", { cls: "keycap", attrs: { "aria-hidden": "true" }, text: "G" }), "Legacy"],
+  );
+  legacyPill.addEventListener("pointerdown", (e) => e.preventDefault());
+  legacyPill.addEventListener("click", () => toggleLegacy());
+
+  const dock = h("div", { cls: "dock" }, [
+    buildPill,
+    ordersPill,
+    teamPill,
+    licensesPill,
+    renovatePill,
+    legacyPill,
+  ]);
 
   // --- Build palette + move/sell context card ---
 
@@ -236,15 +270,60 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
 
   // --- Phase panels ---
 
-  const morningStage = h("div", { cls: "stage-morning" }, [
-    Panel({ title: "Morning" }, [
-      h("p", {
-        cls: "panel__text",
-        text: "Shelves are stocked and the till is counted. Open when you're ready.",
-      }),
-      PillButton("Open store", () => sim.dispatch({ type: "store.open" })),
-    ]),
-  ]);
+  const morningStage = h("div", { cls: "stage-morning" });
+  /** Era just raised this morning (§13): the reveal card shows once. */
+  let revealEra: 1 | 2 | 3 | 4 | null = null;
+
+  function morningChips(era: number): HTMLElement {
+    const strip = h("div", { cls: "reveal__chips", attrs: { "aria-hidden": "true" } });
+    for (const hex of eraSwatches(era)) {
+      const chip = h("span", { cls: "reveal__chip" });
+      chip.style.background = hex;
+      strip.append(chip);
+    }
+    return strip;
+  }
+
+  /** The morning card: crew day, era reveal, or the ordinary open (§13, §28). */
+  function refreshMorning(): void {
+    const state = sim.snapshot;
+    if (state.phase !== "morning") return;
+    if (state.pendingEra !== null) {
+      const target = eraDef(state.pendingEra);
+      morningStage.replaceChildren(
+        Panel({ title: "The crew has the floor" }, [
+          h("p", {
+            cls: "panel__text",
+            text: `Scaffolding in the aisles, dust sheets over the shelves. ${target.name} stands tomorrow.`,
+          }),
+          PillButton("Let them work", () => sim.dispatch({ type: "store.open" })),
+        ]),
+      );
+      return;
+    }
+    if (revealEra !== null) {
+      const def = eraDef(revealEra);
+      morningStage.replaceChildren(
+        Panel({ cls: "reveal" }, [
+          h("p", { cls: "reveal__eyebrow", text: "the scaffolding is down" }),
+          h("h2", { cls: "reveal__name", text: def.name }),
+          morningChips(revealEra),
+          h("p", { cls: "panel__text", text: def.look }),
+          PillButton("Open store", () => sim.dispatch({ type: "store.open" })),
+        ]),
+      );
+      return;
+    }
+    morningStage.replaceChildren(
+      Panel({ title: "Morning" }, [
+        h("p", {
+          cls: "panel__text",
+          text: "Shelves are stocked and the till is counted. Open when you're ready.",
+        }),
+        PillButton("Open store", () => sim.dispatch({ type: "store.open" })),
+      ]),
+    );
+  }
 
   // End-of-day: the printing receipt (§28 signature), rebuilt each close.
   const closeStage = h("div", { cls: "scrim scrim--receipt" });
@@ -275,6 +354,10 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
   let teamOpen = false;
   const licenses = createLicensesPanel(sim, bus);
   let licensesOpen = false;
+  const renovate = createRenovatePanel(sim, bus);
+  let renovateOpen = false;
+  const legacy = createLegacyPanel(sim, bus);
+  let legacyOpen = false;
 
   function setOrders(open: boolean): void {
     const allowed = sim.snapshot.phase !== "close" && !sim.snapshot.buildMode;
@@ -286,6 +369,8 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     if (ordersOpen) {
       setTeam(false);
       setLicenses(false);
+      setRenovate(false);
+      setLegacy(false);
     }
   }
 
@@ -303,6 +388,8 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     if (teamOpen) {
       setOrders(false);
       setLicenses(false);
+      setRenovate(false);
+      setLegacy(false);
     }
   }
 
@@ -320,11 +407,51 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     if (licensesOpen) {
       setOrders(false);
       setTeam(false);
+      setRenovate(false);
+      setLegacy(false);
     }
   }
 
   function toggleLicenses(): void {
     setLicenses(!licensesOpen);
+  }
+
+  function setRenovate(open: boolean): void {
+    const allowed = sim.snapshot.phase !== "close" && !sim.snapshot.buildMode;
+    renovateOpen = open && allowed;
+    renovate.setVisible(renovateOpen);
+    renovatePill.classList.toggle("pill--primary", renovateOpen);
+    renovatePill.classList.toggle("pill--secondary", !renovateOpen);
+    renovatePill.setAttribute("aria-pressed", String(renovateOpen));
+    if (renovateOpen) {
+      setOrders(false);
+      setTeam(false);
+      setLicenses(false);
+      setLegacy(false);
+    }
+  }
+
+  function toggleRenovate(): void {
+    setRenovate(!renovateOpen);
+  }
+
+  function setLegacy(open: boolean): void {
+    const allowed = sim.snapshot.phase !== "close" && !sim.snapshot.buildMode;
+    legacyOpen = open && allowed;
+    legacy.setVisible(legacyOpen);
+    legacyPill.classList.toggle("pill--primary", legacyOpen);
+    legacyPill.classList.toggle("pill--secondary", !legacyOpen);
+    legacyPill.setAttribute("aria-pressed", String(legacyOpen));
+    if (legacyOpen) {
+      setOrders(false);
+      setTeam(false);
+      setLicenses(false);
+      setRenovate(false);
+    }
+  }
+
+  function toggleLegacy(): void {
+    setLegacy(!legacyOpen);
   }
 
   const shelfCard = h("div", { cls: "shelfcard" });
@@ -469,6 +596,8 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     orders.root,
     team.root,
     licenses.root,
+    renovate.root,
+    legacy.root,
     contextCard,
     morningStage,
     closeStage,
@@ -496,6 +625,8 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
 
   function setPhase(phase: DayPhase): void {
     morningStage.hidden = phase !== "morning";
+    if (phase !== "morning") revealEra = null; // the reveal card shows once
+    if (phase === "morning") refreshMorning();
     closeStage.hidden = phase !== "close";
     closeStage.replaceChildren();
     if (phase === "close") {
@@ -505,6 +636,8 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
       setOrders(false);
       setTeam(false);
       setLicenses(false);
+      setRenovate(false);
+      setLegacy(false);
     }
     if (phase !== "shift") {
       hoverHint = null;
@@ -563,6 +696,8 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
       setOrders(false);
       setTeam(false);
       setLicenses(false);
+      setRenovate(false);
+      setLegacy(false);
       setShelfCard(null, 0, 0);
       setFridgeCard(null, 0, 0);
       clearStockChips();
@@ -692,6 +827,20 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     palette.refresh();
   });
 
+  // --- Era modernization (§13): the purchase and the next-morning reveal ---
+
+  bus.on("era.renovationStarted", (e) => {
+    // The sheet goes down so the scaffolding going up is what the player sees.
+    setRenovate(false);
+    toast(`Scaffolding up — closed for the rest of today. ${e.name} stands tomorrow.`);
+    refreshMorning(); // a morning purchase re-writes the open card
+  });
+  bus.on("era.changed", (e) => {
+    revealEra = e.era;
+    refreshMorning();
+    palette.refresh(); // Gen 4 unlocks the dispenser row
+  });
+
   // --- Staff (§9) ---
 
   bus.on("staff.hired", (e) => {
@@ -739,6 +888,10 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
       toggleTeam();
     } else if (e.code === "KeyL" && !e.repeat) {
       toggleLicenses();
+    } else if (e.code === "KeyV" && !e.repeat) {
+      toggleRenovate();
+    } else if (e.code === "KeyG" && !e.repeat) {
+      toggleLegacy();
     } else if (e.code === "KeyN" && !e.repeat) {
       sim.dispatch({ type: "dev.stressToggle" });
     }
@@ -769,6 +922,14 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
       }
       if (licensesOpen) {
         setLicenses(false);
+        return true;
+      }
+      if (renovateOpen) {
+        setRenovate(false);
+        return true;
+      }
+      if (legacyOpen) {
+        setLegacy(false);
         return true;
       }
       // Build mode owns Escape for its ghost, selection and its own exit

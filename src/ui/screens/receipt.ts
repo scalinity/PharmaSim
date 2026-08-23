@@ -4,7 +4,8 @@
 // closing with a rubber-stamp PROFIT / LOSS verdict. Every line is a ledger
 // reason posted during the day (§10), so the paper always adds up to the till.
 
-import { seasonForDay } from "../../core/clock";
+import { formatClock, seasonForDay } from "../../core/clock";
+import { legacyMomentDef } from "../../data/flavor";
 import { REP_REASONS } from "../../sim/customers";
 import { groupTotal, LEDGER_REASONS, ledgerNet, operatingProfit } from "../../sim/economy";
 import type { Sim } from "../../sim/sim";
@@ -45,7 +46,16 @@ export function buildReceipt(sim: Sim, onNextDay: () => void): HTMLElement {
   // --- Header ---
   item(h("div", { cls: "rcpt__store", text: "OLD TOWN PHARMACY" }));
   item(h("div", { cls: "rcpt__meta", text: `day ${state.day} · ${seasonForDay(state.day)}` }));
-  item(h("div", { cls: "rcpt__meta", text: "20:00 · register closed" }));
+  // A renovation day closes when the last customer leaves, not at 20:00 (§13).
+  item(
+    h("div", {
+      cls: "rcpt__meta",
+      text:
+        state.pendingEra !== null
+          ? `${formatClock(state.clockIgm)} · closed for renovation`
+          : "20:00 · register closed",
+    }),
+  );
   rule();
 
   // --- The ledger, one section per group, in posting order (§10) ---
@@ -125,6 +135,20 @@ export function buildReceipt(sim: Sim, onNextDay: () => void): HTMLElement {
       }),
     );
   }
+
+  // --- Pinned legacy notes (§22, §28): today's moments, in the family hand ---
+  for (const moment of state.legacy) {
+    if (moment.day !== state.day) continue;
+    const def = legacyMomentDef(moment.id);
+    item(
+      h("div", { cls: "rcpt__legacy" }, [
+        h("span", { cls: "rcpt__legacypin", attrs: { "aria-hidden": "true" } }),
+        h("p", { cls: "rcpt__legacytitle", text: def.title }),
+        h("p", { cls: "rcpt__legacytext", text: def.text }),
+      ]),
+    );
+  }
+
   item(h("div", { cls: "rcpt__meta rcpt__foot", text: "thank you — come again" }));
 
   const sheet = h(

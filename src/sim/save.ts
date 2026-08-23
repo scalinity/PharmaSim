@@ -46,8 +46,15 @@
 //    generator are ordinary store.furniture — all already round-tripping —
 //    so the step only has to seed the new counter.
 //
+//  Version 5 (milestone 10) adds modernization + legacy:
+//    · legacy (§22/§24 achieved moments — the album and the once-only
+//      firing both live on this list) · pendingEra (§13: a renovation
+//      bought at the close phase must still stand next morning)       (M10)
+//    `era` itself has round-tripped since v1, and the robotic dispenser is
+//    ordinary store.furniture — the step seeds the empty album and no crew.
+//
 //  §24's fuller schema (worldSeed, stores[], competitors, patientPools, dc,
-//  aitech, legacy, stats) is not here because those systems do not exist yet.
+//  aitech, stats) is not here because those systems do not exist yet.
 //  They arrive field-by-field with the milestones that own them —
 //  08 licenses/expansion, 09 cold chain, 10 legacy, 12 city, 13 competitors,
 //  14 branches, 15 logistics, 16 AI tech — each with its own migrate step.
@@ -61,10 +68,11 @@ import {
   type DayStats,
   type GameSettings,
   type GameState,
+  type LegacyEntry,
   type StoreState,
 } from "./state";
 
-export const SAVE_VERSION = 4;
+export const SAVE_VERSION = 5;
 
 export interface SaveFile {
   version: number;
@@ -76,6 +84,8 @@ export interface SaveFile {
   repStars: number;
   licenses: string[];
   era: 1 | 2 | 3 | 4;
+  pendingEra: 2 | 3 | 4 | null;
+  legacy: LegacyEntry[];
   stats: Record<string, number>;
   store: StoreState;
   hiring: HiringPool;
@@ -130,6 +140,14 @@ const MIGRATIONS: readonly ((file: RawSave) => RawSave)[] = [
     if (typeof stats === "object" && stats !== null && !Array.isArray(stats)) {
       (stats as RawSave).vaccinations = 0;
     }
+    return file;
+  },
+  // 4 → 5 (milestone 10): a pre-renovation store stands in whatever era it
+  // already recorded (Gen 1, in practice) with no crew in and nothing lived
+  // yet worth an album page — moments start firing from here on.
+  (file) => {
+    file.legacy = [];
+    file.pendingEra = null;
     return file;
   },
 ];
@@ -222,6 +240,8 @@ export function serialize(state: GameState): SaveFile {
     repStars: state.repStars,
     licenses: [...state.licenses],
     era: state.era,
+    pendingEra: state.pendingEra,
+    legacy: state.legacy.map((moment) => ({ ...moment })),
     stats: { ...state.stats },
     store: copyStore(state.store),
     hiring: copyHiring(state.hiring),
@@ -243,6 +263,8 @@ export function hydrate(file: SaveFile): GameState {
     buildMode: false,
     licenses: [...file.licenses],
     era: file.era,
+    pendingEra: file.pendingEra,
+    legacy: file.legacy.map((moment) => ({ ...moment })),
     stats: { ...file.stats },
     store: copyStore(file.store),
     hiring: copyHiring(file.hiring),
@@ -278,6 +300,22 @@ function validate(file: RawSave): SaveFile {
   requireArray(file.licenses, "licenses");
   requireObject(file.loans, "loan balances");
   requireObject(file.settings, "settings");
+  // A hand-edited era or crew flag outside §13's range would reskin nothing
+  // and renovate forever; the album's entries feed the receipt by day.
+  if (file.pendingEra !== null && ![2, 3, 4].includes(file.pendingEra as number)) {
+    reject("renovation state");
+  }
+  requireArray(file.legacy, "legacy moments");
+  for (const moment of file.legacy as unknown[]) {
+    if (
+      typeof moment !== "object" ||
+      moment === null ||
+      typeof (moment as RawSave).id !== "string" ||
+      typeof (moment as RawSave).day !== "number"
+    ) {
+      reject("readable legacy moments");
+    }
+  }
   const lifetime = requireObject(file.stats, "stats");
   // stats is the one free-form Record a hand editor is likely to touch;
   // a non-number value would render as "Issued · day yesterday".

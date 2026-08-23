@@ -408,6 +408,15 @@ export class CustomerSystem {
     this.vaccineIdx = 0;
   }
 
+  /** §13 renovation: the store is closed for the rest of today. Whoever is
+   *  already inside finishes; nobody else comes through the door. */
+  cancelArrivals(): void {
+    this.arrivals = [];
+    this.arrivalIdx = 0;
+    this.vaccineArrivals = [];
+    this.vaccineIdx = 0;
+  }
+
   /** Dev stress spawner (milestone 03): each N press ×3s the remaining spawn
    *  schedule, cycling ×1 → ×3 → ×9 → ×27 → off so the §30 40-NPC cap is
    *  actually reachable. Returns the new multiplier. */

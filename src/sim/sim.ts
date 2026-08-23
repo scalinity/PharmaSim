@@ -6,9 +6,10 @@ import { DAY_END_IGM, IGM_PER_TICK } from "../core/clock";
 import type { Rot } from "../core/grid";
 import { handleCommand, type Command } from "./commands";
 import { applyRep, CustomerSystem, REP_REASONS } from "./customers";
-import { closeDay, groupTotal } from "./economy";
+import { closeDay, groupTotal, operatingProfit } from "./economy";
 import type { SimEvent } from "./events";
 import { hasEmptySlot, restockableUnits, rollHistory } from "./inventory";
+import { recordMoment } from "./legacy";
 import {
   backroomZone,
   itemAvailability,
@@ -57,10 +58,21 @@ export class Sim {
     // command actually *did*, not on it having been dispatched — a refused
     // expansion (wrong phase, short cash, blocked doorway) changes nothing.
     const { cols: colsBefore, rows: rowsBefore } = this.state.store.grid;
+    const pendingEraBefore = this.state.pendingEra;
     handleCommand(this.state, command, this.emit);
     switch (command.type) {
       case "store.open":
-        if (this.state.phase === "shift") this.customers.beginDay(this.state);
+        // A renovation morning opens onto scaffolding, not a shift: nobody is
+        // scheduled, and the empty floor closes the day on the first tick.
+        if (this.state.phase === "shift" && this.state.pendingEra === null) {
+          this.customers.beginDay(this.state);
+        }
+        break;
+      case "era.renovate":
+        // Only when the handler actually took the purchase (§13): whoever is
+        // inside finishes their business; the schedule for the rest of the
+        // day is torn up.
+        if (this.state.pendingEra !== pendingEraBefore) this.customers.cancelArrivals();
         break;
       case "day.advance":
         this.staff.beginDay(this.state, this.emit);
@@ -185,9 +197,11 @@ export class Sim {
     this.customers.tick(this.state, this.emit);
     this.workflow.tick(this.state, this.emit);
 
-    // 20:00: the clock freezes while remaining customers finish (§5),
-    // then the day closes.
-    if (this.state.clockIgm >= DAY_END_IGM && this.customers.activeCount === 0) {
+    // 20:00: the clock freezes while remaining customers finish (§5), then
+    // the day closes. A renovation day (§13) closes the moment the floor is
+    // empty — the crew is waiting on the last customer, not on the clock.
+    const dayOver = this.state.clockIgm >= DAY_END_IGM || this.state.pendingEra !== null;
+    if (dayOver && this.customers.activeCount === 0) {
       if (this.state.workingStationId !== null) {
         this.state.workingStationId = null;
         this.bus.emit({ type: "station.changed", stationId: null });
@@ -199,6 +213,10 @@ export class Sim {
       const summary = closeDay(this.state, this.emit);
       if (summary.familyLoan > 0) {
         applyRep(this.state, REP_FAMILY_LOAN, this.emit, REP_REASONS.familyLoan);
+      }
+      // §22: the first night the books close genuinely ahead is a moment.
+      if (operatingProfit(this.state.dayStats) > 0) {
+        recordMoment(this.state, "first_profit", this.emit);
       }
       rollHistory(this.state, gross);
       this.state.phase = "close";

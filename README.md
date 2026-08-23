@@ -41,7 +41,7 @@ and is only used when a milestone brief calls for it.
 - [x] 07 Staff + automation
 - [x] 08 Licenses + expansion
 - [x] 09 Cold chain + vaccinations
-- [ ] 10 Modernization + legacy
+- [x] 10 Modernization + legacy
 - [ ] 11 Events + atmosphere
 - [ ] 12 City map + living demand
 - [ ] 13 Competitors + market share

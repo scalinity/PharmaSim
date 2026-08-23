@@ -25,8 +25,10 @@ import {
   refreshPriceIndex,
   restock,
 } from "./inventory";
+import { recordMoment } from "./legacy";
 import { canBuyLicense, licenseDef, ownsLicense } from "./licenses";
 import { doorwayBlocked, validatePlacement } from "./placement";
+import { beginRenovation, completeRenovation } from "./renovation";
 import { refreshHiringPool, ROLE_STATIONS, type StaffMember } from "./staff";
 import {
   emptyDayStats,
@@ -64,6 +66,9 @@ export type Command =
   /** Buy the next §6 floor expansion. Morning only — the grid can't change
    *  under live paths. */
   | { type: "expansion.buy" }
+  /** Buy the next §13 era renovation: closes the store for the rest of
+   *  today; the new generation stands at tomorrow's open. */
+  | { type: "era.renovate" }
   // --- Staff (§9) ---
   | { type: "staff.hire"; candidateId: string }
   | { type: "staff.fire"; staffId: string }
@@ -133,6 +138,10 @@ export function handleCommand(
       const delivery = receiveDeliveries(state.store);
       // Mondays put a fresh stack of applications on the counter (§9).
       const refreshed = refreshHiringPool(state);
+      // §13: the scaffolding comes down and the new era stands — before the
+      // phase change goes out, because the autosave listening on it must
+      // capture the completed morning, not the last of the crew.
+      completeRenovation(state, emit);
       emit({ type: "day.phaseChanged", phase: state.phase, day: state.day });
       emit({ type: "clock.minute", igm: state.clockIgm });
       if (delivery.units > 0) emit({ type: "order.delivered", ...delivery });
@@ -285,7 +294,8 @@ export function handleCommand(
       state.licenses.push(def.id);
       state.stats[`license.${def.id}`] = state.day;
       post(state, "license", -def.cost, emit);
-      // A §22 legacy moment — milestone 10 hangs the flavor on this event.
+      // Every license is a §22 moment: the note pins to tonight's receipt.
+      recordMoment(state, `license.${def.id}`, emit);
       emit({ type: "license.bought", id: def.id, name: def.name, cost: def.cost, day: state.day });
       return;
     }
@@ -313,6 +323,10 @@ export function handleCommand(
         cost: next.cost,
         day: state.day,
       });
+      return;
+    }
+    case "era.renovate": {
+      beginRenovation(state, emit);
       return;
     }
     case "staff.hire": {
@@ -345,6 +359,8 @@ export function handleCommand(
       }
       if (station) member.assignment = { stationId: station.id };
       state.store.staff.push(member);
+      // The first name that isn't yours on the roster is a §22 moment.
+      recordMoment(state, "first_hire", emit);
       // Events carry copies, never live roster state (furniture.placed style).
       const hired: StaffMember = { ...member };
       if (member.assignment) hired.assignment = { ...member.assignment };

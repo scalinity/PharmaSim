@@ -79,6 +79,13 @@ lighting.setTime(sim.snapshot.clockIgm);
 lighting.fitFloor(sim.snapshot.store.grid.cols, sim.snapshot.store.grid.rows);
 bus.on("expansion.bought", (e) => lighting.fitFloor(e.cols, e.rows));
 
+// §28 era tint: the store's generation rides the document root, and every
+// surface reading --paper quietly modernizes with it (ui/tokens.css).
+document.documentElement.dataset.era = String(sim.snapshot.era);
+bus.on("era.changed", (e) => {
+  document.documentElement.dataset.era = String(e.era);
+});
+
 const hud = createHud(hudRoot, sim, bus);
 const binBoard = new RxBinBoard();
 store.scene.add(binBoard.group);
@@ -233,6 +240,7 @@ function updateOverlays(): void {
   // One read per frame each — the depth getters walk the script map.
   const fillDepth = sim.workflow.fillDepth;
   const verifyDepth = sim.workflow.verifyDepth;
+  const autoDepth = sim.workflow.autoFillDepth;
 
   for (const item of state.store.furniture) {
     if (item.defId === "counter_register") {
@@ -274,6 +282,11 @@ function updateOverlays(): void {
       consider(item.id, verifyDepth);
       const [wx, wz] = cellToWorld(cols, rows, item.cellX, item.cellY);
       stack(item.id, wx, wz, verifyDepth, "verify");
+    } else if (item.defId === "dispenser_robotic") {
+      // The machine's own lane (§6): same card stack, same legibility.
+      consider(item.id, autoDepth);
+      const [wx, wz] = cellToWorld(cols, rows, item.cellX, item.cellY);
+      stack(item.id, wx, wz, autoDepth, "auto-fill");
     }
   }
   for (const key of liveStackKeys) {

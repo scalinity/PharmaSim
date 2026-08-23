@@ -65,6 +65,12 @@ export interface StoreState {
   staff: StaffMember[];
 }
 
+/** One achieved §22 legacy moment (§24): the id keys data/flavor.ts. */
+export interface LegacyEntry {
+  id: string;
+  day: number;
+}
+
 /** One §15 reputation reason tallied for the receipt. */
 export interface RepReason {
   count: number;
@@ -132,8 +138,13 @@ export interface GameState {
   buildMode: boolean;
   licenses: string[];
   era: 1 | 2 | 3 | 4;
+  /** A renovation bought today (§13): the store is closed under scaffolding;
+   *  the new era stands next morning. Null when no crew is in. */
+  pendingEra: 2 | 3 | 4 | null;
+  /** Achieved §22 moments, in the order they were lived. Each fires once. */
+  legacy: LegacyEntry[];
   /** Lifetime counters and milestone days (§24) — `license.L3` → day bought,
-   *  `expansion.E2` → day built. Milestone 10's legacy panel reads these. */
+   *  `era.2` → day the renovation was signed. */
   stats: Record<string, number>;
   store: StoreState;
   /** This week's job applications, redrawn Monday mornings (§9). */
@@ -245,6 +256,8 @@ export function createGameState(): GameState {
     buildMode: false,
     licenses: ["L1"],
     era: 1,
+    pendingEra: null,
+    legacy: [],
     stats: { "license.L1": 1 },
     store: {
       grid: { cols: 10, rows: 7, expansions: 0 },

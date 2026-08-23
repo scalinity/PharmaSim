@@ -42,6 +42,16 @@ type Emit = (event: SimEvent) => void;
 
 export const FILL_IGM = 6; // §26 task durations
 export const VERIFY_IGM = 8;
+/** §6 robotic dispenser: brisker than any pair of hands, and it never
+ *  mis-picks — its fills route through verification like everyone else's. */
+export const DISPENSER_FILL_IGM = 4;
+
+/** What the machine will touch (§6): Tier 1/2 only, never controlled stock
+ *  and never the cold chain — those still go to a bench. */
+function autoFillable(drugId: string): boolean {
+  const def = drugDef(drugId);
+  return def.tier !== 3 && def.refrigerated !== true;
+}
 export const BIN_ROWS = 4; // shelf bin face (render/meshes/furniture.ts)
 export const BIN_COLS = 3;
 
@@ -202,6 +212,14 @@ export class RxWorkflow {
   private scripts = new Map<number, RxScript>();
   private fillQueue: number[] = [];
   private verifyQueue: number[] = [];
+  /** The robotic dispenser's own fill lane (§6): Tier-1/2 scripts queue here
+   *  while a machine stands; stage-wise they are ordinary "fillQueue". */
+  private autoQueue: number[] = [];
+  /** In-progress machine fills, keyed by dispenser furniture id. */
+  private dispenserTasks = new Map<string, { scriptId: number; left: number }>();
+  /** True while a dispenser stands on the floor; kept current by
+   *  syncDispenserLanes so lane routing never reads stale furniture. */
+  private autoLaneOpen = false;
   /** Player's fill in progress at the bench, or null. */
   private fillingId: number | null = null;
   /** <0 = waiting on a bin pick; ≥0 = igm left on the fill animation. */
@@ -224,11 +242,26 @@ export class RxWorkflow {
     return this.verifyQueue.length;
   }
 
-  /** Scripts waiting for (or on) a bench — the fill stage stack. */
+  /** Scripts waiting for (or on) a bench — the fill stage stack. Machine
+   *  fills live on the dispenser's own stack, not the benches'. */
   get fillDepth(): number {
     let n = this.fillQueue.length;
-    for (const script of this.scripts.values()) if (script.stage === "filling") n++;
+    for (const script of this.scripts.values()) {
+      if (script.stage === "filling" && !this.isDispenserFill(script.id)) n++;
+    }
     return n;
+  }
+
+  /** Scripts waiting for (or inside) the robotic dispenser (§6). */
+  get autoFillDepth(): number {
+    return this.autoQueue.length + this.dispenserTasks.size;
+  }
+
+  private isDispenserFill(scriptId: number): boolean {
+    for (const task of this.dispenserTasks.values()) {
+      if (task.scriptId === scriptId) return true;
+    }
+    return false;
   }
 
   /** Scripts waiting for (or under) the verify desk's lamp. */
@@ -265,6 +298,16 @@ export class RxWorkflow {
     return script;
   }
 
+  /** Queue a script for filling in the right lane (§6): the dispenser's, when
+   *  one stands and the machine will touch the drug, else the benches'. */
+  private enqueueFill(script: RxScript, front: boolean): void {
+    script.stage = "fillQueue";
+    const queue =
+      this.autoLaneOpen && autoFillable(script.drugId) ? this.autoQueue : this.fillQueue;
+    if (front) queue.unshift(script.id);
+    else queue.push(script.id);
+  }
+
   /**
    * Drop-off handoff: reserve a bin unit and queue the script, or refuse it
    * out of stock (caller applies the −0.08 rep and walk-away, §15).
@@ -274,8 +317,7 @@ export class RxWorkflow {
       this.scripts.delete(script.id);
       return false;
     }
-    script.stage = "fillQueue";
-    this.fillQueue.push(script.id);
+    this.enqueueFill(script, false);
     emit({ type: "rx.dropoff", scriptId: script.id, drugId: script.drugId });
     emit({ type: "rx.stageChanged", scriptId: script.id, stage: script.stage });
     this.syncStation(state, emit);
@@ -317,8 +359,7 @@ export class RxWorkflow {
     const wrong = script.filledWithDrugId !== script.drugId;
     if (wrong && Math.random() < catchRate) {
       script.filledWithDrugId = null;
-      script.stage = "fillQueue";
-      this.fillQueue.unshift(script.id);
+      this.enqueueFill(script, true);
       emit({ type: "rx.caught", scriptId: script.id });
       emit({ type: "rx.stageChanged", scriptId: script.id, stage: script.stage });
     } else {
@@ -372,8 +413,7 @@ export class RxWorkflow {
     const script = this.scripts.get(scriptId);
     if (!script || script.stage !== "filling" || this.fillingId === scriptId) return;
     script.filledWithDrugId = null;
-    script.stage = "fillQueue";
-    this.fillQueue.unshift(scriptId);
+    this.enqueueFill(script, true);
     emit({ type: "rx.stageChanged", scriptId, stage: script.stage });
   }
 
@@ -405,10 +445,80 @@ export class RxWorkflow {
     emit({ type: "rx.stageChanged", scriptId, stage: script.stage });
   }
 
+  // --- The robotic dispenser (§6, Gen 4): its own fill lane, no hands ---
+
+  /**
+   * Keep the machine's lane consistent with the floor: when a dispenser
+   * stands, Tier-1/2 scripts wait in its lane; when the last one goes, the
+   * lane drains back onto the benches' pile — bench-only flow, restored.
+   * A fill in progress inside a sold machine goes back on top of a queue.
+   */
+  private syncDispenserLanes(state: GameState, emit: Emit): void {
+    this.autoLaneOpen = state.store.furniture.some((f) => f.defId === "dispenser_robotic");
+    for (const [dispenserId, task] of this.dispenserTasks) {
+      if (state.store.furniture.some((f) => f.id === dispenserId)) continue;
+      this.dispenserTasks.delete(dispenserId);
+      const script = this.scripts.get(task.scriptId);
+      if (script && script.stage === "filling") {
+        script.filledWithDrugId = null;
+        this.enqueueFill(script, true);
+        emit({ type: "rx.stageChanged", scriptId: script.id, stage: script.stage });
+      }
+    }
+    if (!this.autoLaneOpen) {
+      if (this.autoQueue.length > 0) {
+        this.fillQueue.unshift(...this.autoQueue);
+        this.autoQueue.length = 0;
+      }
+      return;
+    }
+    // A machine just arrived (or was always here): its share of the benches'
+    // pile walks over. Order within each lane is preserved.
+    let kept = 0;
+    for (const id of this.fillQueue) {
+      const script = this.scripts.get(id);
+      if (script && autoFillable(script.drugId)) this.autoQueue.push(id);
+      else this.fillQueue[kept++] = id;
+    }
+    this.fillQueue.length = kept;
+  }
+
+  /** Advance every standing dispenser: claim from the lane, fill, route. */
+  private tickDispensers(state: GameState, emit: Emit): void {
+    if (!this.autoLaneOpen && this.dispenserTasks.size === 0) return;
+    // A script can vanish mid-fill (walk-out): the machine just moves on.
+    for (const [dispenserId, task] of this.dispenserTasks) {
+      const script = this.scripts.get(task.scriptId);
+      if (!script || script.stage !== "filling") this.dispenserTasks.delete(dispenserId);
+    }
+    for (const item of state.store.furniture) {
+      if (item.defId !== "dispenser_robotic") continue;
+      const task = this.dispenserTasks.get(item.id);
+      if (!task) {
+        const id = this.autoQueue.shift();
+        if (id === undefined) continue;
+        const script = this.scripts.get(id)!;
+        script.stage = "filling";
+        this.dispenserTasks.set(item.id, { scriptId: id, left: DISPENSER_FILL_IGM });
+        emit({ type: "rx.stageChanged", scriptId: id, stage: script.stage });
+        continue;
+      }
+      task.left -= IGM_PER_TICK;
+      if (task.left > 0) continue;
+      this.dispenserTasks.delete(item.id);
+      const script = this.scripts.get(task.scriptId)!;
+      // The machine never mis-picks: the right drug, every time (§6). Its
+      // fills still pass verification like any other (§8).
+      script.filledWithDrugId = script.drugId;
+      this.routeFilled(state, script, emit);
+    }
+  }
+
   // --- The player's own hands (§8) ---
 
   /** Reconcile the fill/verify interactions with wherever the player works. */
   syncStation(state: GameState, emit: Emit): void {
+    this.syncDispenserLanes(state, emit);
     const station = state.store.furniture.find((f) => f.id === state.workingStationId);
     if (station?.defId === "fill_bench" && !state.buildMode) {
       this.takeNext(state, emit);
@@ -467,8 +577,7 @@ export class RxWorkflow {
     this.fillingId = null;
     this.fillLeft = -1;
     script.filledWithDrugId = null;
-    script.stage = "fillQueue";
-    this.fillQueue.unshift(id);
+    this.enqueueFill(script, true);
     emit({ type: "rx.fillEnded", scriptId: id });
     emit({ type: "rx.stageChanged", scriptId: id, stage: script.stage });
   }
@@ -483,8 +592,12 @@ export class RxWorkflow {
     emit({ type: "rx.binPicked", scriptId: script.id });
   }
 
-  /** Advance the player's fill animation and desk work. */
+  /** Advance the player's fill animation, desk work, and the machines. */
   tick(state: GameState, emit: Emit): void {
+    // Presence re-checked each tick, so a loaded save's dispenser is live
+    // from the first spawn without waiting on a furniture command.
+    this.syncDispenserLanes(state, emit);
+    this.tickDispensers(state, emit);
     this.tickPlayerFill(state, emit);
     this.tickPlayerVerify(state, emit);
   }
@@ -530,6 +643,11 @@ export class RxWorkflow {
     if (script.stage !== "dropoff") returnShelved(state.store, script.drugId);
     const queued = this.fillQueue.indexOf(scriptId);
     if (queued !== -1) this.fillQueue.splice(queued, 1);
+    const autoQueued = this.autoQueue.indexOf(scriptId);
+    if (autoQueued !== -1) this.autoQueue.splice(autoQueued, 1);
+    for (const [dispenserId, task] of this.dispenserTasks) {
+      if (task.scriptId === scriptId) this.dispenserTasks.delete(dispenserId);
+    }
     const verifying = this.verifyQueue.indexOf(scriptId);
     if (verifying !== -1) this.verifyQueue.splice(verifying, 1);
     if (this.fillingId === scriptId) {

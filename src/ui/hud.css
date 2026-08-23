@@ -2866,6 +2866,487 @@ html.app-shell .topbar {
   mix-blend-mode: multiply;
 }
 
+/* ---- Renovate: the shopfitters' proposal folder (§13, §28) ----
+   Four generations down one lineage rail, oldest first. Each proposal leads
+   with its paint chips — the exact colors the renovation applies in 3D — so
+   the card is an honest preview, not an illustration. */
+
+.reno {
+  position: absolute;
+  top: 68px;
+  bottom: 76px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(560px, calc(100% - 24px));
+  z-index: 15;
+  pointer-events: none;
+}
+
+.renop {
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  pointer-events: auto;
+}
+
+.renop .panel__inner {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 16px 0 0;
+}
+
+.reno__head {
+  padding: 0 22px;
+}
+
+.reno__eyebrow {
+  margin: 0 0 2px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-75);
+}
+
+.renop .panel__title {
+  margin: 0 0 8px;
+}
+
+.reno__list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px 22px 18px 26px;
+}
+
+/* The lineage rail: one ink line the generations hang from — the order is
+   the mechanic (renovations are bought in sequence), not decoration. */
+.reno__card {
+  position: relative;
+  padding: 0 0 14px 22px;
+}
+
+.reno__card::before {
+  content: "";
+  position: absolute;
+  left: 4.25px;
+  top: 4px;
+  bottom: -4px;
+  border-left: 1.5px solid var(--ink-25);
+}
+
+.reno__card:last-child::before {
+  bottom: auto;
+  height: 18px;
+}
+
+.reno__dot {
+  position: absolute;
+  left: 0;
+  top: 14px;
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  border: 1.5px solid var(--ink);
+  background: var(--paper);
+  z-index: 1;
+}
+
+.reno__dot--built,
+.reno__dot--current {
+  background: var(--pine);
+  border-color: var(--pine);
+}
+
+.reno__dot--pending {
+  background: var(--amber);
+  border-color: var(--amber);
+}
+
+.reno__dot--later {
+  border-color: var(--ink-25);
+}
+
+.reno__paper {
+  border: 1.5px solid var(--ink);
+  padding: 12px 16px 13px;
+  background: var(--paper);
+}
+
+.reno__card--later .reno__paper {
+  border-style: dashed;
+  border-color: var(--ink-60);
+}
+
+.reno__card--pending .reno__paper {
+  border-color: var(--amber);
+  /* Contractor's tape: a thin caution stripe along the top edge. */
+  background-image: repeating-linear-gradient(
+    -45deg,
+    var(--amber) 0 8px,
+    transparent 8px 16px
+  );
+  background-size: 100% 5px;
+  background-repeat: no-repeat;
+}
+
+.reno__cardtop {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+
+.reno__gen {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-75);
+}
+
+.reno__name {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--fs-16);
+  font-weight: var(--w-semibold);
+}
+
+.reno__chips {
+  display: flex;
+  gap: 5px;
+  margin: 9px 0 8px;
+}
+
+.reno__chip {
+  width: 34px;
+  height: 18px;
+  border: 1px solid var(--ink-25);
+}
+
+.reno__card--later .reno__chip {
+  /* Later generations are still behind the counter: chips face down. */
+  background: rgba(32, 48, 43, 0.08) !important;
+  border-style: dashed;
+}
+
+.reno__look {
+  margin: 0;
+  font-size: var(--fs-12);
+  line-height: 1.5;
+  color: var(--ink-75);
+  max-width: 46ch;
+}
+
+.reno__gates {
+  margin: 5px 0 0;
+  font-size: var(--fs-12);
+  line-height: 1.45;
+  color: var(--pine);
+}
+
+.reno__foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 9px;
+}
+
+.reno__foot--buy {
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* The rubber-stamp voice, same as the certificates and the receipt verdict. */
+.reno__stamp {
+  padding: 2px 8px 1px;
+  border: 2px solid var(--amber);
+  border-radius: 4px;
+  transform: rotate(-2deg);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: var(--w-semibold);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--amber);
+  mix-blend-mode: multiply;
+}
+
+.reno__today {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-75);
+}
+
+.reno__note {
+  margin: 0;
+  font-size: var(--fs-12);
+  line-height: 1.45;
+  color: var(--ink-75);
+  max-width: 44ch;
+}
+
+.reno__note--far {
+  margin-top: 8px;
+}
+
+.reno__buy:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+/* ---- Morning reveal: the scaffolding is down (§13, §28) ---- */
+
+.reveal .panel__inner {
+  max-width: 380px;
+}
+
+.reveal__eyebrow {
+  margin: 0 0 2px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-75);
+}
+
+.reveal__name {
+  margin: 0 0 10px;
+  font-family: var(--font-display);
+  font-size: var(--fs-28);
+  font-weight: var(--w-semibold);
+  line-height: 1.15;
+}
+
+.reveal__chips {
+  display: flex;
+  gap: 5px;
+  margin: 0 0 10px;
+}
+
+.reveal__chip {
+  width: 34px;
+  height: 18px;
+  border: 1px solid var(--ink-25);
+}
+
+/* ---- Legacy: the family album (§22, §28) ----
+   The page stays Gen-1 warm whatever the store becomes — old paper. Each
+   moment is a mounted polaroid with its receipt note pinned beside it. */
+
+.album {
+  position: absolute;
+  top: 68px;
+  bottom: 76px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(620px, calc(100% - 24px));
+  z-index: 15;
+  pointer-events: none;
+  filter: var(--panel-shadow);
+}
+
+/* The cover: pine cloth, worn at the edge. */
+.album__cover {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 10px 10px 12px;
+  background: var(--pine);
+  border: 1.5px solid var(--ink);
+  pointer-events: auto;
+  animation: paper-settle var(--dur) var(--ease-out) both;
+}
+
+.album__head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  padding: 4px 10px 10px;
+}
+
+.album__title {
+  margin: 0;
+  font-family: var(--font-display);
+  font-size: var(--fs-20);
+  font-weight: var(--w-semibold);
+  color: var(--paper-gen1);
+}
+
+.album__eyebrow {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(251, 244, 228, 0.75);
+}
+
+.album__page {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 20px 22px;
+  background: var(--paper-gen1);
+}
+
+.album__entry {
+  display: flex;
+  align-items: flex-start;
+  gap: 20px;
+  padding: 10px 0 22px;
+}
+
+.album__entry + .album__entry {
+  border-top: 1px dashed var(--ink-25);
+}
+
+/* The polaroid: white border, flat-color exposure, Fraunces caption. */
+.album__polaroid {
+  flex: 0 0 168px;
+  padding: 8px 8px 8px;
+  background: #fdfdfb;
+  border: 1px solid var(--ink-25);
+  box-shadow: var(--chip-shadow);
+  transform: rotate(-1.6deg);
+}
+
+.album__entry:nth-child(even) .album__polaroid {
+  transform: rotate(1.2deg);
+}
+
+.album__photo {
+  position: relative;
+  height: 118px;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+
+/* A window glare across the exposure — enough to read as a photograph. */
+.album__photo::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    118deg,
+    rgba(255, 255, 255, 0.3) 0%,
+    rgba(255, 255, 255, 0) 42%,
+    rgba(32, 48, 43, 0.12) 100%
+  );
+}
+
+.album__mark {
+  font-family: var(--font-display);
+  font-size: 34px;
+  font-weight: var(--w-bold);
+  letter-spacing: 0.04em;
+}
+
+.album__caption {
+  margin: 8px 2px 0;
+  font-family: var(--font-display);
+  font-size: var(--fs-14);
+  font-weight: var(--w-semibold);
+  line-height: 1.25;
+}
+
+.album__date {
+  margin: 2px 2px 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-75);
+}
+
+/* The note beside it — the same pinned slip that printed on the receipt. */
+.album__note {
+  position: relative;
+  flex: 1;
+  margin-top: 14px;
+  padding: 14px 14px 12px;
+  background: var(--paper);
+  border: 1px solid var(--ink-25);
+  box-shadow: var(--chip-shadow);
+  transform: rotate(0.5deg);
+}
+
+.album__pin,
+.rcpt__legacypin {
+  position: absolute;
+  top: -5px;
+  left: 50%;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--rose);
+  border: 1.5px solid var(--ink);
+  transform: translateX(-50%);
+}
+
+.album__notetext {
+  margin: 0;
+  font-size: var(--fs-12);
+  line-height: 1.55;
+}
+
+/* Empty album: one blank frame and an invitation. */
+.album__empty {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  padding: 14px 4px;
+}
+
+.album__polaroid--blank {
+  transform: rotate(-1.6deg);
+}
+
+.album__photo--blank {
+  background: rgba(32, 48, 43, 0.07);
+  border: 1.5px dashed var(--ink-25);
+}
+
+.album__photo--blank::after {
+  content: none;
+}
+
+.album__emptyline {
+  margin: 0;
+  font-size: var(--fs-12);
+  line-height: 1.55;
+  color: var(--ink-75);
+  max-width: 34ch;
+}
+
+/* ---- Receipt: pinned legacy notes (§22, §28 signature) ---- */
+
+.rcpt__legacy {
+  position: relative;
+  margin: 12px 2px 8px;
+  padding: 13px 12px 11px;
+  /* Older paper than any era's register roll — the note always reads as
+     the family's, even on the Gen 4 clinical white. */
+  background: #f8efda;
+  border: 1px solid var(--ink-25);
+  box-shadow: var(--chip-shadow);
+  transform: rotate(-1.2deg);
+  font-family: var(--font-ui);
+}
+
+.rcpt__legacytitle {
+  margin: 0 0 3px;
+  font-family: var(--font-display);
+  font-size: var(--fs-14);
+  font-weight: var(--w-semibold);
+}
+
+.rcpt__legacytext {
+  margin: 0;
+  font-size: var(--fs-12);
+  line-height: 1.5;
+}
+
 /* ---- Reduced motion ---- */
 
 @media (prefers-reduced-motion: reduce) {

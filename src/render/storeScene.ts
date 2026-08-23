@@ -1,7 +1,8 @@
-// Gen 1 store dollhouse (SPEC §6, §27): checkerboard floor, walnut-wainscot
-// walls with a south door gap, camera-facing wall fade, the furniture layer
-// synced to sim events, and build-mode overlays (grid, backroom tint, ghost,
-// debug path ribbon).
+// Store dollhouse (SPEC §6, §13, §27): era-dressed floor and walls with a
+// south door gap, camera-facing wall fade, the furniture layer synced to sim
+// events, renovation scaffolding while the crew is in, and build-mode
+// overlays (grid, backroom tint, ghost, debug path ribbon). The shell and
+// every fixture reskin from render/eras.ts, rebuilt only on era change (§30).
 
 import {
   BoxGeometry,
@@ -24,18 +25,20 @@ import { furnitureDef } from "../data/furniture";
 import type { SimEvent } from "../sim/events";
 import type { Sim } from "../sim/sim";
 import type { PlacedFurniture } from "../sim/state";
+import { eraPalette } from "./eras";
 import { furnitureGeometry } from "./meshes/furniture";
 import { PartsBuilder } from "./meshes/parts";
 
 const GROUND_SAGE = 0x8fae8b;
 const CREAM = 0xf1ead8;
-const MOSS = 0x96a57f;
-const WALNUT = 0x6b4a32;
-const BRASS = 0xc9a86a;
 const INK = 0x20302b;
 const PINE = 0x2f6b4f;
 const ROSE = 0xc0524e;
 const AMBER = 0xe7a03c;
+/** Scaffolding props (§13): raw lumber and a paint tin. */
+const LUMBER = 0xd3b98c;
+const LUMBER_DARK = 0xb89a6d;
+const STEEL = 0xa9b2b0;
 
 const SLAB_H = 0.12;
 export const FLOOR_Y = SLAB_H + 0.01;
@@ -54,7 +57,9 @@ function doorWidth(cols: number): number {
 
 interface WallSide {
   group: Group;
-  materials: MeshLambertMaterial[];
+  /** `base` is the material's resting opacity — Gen 4's glass uppers sit
+   *  below 1 even before the camera-facing fade multiplies in. */
+  materials: { material: MeshLambertMaterial | MeshBasicMaterial; base: number }[];
   normal: Vector3;
   opacity: number;
 }
@@ -113,6 +118,10 @@ export class StoreScene {
 
   private cols: number;
   private rows: number;
+  /** The era the shell and fixtures are currently dressed in (§13). */
+  private era: 1 | 2 | 3 | 4;
+  /** Renovation props, standing from purchase until next morning (§13). */
+  private scaffold: Mesh | null = null;
   private camDir = new Vector3();
 
   constructor(
@@ -122,6 +131,7 @@ export class StoreScene {
     const { cols, rows } = sim.snapshot.store.grid;
     this.cols = cols;
     this.rows = rows;
+    this.era = sim.snapshot.era;
 
     this.scene.add(this.store);
     this.buildGround();
@@ -131,7 +141,7 @@ export class StoreScene {
     this.store.add(this.furnitureLayer);
 
     // Ghost preview + footprint tint quad
-    this.ghost = new Mesh(furnitureGeometry("chair_waiting"), this.ghostMat);
+    this.ghost = new Mesh(furnitureGeometry("chair_waiting", this.era), this.ghostMat);
     this.ghost.visible = false;
     this.ghost.renderOrder = 10;
     this.footprint = new Mesh(new PlaneGeometry(1, 1), this.footprintMat);
@@ -167,21 +177,20 @@ export class StoreScene {
     this.store.add(this.pathMesh);
 
     for (const item of sim.snapshot.store.furniture) this.addItem(item);
+    // A save taken at the close of a renovation day boots mid-drama (§13).
+    if (sim.snapshot.pendingEra !== null) this.showScaffold();
 
     bus.on("furniture.placed", (e) => this.addItem(e.item));
     bus.on("furniture.moved", (e) => this.moveItem(e.item));
     bus.on("furniture.sold", (e) => this.removeItem(e.id));
     bus.on("build.changed", (e) => this.setBuildMode(e.active));
     bus.on("expansion.bought", (e) => this.gridChanged(e.cols, e.rows));
+    bus.on("era.renovationStarted", () => this.showScaffold());
+    bus.on("era.changed", (e) => this.eraChanged(e.era));
   }
 
-  /** §6 expansion: tear the shell down, rebuild it at the new size, and
-   *  re-seat every furniture mesh — world coordinates are grid-centered, so
-   *  each piece shifts when the center moves even though its cell doesn't. */
-  private gridChanged(cols: number, rows: number): void {
-    this.cols = cols;
-    this.rows = rows;
-
+  /** Tear the shell down and raise it fresh at the current size and era. */
+  private rebuildShell(): void {
     this.store.remove(this.shell);
     this.shell.traverse((child) => {
       if (!(child instanceof Mesh)) return;
@@ -195,6 +204,20 @@ export class StoreScene {
     this.shell = new Group();
     this.walls = [];
     this.buildShell();
+  }
+
+  /** §6 expansion: tear the shell down, rebuild it at the new size, and
+   *  re-seat every furniture mesh — world coordinates are grid-centered, so
+   *  each piece shifts when the center moves even though its cell doesn't. */
+  private gridChanged(cols: number, rows: number): void {
+    this.cols = cols;
+    this.rows = rows;
+    this.rebuildShell();
+    // Scaffolding is sized to the walls; a same-morning expansion re-drapes it.
+    if (this.scaffold) {
+      this.hideScaffold();
+      this.showScaffold();
+    }
 
     const state = this.sim.snapshot;
     for (const item of state.store.furniture) {
@@ -205,6 +228,82 @@ export class StoreScene {
     this.refreshZone();
   }
 
+  /** §13 next morning: the scaffolding comes down, the shell rebuilds in the
+   *  new era's materials, and every fixture swaps to its era geometry — one
+   *  batched rebuild, no per-frame cost (§30). */
+  private eraChanged(era: 1 | 2 | 3 | 4): void {
+    this.era = era;
+    this.hideScaffold();
+    this.rebuildShell();
+    for (const item of this.sim.snapshot.store.furniture) {
+      const mesh = this.meshes.get(item.id);
+      if (mesh) mesh.geometry = furnitureGeometry(item.defId, era);
+    }
+  }
+
+  // --- Renovation scaffolding (§13): visible drama, walkable floor ---
+
+  private showScaffold(): void {
+    if (this.scaffold) return;
+    const hx = this.cols / 2;
+    const hz = this.rows / 2;
+    const b = new PartsBuilder();
+
+    /** One bay of poles + planks hugging a wall run. `along` is 'x' or 'z'. */
+    const run = (along: "x" | "z", fixed: number, from: number, to: number): void => {
+      const step = 2.2;
+      for (let at = from; at <= to + 0.01; at += step) {
+        const [px, pz] = along === "x" ? [at, fixed] : [fixed, at];
+        b.add(new BoxGeometry(0.09, 2.05, 0.09), LUMBER, px, 1.03, pz);
+        b.add(new BoxGeometry(0.16, 0.05, 0.16), STEEL, px, 0.03, pz);
+      }
+      const len = to - from;
+      const [cx, cz] = along === "x" ? [(from + to) / 2, fixed] : [fixed, (from + to) / 2];
+      for (const y of [0.98, 1.72]) {
+        b.add(
+          new BoxGeometry(along === "x" ? len : 0.3, 0.06, along === "x" ? 0.3 : len),
+          LUMBER_DARK,
+          cx,
+          y,
+          cz,
+        );
+      }
+    };
+    run("x", -hz + 0.32, -hx + 0.7, hx - 0.7); // along the north wall
+    run("z", hx - 0.32, -hz + 0.9, hz - 0.9); // along the east wall
+
+    // Sawhorses flanking the door, a plank across one, a paint tin.
+    for (const sx of [-1, 1]) {
+      const x = sx * 1.35;
+      const z = hz - 0.85;
+      b.add(new BoxGeometry(0.72, 0.07, 0.1), LUMBER_DARK, x, 0.6, z);
+      for (const lean of [-1, 1]) {
+        const leg = new BoxGeometry(0.06, 0.62, 0.06);
+        leg.rotateX(lean * 0.35);
+        b.add(leg, LUMBER, x - 0.28, 0.3, z + lean * 0.09);
+        const leg2 = new BoxGeometry(0.06, 0.62, 0.06);
+        leg2.rotateX(lean * 0.35);
+        b.add(leg2, LUMBER, x + 0.28, 0.3, z + lean * 0.09);
+      }
+    }
+    b.add(new BoxGeometry(2.4, 0.05, 0.28), LUMBER, 0, 0.67, hz - 0.85);
+    const tin = new BoxGeometry(0.22, 0.26, 0.22);
+    b.add(tin, STEEL, 0.55, 0.13, hz - 1.5);
+    b.add(new BoxGeometry(0.16, 0.03, 0.16), AMBER, 0.55, 0.27, hz - 1.5);
+
+    this.scaffold = new Mesh(b.build(), this.furnitureMat);
+    this.scaffold.position.y = FLOOR_Y;
+    this.scaffold.castShadow = true;
+    this.store.add(this.scaffold);
+  }
+
+  private hideScaffold(): void {
+    if (!this.scaffold) return;
+    this.store.remove(this.scaffold);
+    this.scaffold.geometry.dispose();
+    this.scaffold = null;
+  }
+
   /** Per-frame: fade whichever walls face the camera (dollhouse, SPEC §27). */
   update(camera: OrthographicCamera, dtMs: number): void {
     camera.getWorldDirection(this.camDir);
@@ -213,7 +312,7 @@ export class StoreScene {
       const dot = -(wall.normal.x * this.camDir.x + wall.normal.z * this.camDir.z);
       const target = dot > FADE_DOT ? FADE_MIN : 1;
       wall.opacity += (target - wall.opacity) * k;
-      for (const material of wall.materials) material.opacity = wall.opacity;
+      for (const entry of wall.materials) entry.material.opacity = wall.opacity * entry.base;
     }
 
     if (this.bottleneckRing.visible) {
@@ -294,7 +393,7 @@ export class StoreScene {
     const rect = footprintRect(def.cells, cellX, cellY, rot);
     const [wx, wz] = rectCenterWorld(this.cols, this.rows, rect);
 
-    this.ghost.geometry = furnitureGeometry(defId);
+    this.ghost.geometry = furnitureGeometry(defId, this.era);
     this.ghost.position.set(wx, FLOOR_Y + 0.02, wz);
     this.ghost.rotation.y = rot * (Math.PI / 2);
     this.ghostMat.color.set(valid ? PINE : ROSE);
@@ -376,7 +475,7 @@ export class StoreScene {
   }
 
   private addItem(item: PlacedFurniture): void {
-    const mesh = new Mesh(furnitureGeometry(item.defId), this.furnitureMat);
+    const mesh = new Mesh(furnitureGeometry(item.defId, this.era), this.furnitureMat);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     this.meshes.set(item.id, mesh);
@@ -434,6 +533,7 @@ export class StoreScene {
   }
 
   private buildSlabAndFloor(): void {
+    // The slab stays store-base cream in every era (§27 world palette).
     const slab = new Mesh(
       new BoxGeometry(this.cols + 2 * WALL_T + 0.5, SLAB_H, this.rows + 2 * WALL_T + 0.5),
       new MeshLambertMaterial({ color: CREAM, flatShading: true }),
@@ -442,13 +542,14 @@ export class StoreScene {
     slab.receiveShadow = true;
     this.shell.add(slab);
 
+    const shell = eraPalette(this.era).shell;
     const b = new PartsBuilder();
     for (let y = 0; y < this.rows; y++) {
       for (let x = 0; x < this.cols; x++) {
         const tile = new PlaneGeometry(1, 1);
         tile.rotateX(-Math.PI / 2);
         const [wx, wz] = cellToWorld(this.cols, this.rows, x, y);
-        b.add(tile, (x + y) % 2 === 0 ? CREAM : MOSS, wx, 0, wz);
+        b.add(tile, (x + y) % 2 === 0 ? shell.floorA : shell.floorB, wx, 0, wz);
       }
     }
     const floor = new Mesh(b.build(), this.furnitureMat);
@@ -456,10 +557,10 @@ export class StoreScene {
     floor.receiveShadow = true;
     this.shell.add(floor);
 
-    // Brass threshold strip across the door gap
+    // Threshold strip across the door gap: brass, then the era's metal.
     const threshold = new Mesh(
       new BoxGeometry(doorWidth(this.cols), 0.02, WALL_T),
-      new MeshLambertMaterial({ color: BRASS, flatShading: true }),
+      new MeshLambertMaterial({ color: shell.threshold, flatShading: true }),
     );
     threshold.position.set(0, FLOOR_Y, this.rows / 2 + WALL_T / 2);
     this.shell.add(threshold);
@@ -513,24 +614,36 @@ export class StoreScene {
       { normal: new Vector3(1, 0, 0), segments: [[hx + WALL_T / 2, 0, this.rows]] },
     ];
 
+    const shell = eraPalette(this.era).shell;
     for (const side of sides) {
       const group = new Group();
       const wainscotMat = new MeshLambertMaterial({
-        color: WALNUT,
+        color: shell.wainscot,
         flatShading: true,
         transparent: true,
       });
+      // Gen 4's uppers are glass (§27 opacity trick): they start translucent
+      // and the camera fade multiplies on top.
       const upperMat = new MeshLambertMaterial({
-        color: CREAM,
+        color: shell.wallUpper,
         flatShading: true,
         transparent: true,
+        opacity: shell.wallUpperOpacity,
       });
       const capMat = new MeshLambertMaterial({
-        color: WALNUT,
+        color: shell.cap,
         flatShading: true,
         transparent: true,
       });
+      // Gen 2's fluorescent strip glows on its own — no lighting model.
+      const stripMat =
+        shell.fluorescent === null
+          ? null
+          : new MeshBasicMaterial({ color: shell.fluorescent, transparent: true });
       const alongX = side.normal.z !== 0;
+      // Gen 3's cap widens into the drop ceiling's fascia (§13).
+      const capH = shell.capWide ? 0.18 : CAP_H;
+      const capOut = shell.capWide ? 0.2 : 0.04;
 
       for (const [cx, cz, len] of side.segments) {
         const sizeX = alongX ? len : WALL_T;
@@ -543,11 +656,22 @@ export class StoreScene {
         );
         upper.position.set(cx, SLAB_H + WAINSCOT_H + (WALL_H - WAINSCOT_H) / 2, cz);
         const cap = new Mesh(
-          new BoxGeometry(sizeX + (alongX ? 0 : 0.04), CAP_H, sizeZ + (alongX ? 0.04 : 0)),
+          new BoxGeometry(sizeX + (alongX ? 0 : capOut), capH, sizeZ + (alongX ? capOut : 0)),
           capMat,
         );
-        cap.position.set(cx, SLAB_H + WALL_H + CAP_H / 2, cz);
+        cap.position.set(cx, SLAB_H + WALL_H + capH / 2, cz);
         group.add(wainscot, upper, cap);
+        if (stripMat) {
+          // The fluorescent tube hangs just under the cap, set in from the wall.
+          const inX = cx - side.normal.x * 0.16;
+          const inZ = cz - side.normal.z * 0.16;
+          const strip = new Mesh(
+            new BoxGeometry(alongX ? len * 0.82 : 0.07, 0.05, alongX ? 0.07 : len * 0.82),
+            stripMat,
+          );
+          strip.position.set(inX, SLAB_H + WALL_H - 0.1, inZ);
+          group.add(strip);
+        }
       }
 
       // Door posts frame the gap on the south side.
@@ -561,12 +685,13 @@ export class StoreScene {
       }
 
       this.shell.add(group);
-      this.walls.push({
-        group,
-        materials: [wainscotMat, upperMat, capMat],
-        normal: side.normal,
-        opacity: 1,
-      });
+      const materials: WallSide["materials"] = [
+        { material: wainscotMat, base: 1 },
+        { material: upperMat, base: shell.wallUpperOpacity },
+        { material: capMat, base: 1 },
+      ];
+      if (stripMat) materials.push({ material: stripMat, base: 1 });
+      this.walls.push({ group, materials, normal: side.normal, opacity: 1 });
     }
   }
 }

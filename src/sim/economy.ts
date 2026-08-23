@@ -44,6 +44,7 @@ export const LEDGER_REASONS = [
   { id: "fixtures", group: "cost", label: "Fixtures" },
   { id: "license", group: "cost", label: "Licenses" },
   { id: "expansion", group: "cost", label: "Expansion" },
+  { id: "renovation", group: "cost", label: "Renovation" },
   { id: "bank.draw", group: "financing", label: "Credit line draw" },
   { id: "bank.payment", group: "financing", label: "Credit line payment" },
   { id: "family.loan", group: "financing", label: "Family loan" },

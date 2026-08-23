@@ -60,6 +60,13 @@ export type SimEvent =
   // --- Licenses + expansion (§6, §12, milestone 08; legacy moments for 10, §22) ---
   | { type: "license.bought"; id: string; name: string; cost: number; day: number }
   | { type: "expansion.bought"; level: number; cols: number; rows: number; cost: number; day: number }
+  // --- Era modernization + legacy (§13, §22, milestone 10) ---
+  /** Renovation bought: scaffolding up, no more arrivals today (§13). */
+  | { type: "era.renovationStarted"; era: 2 | 3 | 4; name: string; cost: number; day: number }
+  /** Next morning: the new era stands — render reskins, the HUD paper tints. */
+  | { type: "era.changed"; era: 1 | 2 | 3 | 4 }
+  /** A §22 moment, fired the once it happens; the note pins to today's receipt. */
+  | { type: "legacy.moment"; id: string; day: number }
   // --- Vaccination service (§14, milestone 09) ---
   | { type: "vaccine.given"; customerId: number; total: number }
   /** A walk-in reached the station and there was no dose to give (§14). */

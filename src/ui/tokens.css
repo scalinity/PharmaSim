@@ -12,6 +12,8 @@
   /* Era paper tints — swapped onto --paper on the HUD root as the store
      modernizes (Gen 1 warm → Gen 4 clinical white). */
   --paper-gen1: #fbf4e4;
+  --paper-gen2: #fbf7ec;
+  --paper-gen3: #fcf9f3;
   --paper-gen4: #fcfcfa;
 
   /* Ink at reduced strengths for lines and muted text */
@@ -46,4 +48,23 @@
   --panel-notch: 10px;
   --panel-shadow: drop-shadow(0 6px 10px rgba(32, 48, 43, 0.28));
   --chip-shadow: 0 2px 6px rgba(32, 48, 43, 0.22);
+}
+
+/* The era swap itself (§28): main.ts stamps the active store's era on the
+   root, and every surface that reads --paper quietly modernizes with the
+   store. (The title card keeps its own local override — same value.) */
+:root[data-era="1"] {
+  --paper: var(--paper-gen1);
+}
+
+:root[data-era="2"] {
+  --paper: var(--paper-gen2);
+}
+
+:root[data-era="3"] {
+  --paper: var(--paper-gen3);
+}
+
+:root[data-era="4"] {
+  --paper: var(--paper-gen4);
 }
