@@ -420,6 +420,7 @@ export class StaffSystem {
       agent.restockLeft -= dIgm;
       if (agent.restockLeft > 0) return;
       agent.restockLeft = 0;
+      agent.idleIgm = 0; // work just ended — the break-spot fuse starts fresh
       const shelfId = agent.targetId;
       agent.targetKind = "break";
       agent.targetId = null;
@@ -449,6 +450,7 @@ export class StaffSystem {
       const scriptId = agent.taskScriptId;
       agent.taskScriptId = 0;
       agent.taskKind = null;
+      agent.idleIgm = 0; // work just ended — the break-spot fuse starts fresh
       this.workflow.finishStaffFill(state, scriptId, fillErrorRate(member), emit);
       return;
     }
@@ -467,6 +469,7 @@ export class StaffSystem {
       const scriptId = agent.taskScriptId;
       agent.taskScriptId = 0;
       agent.taskKind = null;
+      agent.idleIgm = 0; // work just ended — the break-spot fuse starts fresh
       this.workflow.finishVerify(state, scriptId, verifyCatchRate(member), emit);
     }
     // Registers and counter lanes are served by the customer system, which
@@ -479,6 +482,7 @@ export class StaffSystem {
     else this.workflow.releaseVerify(agent.taskScriptId, emit);
     agent.taskScriptId = 0;
     agent.taskKind = null;
+    agent.idleIgm = 0; // work just ended — the break-spot fuse starts fresh
   }
 
   // --- Needs and targets ---
