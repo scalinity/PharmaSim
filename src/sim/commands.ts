@@ -5,6 +5,7 @@
 import { DAY_START_IGM } from "../core/clock";
 import type { Rot } from "../core/grid";
 import { EXPANSIONS, furnitureDef } from "../data/furniture";
+import { fridgeFree } from "./coldchain";
 import {
   bankStatus,
   catalog,
@@ -13,7 +14,6 @@ import {
   round2,
 } from "./economy";
 import type { SimEvent } from "./events";
-import { fridgeFree } from "./coldchain";
 import {
   clampMultiplier,
   clearControlled,
