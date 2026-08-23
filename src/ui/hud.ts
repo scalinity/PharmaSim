@@ -194,7 +194,7 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     [h("span", { cls: "keycap", attrs: { "aria-hidden": "true" }, text: "O" }), "Orders"],
   );
   ordersPill.addEventListener("pointerdown", (e) => e.preventDefault());
-  ordersPill.addEventListener("click", () => toggleOrders());
+  ordersPill.addEventListener("click", () => togglePanel("orders"));
 
   const teamPill = h(
     "button",
@@ -205,7 +205,7 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     [h("span", { cls: "keycap", attrs: { "aria-hidden": "true" }, text: "T" }), "Team"],
   );
   teamPill.addEventListener("pointerdown", (e) => e.preventDefault());
-  teamPill.addEventListener("click", () => toggleTeam());
+  teamPill.addEventListener("click", () => togglePanel("team"));
 
   const licensesPill = h(
     "button",
@@ -216,7 +216,7 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     [h("span", { cls: "keycap", attrs: { "aria-hidden": "true" }, text: "L" }), "Licenses"],
   );
   licensesPill.addEventListener("pointerdown", (e) => e.preventDefault());
-  licensesPill.addEventListener("click", () => toggleLicenses());
+  licensesPill.addEventListener("click", () => togglePanel("licenses"));
 
   const renovatePill = h(
     "button",
@@ -227,7 +227,7 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     [h("span", { cls: "keycap", attrs: { "aria-hidden": "true" }, text: "V" }), "Renovate"],
   );
   renovatePill.addEventListener("pointerdown", (e) => e.preventDefault());
-  renovatePill.addEventListener("click", () => toggleRenovate());
+  renovatePill.addEventListener("click", () => togglePanel("renovate"));
 
   const legacyPill = h(
     "button",
@@ -238,7 +238,7 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     [h("span", { cls: "keycap", attrs: { "aria-hidden": "true" }, text: "G" }), "Legacy"],
   );
   legacyPill.addEventListener("pointerdown", (e) => e.preventDefault());
-  legacyPill.addEventListener("click", () => toggleLegacy());
+  legacyPill.addEventListener("click", () => togglePanel("legacy"));
 
   const dock = h("div", { cls: "dock" }, [
     buildPill,
@@ -339,109 +339,40 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
   // --- Orders panel + the shelf's own price-tag card (§11) ---
 
   const orders = createOrdersPanel(sim, bus);
-  let ordersOpen = false;
   const team = createStaffPanel(sim, bus);
-  let teamOpen = false;
   const licenses = createLicensesPanel(sim, bus);
-  let licensesOpen = false;
   const renovate = createRenovatePanel(sim, bus);
-  let renovateOpen = false;
   const legacy = createLegacyPanel(sim, bus);
-  let legacyOpen = false;
 
-  function setOrders(open: boolean): void {
+  /** The dock's sheets, one registry: each pairs its panel with its pill. */
+  type PanelName = "orders" | "team" | "licenses" | "renovate" | "legacy";
+  const panels: Record<PanelName, { handle: { setVisible(on: boolean): void }; pill: HTMLButtonElement }> = {
+    orders: { handle: orders, pill: ordersPill },
+    team: { handle: team, pill: teamPill },
+    licenses: { handle: licenses, pill: licensesPill },
+    renovate: { handle: renovate, pill: renovatePill },
+    legacy: { handle: legacy, pill: legacyPill },
+  };
+  let openPanel: PanelName | null = null;
+
+  /** One sheet on the counter at a time (§28): opening one puts the rest
+   *  away; null puts every sheet away. Close phase and build mode allow
+   *  none, whatever was asked for. */
+  function setPanel(name: PanelName | null): void {
     const allowed = sim.snapshot.phase !== "close" && !sim.snapshot.buildMode;
-    ordersOpen = open && allowed;
-    orders.setVisible(ordersOpen);
-    ordersPill.classList.toggle("pill--primary", ordersOpen);
-    ordersPill.classList.toggle("pill--secondary", !ordersOpen);
-    ordersPill.setAttribute("aria-pressed", String(ordersOpen));
-    if (ordersOpen) {
-      setTeam(false);
-      setLicenses(false);
-      setRenovate(false);
-      setLegacy(false);
+    openPanel = allowed ? name : null;
+    for (const key of Object.keys(panels) as PanelName[]) {
+      const on = key === openPanel;
+      const panel = panels[key];
+      panel.handle.setVisible(on);
+      panel.pill.classList.toggle("pill--primary", on);
+      panel.pill.classList.toggle("pill--secondary", !on);
+      panel.pill.setAttribute("aria-pressed", String(on));
     }
   }
 
-  function toggleOrders(): void {
-    setOrders(!ordersOpen);
-  }
-
-  function setTeam(open: boolean): void {
-    const allowed = sim.snapshot.phase !== "close" && !sim.snapshot.buildMode;
-    teamOpen = open && allowed;
-    team.setVisible(teamOpen);
-    teamPill.classList.toggle("pill--primary", teamOpen);
-    teamPill.classList.toggle("pill--secondary", !teamOpen);
-    teamPill.setAttribute("aria-pressed", String(teamOpen));
-    if (teamOpen) {
-      setOrders(false);
-      setLicenses(false);
-      setRenovate(false);
-      setLegacy(false);
-    }
-  }
-
-  function toggleTeam(): void {
-    setTeam(!teamOpen);
-  }
-
-  function setLicenses(open: boolean): void {
-    const allowed = sim.snapshot.phase !== "close" && !sim.snapshot.buildMode;
-    licensesOpen = open && allowed;
-    licenses.setVisible(licensesOpen);
-    licensesPill.classList.toggle("pill--primary", licensesOpen);
-    licensesPill.classList.toggle("pill--secondary", !licensesOpen);
-    licensesPill.setAttribute("aria-pressed", String(licensesOpen));
-    if (licensesOpen) {
-      setOrders(false);
-      setTeam(false);
-      setRenovate(false);
-      setLegacy(false);
-    }
-  }
-
-  function toggleLicenses(): void {
-    setLicenses(!licensesOpen);
-  }
-
-  function setRenovate(open: boolean): void {
-    const allowed = sim.snapshot.phase !== "close" && !sim.snapshot.buildMode;
-    renovateOpen = open && allowed;
-    renovate.setVisible(renovateOpen);
-    renovatePill.classList.toggle("pill--primary", renovateOpen);
-    renovatePill.classList.toggle("pill--secondary", !renovateOpen);
-    renovatePill.setAttribute("aria-pressed", String(renovateOpen));
-    if (renovateOpen) {
-      setOrders(false);
-      setTeam(false);
-      setLicenses(false);
-      setLegacy(false);
-    }
-  }
-
-  function toggleRenovate(): void {
-    setRenovate(!renovateOpen);
-  }
-
-  function setLegacy(open: boolean): void {
-    const allowed = sim.snapshot.phase !== "close" && !sim.snapshot.buildMode;
-    legacyOpen = open && allowed;
-    legacy.setVisible(legacyOpen);
-    legacyPill.classList.toggle("pill--primary", legacyOpen);
-    legacyPill.classList.toggle("pill--secondary", !legacyOpen);
-    legacyPill.setAttribute("aria-pressed", String(legacyOpen));
-    if (legacyOpen) {
-      setOrders(false);
-      setTeam(false);
-      setLicenses(false);
-      setRenovate(false);
-    }
-  }
-
-  function toggleLegacy(): void {
-    setLegacy(!legacyOpen);
+  function togglePanel(name: PanelName): void {
+    setPanel(openPanel === name ? null : name);
   }
 
   const shelfCard = h("div", { cls: "shelfcard" });
@@ -622,13 +553,7 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     if (phase === "close") {
       closeStage.append(buildReceipt(sim, () => sim.dispatch({ type: "day.advance" })));
     }
-    if (phase === "close") {
-      setOrders(false);
-      setTeam(false);
-      setLicenses(false);
-      setRenovate(false);
-      setLegacy(false);
-    }
+    if (phase === "close") setPanel(null);
     if (phase !== "shift") {
       hoverHint = null;
       refreshStationHint();
@@ -683,11 +608,7 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     if (!active) contextCard.hidden = true;
     // One sheet on the counter at a time.
     if (active) {
-      setOrders(false);
-      setTeam(false);
-      setLicenses(false);
-      setRenovate(false);
-      setLegacy(false);
+      setPanel(null);
       setShelfCard(null, 0, 0);
       setFridgeCard(null, 0, 0);
       clearStockChips();
@@ -772,7 +693,7 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
 
   bus.on("order.submitted", (e) => {
     toast(`Order placed — ${e.units} units, ${money(e.total)}. The van comes at dawn.`);
-    setOrders(false);
+    if (openPanel === "orders") setPanel(null);
   });
   bus.on("order.delivered", (e) => {
     toast(`Delivery unloaded — ${e.units} units across ${e.skus} lines, in the backroom`);
@@ -821,7 +742,7 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
 
   bus.on("era.renovationStarted", (e) => {
     // The sheet goes down so the scaffolding going up is what the player sees.
-    setRenovate(false);
+    if (openPanel === "renovate") setPanel(null);
     toast(`Scaffolding up — closed for the rest of today. ${e.name} stands tomorrow.`);
     refreshMorning(); // a morning purchase re-writes the open card
   });
@@ -873,15 +794,15 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     } else if (e.key === "2") {
       sim.dispatch({ type: "speed.set", speed: 2 });
     } else if (e.code === "KeyO" && !e.repeat) {
-      toggleOrders();
+      togglePanel("orders");
     } else if (e.code === "KeyT" && !e.repeat) {
-      toggleTeam();
+      togglePanel("team");
     } else if (e.code === "KeyL" && !e.repeat) {
-      toggleLicenses();
+      togglePanel("licenses");
     } else if (e.code === "KeyV" && !e.repeat) {
-      toggleRenovate();
+      togglePanel("renovate");
     } else if (e.code === "KeyG" && !e.repeat) {
-      toggleLegacy();
+      togglePanel("legacy");
     } else if (e.code === "KeyN" && !e.repeat) {
       sim.dispatch({ type: "dev.stressToggle" });
     }
@@ -902,24 +823,8 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
       setPhase(sim.snapshot.phase);
     },
     dismiss: () => {
-      if (ordersOpen) {
-        setOrders(false);
-        return true;
-      }
-      if (teamOpen) {
-        setTeam(false);
-        return true;
-      }
-      if (licensesOpen) {
-        setLicenses(false);
-        return true;
-      }
-      if (renovateOpen) {
-        setRenovate(false);
-        return true;
-      }
-      if (legacyOpen) {
-        setLegacy(false);
+      if (openPanel !== null) {
+        setPanel(null);
         return true;
       }
       // Build mode owns Escape for its ghost, selection and its own exit
