@@ -6,7 +6,9 @@
 import { h } from "../dom";
 
 export interface RxCardHandle {
-  show(patientName: string, drugName: string, quantity: number, hasShelf: boolean): void;
+  /** `missingFixture` names the absent bin fixture ("Rx shelf", "controlled
+   *  cabinet") for the stuck state, or null when the bins are up. */
+  show(patientName: string, drugName: string, quantity: number, missingFixture: string | null): void;
   /** Bin picked; the 6 igm count-out is running. */
   setFilling(): void;
   hide(): void;
@@ -47,16 +49,16 @@ export function createRxCard(root: HTMLElement): RxCardHandle {
   let quantity = 0;
 
   return {
-    show(patientName, drugName, qty, hasShelf) {
+    show(patientName, drugName, qty, missingFixture) {
       quantity = qty;
       patientEl.textContent = patientName;
       drugEl.textContent = drugName;
       qtyEl.textContent = String(qty);
-      if (hasShelf) {
+      if (missingFixture === null) {
         stateText.textContent = "Pick the matching bin";
         stateEl.classList.remove("rxcard__state--stuck");
       } else {
-        stateText.textContent = "No Rx shelf — place one to fill";
+        stateText.textContent = `No ${missingFixture} — place one to fill`;
         stateEl.classList.add("rxcard__state--stuck");
       }
       card.classList.remove("rxcard--filling");

@@ -553,7 +553,15 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
   // --- Prescription workflow (§8): the RxCard + workflow toasts ---
 
   bus.on("rx.fillStarted", (e) => {
-    rxCard.show(e.patientName, drugDef(e.drugId).name, e.quantity, e.shelfId !== null);
+    // A Tier-3 script fills from the controlled cabinet (§25); the stuck-state
+    // copy must name the fixture that is actually missing.
+    const missing =
+      e.shelfId !== null
+        ? null
+        : drugDef(e.drugId).tier === 3
+          ? "controlled cabinet"
+          : "Rx shelf";
+    rxCard.show(e.patientName, drugDef(e.drugId).name, e.quantity, missing);
   });
   bus.on("rx.binPicked", () => rxCard.setFilling());
   bus.on("rx.fillEnded", () => rxCard.hide());
