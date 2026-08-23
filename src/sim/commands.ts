@@ -163,10 +163,16 @@ export function handleCommand(
       const item = state.store.furniture[index]!;
       const refund = Math.round(furnitureDef(item.defId).cost / 2);
       state.store.furniture.splice(index, 1);
-      // Stock on a sold shelf goes back in a box, not in the bin. A sold
-      // cabinet boxes its Tier-3 stock the same way (§25).
+      // Stock on a sold shelf goes back in a box, not in the bin. Controlled
+      // stock is boxed only when the *last* cabinet goes — Tier-3 units are
+      // pooled across cabinets, so a surviving one still holds them (§25).
       if (item.defId === "otc_shelf") clearShelf(state.store, item.id);
-      if (item.defId === "cabinet_controlled") clearControlled(state.store);
+      if (
+        item.defId === "cabinet_controlled" &&
+        !state.store.furniture.some((f) => f.defId === "cabinet_controlled")
+      ) {
+        clearControlled(state.store);
+      }
       if (state.workingStationId === item.id) leaveStation(state, emit);
       // Anyone stationed at a sold fixture is off duty until reassigned.
       for (const member of state.store.staff) {
