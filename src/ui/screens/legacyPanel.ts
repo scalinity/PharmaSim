@@ -36,11 +36,10 @@ export function createLegacyPanel(sim: Sim, bus: EventBus<SimEvent>): LegacyPane
 
   function buildEntry(id: string, day: number): HTMLElement {
     const def = legacyMomentDef(id);
-    const photo = h("div", { cls: "album__photo", attrs: { "aria-hidden": "true" } }, [
-      h("span", { cls: "album__mark", text: def.photo.mark }),
-    ]);
+    const mark = h("span", { cls: "album__mark", text: def.photo.mark });
+    mark.style.color = def.photo.ink;
+    const photo = h("div", { cls: "album__photo", attrs: { "aria-hidden": "true" } }, [mark]);
     photo.style.background = def.photo.ground;
-    (photo.firstChild as HTMLElement).style.color = def.photo.ink;
 
     const polaroid = h("div", { cls: "album__polaroid" }, [
       photo,
