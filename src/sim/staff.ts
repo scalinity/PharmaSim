@@ -17,6 +17,10 @@ export interface StaffMember {
   role: StaffRole;
   speed: StatValue;
   accuracy: StatValue;
+  /** Rolled, saved and shown, but with no live modifier: §9 names warmth a
+   *  "satisfaction bonus" and §26 gives it no magnitude, so it stays inert
+   *  until a milestone defines one (it also feeds §26's managerFactor
+   *  statTotal for future branches). */
   warmth: StatValue;
   trait: StaffTrait;
   dailyWage: number;
