@@ -29,6 +29,7 @@ import { NpcView } from "./render/npcView";
 import { Picking } from "./render/picking";
 import { Renderer } from "./render/renderer";
 import { RxBinBoard } from "./render/rxBins";
+import { StaffView } from "./render/staffView";
 import { StoreScene } from "./render/storeScene";
 import { createHud } from "./ui/hud";
 import { createShell, type ShellPersistence } from "./ui/shell";
@@ -67,6 +68,7 @@ const sim = new Sim(bus, saved ? hydrate(saved) : undefined);
 const renderer = new Renderer();
 const store = new StoreScene(sim, bus);
 const npcs = new NpcView(sim, store.scene);
+const staffView = new StaffView(sim, store.scene);
 const lighting = new Lighting(store.scene);
 const rig = new CameraRig(renderer.canvas);
 rig.setAspect(renderer.aspect);
@@ -135,10 +137,43 @@ function project(wx: number, wy: number, wz: number): [number, number] {
 }
 
 let liveStackKeys = new Set<string>();
+let liveGlyphIds = new Set<string>();
+
+/** §27: a small role glyph over each staffed station — $ rings, ℞ fills,
+ *  ✓ verifies. Shown from the morning on, so assignments read at a glance. */
+const ROLE_GLYPHS: Record<string, string> = {
+  cashier: "$",
+  tech: "℞",
+  pharmacist: "✓",
+  manager: "M",
+};
+
+function updateRoleGlyphs(): void {
+  const state = sim.snapshot;
+  const ids = new Set<string>();
+  if (!state.buildMode && state.phase !== "close") {
+    const { cols, rows } = state.store.grid;
+    for (const member of state.store.staff) {
+      const stationId = member.assignment?.stationId;
+      if (!stationId) continue;
+      const station = state.store.furniture.find((f) => f.id === stationId);
+      if (!station) continue;
+      const [wx, wz] = cellToWorld(cols, rows, station.cellX, station.cellY);
+      const [sx, sy] = project(wx, 2.75, wz);
+      hud.updateRoleGlyph(member.id, sx, sy, ROLE_GLYPHS[member.role] ?? "•");
+      ids.add(member.id);
+    }
+  }
+  for (const id of liveGlyphIds) {
+    if (!ids.has(id)) hud.hideRoleGlyph(id);
+  }
+  liveGlyphIds = ids;
+}
 
 function updateOverlays(): void {
   if (hudRoot.hidden) return; // title screen: no chips to place
   const state = sim.snapshot;
+  updateRoleGlyphs();
   if (state.phase === "close") {
     store.setBottleneck(null);
     return;
@@ -205,6 +240,11 @@ function updateOverlays(): void {
       consider(item.id, depth);
       const [wx, wz] = cellToWorld(cols, rows, item.cellX, item.cellY);
       stack(item.id, wx, wz, depth, "fill");
+    } else if (item.defId === "verify_desk") {
+      const depth = sim.workflow.verifyDepth;
+      consider(item.id, depth);
+      const [wx, wz] = cellToWorld(cols, rows, item.cellX, item.cellY);
+      stack(item.id, wx, wz, depth, "verify");
     }
   }
   for (const key of liveStackKeys) {
@@ -330,6 +370,7 @@ const loopHooks = {
     rig.update(dtMs);
     store.update(rig.camera, dtMs);
     npcs.update(alpha);
+    staffView.update(alpha);
     updateOverlays();
     renderer.render(store.scene, rig.camera);
   },

@@ -1,6 +1,7 @@
 // SimEvent union — everything the sim announces to render/ and ui/.
 
 import type { Archetype } from "./customers";
+import type { StaffMember } from "./staff";
 import type { DayPhase, GameSettings, GameSpeed, OrderLine, PlacedFurniture } from "./state";
 import type { RxStage } from "./workflow";
 
@@ -45,13 +46,20 @@ export type SimEvent =
   // --- Inventory + economy (§10, §11, milestone 05) ---
   /** A sale or fill lost to an empty shelf label or bin. */
   | { type: "stock.out"; skuId: string }
-  | { type: "stock.restocked"; furnitureId: string; units: number }
+  /** `by` names the Stock Hawk who made the trip; absent for player clicks. */
+  | { type: "stock.restocked"; furnitureId: string; units: number; by?: string }
   /** First stock-out: per-SKU reorder rules become available (§11). */
   | { type: "reorder.unlocked" }
   | { type: "order.submitted"; lines: OrderLine[]; units: number; total: number }
   | { type: "order.delivered"; units: number; skus: number }
   | { type: "otc.priceChanged"; skuId: string; multiplier: number }
   | { type: "loan.changed"; bank: number; family: number }
+  // --- Staff (§9, milestone 07) ---
+  | { type: "staff.hired"; member: StaffMember }
+  | { type: "staff.fired"; id: string; name: string }
+  | { type: "staff.assigned"; id: string; stationId: string | null }
+  /** Monday morning: a fresh set of applications on the counter (§9). */
+  | { type: "staff.poolRefreshed"; day: number }
   // --- App shell (§23, milestone 06) ---
   | { type: "settings.changed"; settings: GameSettings }
   | { type: "dev.stress"; mult: number };

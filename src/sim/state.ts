@@ -2,6 +2,7 @@
 
 import { DAY_START_IGM } from "../core/clock";
 import type { Rot } from "../core/grid";
+import type { HiringPool, StaffMember } from "./staff";
 
 export type DayPhase = "morning" | "shift" | "close";
 export type GameSpeed = 0 | 1 | 2;
@@ -60,6 +61,8 @@ export interface StoreState {
   /** Reorder rules stay hidden until the first stock-out (§11 teach-by-need). */
   reorderUnlocked: boolean;
   reorderRules: Record<string, ReorderRule>;
+  /** The roster (§9, §24). Wages post per member at close (§10). */
+  staff: StaffMember[];
 }
 
 /** One §15 reputation reason tallied for the receipt. */
@@ -128,6 +131,8 @@ export interface GameState {
   licenses: string[];
   era: 1 | 2 | 3 | 4;
   store: StoreState;
+  /** This week's job applications, redrawn Monday mornings (§9). */
+  hiring: HiringPool;
   /** Register the player is personally working, or null (§8: workHere). */
   workingStationId: string | null;
   dayStats: DayStats;
@@ -249,6 +254,12 @@ export function createGameState(): GameState {
       gross7d: [],
       reorderUnlocked: false,
       reorderRules: {},
+      staff: [],
+    },
+    hiring: {
+      seed: Math.floor(Math.random() * 0x7fffffff),
+      refreshedOnDay: 0,
+      candidates: [],
     },
     workingStationId: null,
     dayStats: emptyDayStats(cash),

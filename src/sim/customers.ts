@@ -28,6 +28,7 @@ import {
   takeShelved,
 } from "./inventory";
 import { backroomZone } from "./placement";
+import type { StaffSystem, StationWorker } from "./staffSystem";
 import type { GameState, PlacedFurniture } from "./state";
 import type { RxWorkflow } from "./workflow";
 
@@ -160,6 +161,7 @@ const REP_WALKOUT = -0.06;
 const REP_WALKOUT_HURRIED = -0.09;
 const REP_REFUSED = -0.08; // §15 unfillable script (stock-out)
 const REP_ERROR = -0.15; // §15 dispensed error
+const REP_CHARMING = 0.01; // §9 Charming trait, per counsel or checkout
 
 /** Receipt copy for §15 reasons — action names stay identical everywhere (§28). */
 export const REP_REASONS = {
@@ -169,6 +171,7 @@ export const REP_REASONS = {
   refused: "Scripts refused",
   error: "Dispensing errors",
   familyLoan: "Family loan",
+  charming: "Charming touch",
   drift: "Word settles",
 } as const;
 
@@ -245,6 +248,10 @@ export class CustomerSystem {
   private arrivalIdx = 0;
   private stressLevel = 0; // 0..3 → ×1 / ×3 / ×9 / ×27 spawn multiplier
   private pathScratch: number[] = [];
+  /** Bound after construction (Sim wires the two systems together, §9). */
+  private staff: StaffSystem | null = null;
+  /** Charming counselor flags for chats in progress, by customer id. */
+  private counselCharm = new Set<number>();
 
   /** Dev/debug: cumulative archetype tally for share verification. */
   readonly archetypeCounts: Record<Archetype, number> = {
@@ -282,6 +289,39 @@ export class CustomerSystem {
 
   queueLength(stationId: string): number {
     return this.queues.get(stationId)?.length ?? 0;
+  }
+
+  /** Staffed-era wiring (§9): lets stations be manned by staff, not just
+   *  the player, and counsel chats find a stationed pharmacist. */
+  bindStaff(staff: StaffSystem): void {
+    this.staff = staff;
+  }
+
+  /** True when this cell is one of any queue line's standing slots. */
+  isQueueCell(cell: number): boolean {
+    for (const slots of this.queueSlots.values()) {
+      if (slots.includes(cell)) return true;
+    }
+    return false;
+  }
+
+  /** True while someone is mid-checkout at this station — a worker walking
+   *  off mid-serve wastes the customer's progress, so staff finish first. */
+  frontIsPaying(stationId: string): boolean {
+    if (this.queues.get(stationId)?.[0]?.mode === "pay") return true;
+    return (
+      this.queues.get(CustomerSystem.dropLaneId(stationId))?.[0]?.mode === "pay" ||
+      this.queues.get(CustomerSystem.pickLaneId(stationId))?.[0]?.mode === "pay"
+    );
+  }
+
+  /** Whoever is behind this station: the player (base speed), a staffer
+   *  (their §26 speed curve × trait), or nobody. */
+  private stationWorker(state: GameState, stationId: string): StationWorker | null {
+    if (state.workingStationId === stationId && !state.buildMode) {
+      return { mult: 1, charming: false };
+    }
+    return this.staff?.workerAt(stationId) ?? null;
   }
 
   // --- Day scheduling (§7, §17, §26) ---
@@ -652,22 +692,23 @@ export class CustomerSystem {
     }
   }
 
-  /** Register service (§8, §26): 4 igm per checkout while the player works. */
+  /** Register service (§8, §26): 4 igm per checkout — the player's hands or
+   *  a cashier's (×their speed curve). */
   private serveRegisters(state: GameState, dIgm: number, emit: Emit): void {
     for (const [regId, q] of this.queues) {
       if (regId.includes("#")) continue; // counter lanes live in serveCounters
       const front = q[0];
       if (!front) continue;
-      const working = state.workingStationId === regId && !state.buildMode;
-      if (!working) {
-        if (front.mode === "pay") front.mode = "queue"; // player stepped away
+      const worker = this.stationWorker(state, regId);
+      if (!worker) {
+        if (front.mode === "pay") front.mode = "queue"; // the till went dark
         continue;
       }
       const slot0 = this.queueSlots.get(regId)?.[0];
       if (slot0 === undefined) continue;
       if (front.mode === "queue" && this.atCell(front, slot0)) {
         front.mode = "pay";
-        if (front.serveLeft <= 0) front.serveLeft = CHECKOUT_IGM;
+        if (front.serveLeft <= 0) front.serveLeft = CHECKOUT_IGM * worker.mult;
         // Face the counter while paying.
         const reg = state.store.furniture.find((f) => f.id === regId);
         if (reg) {
@@ -683,35 +724,38 @@ export class CustomerSystem {
   }
 
   /**
-   * Service counter (§8): the player works drop-offs and pickups by hand,
-   * one patient at a time. Pickup lane first — they have waited the longest.
+   * Service counter (§8): the player or a cashier works drop-offs and
+   * pickups, one patient at a time. Pickup lane first — they have waited
+   * the longest.
    */
   private serveCounters(state: GameState, dIgm: number, emit: Emit): void {
     for (const counter of state.store.furniture) {
       if (counter.defId !== "counter_service") continue;
-      const working = state.workingStationId === counter.id && !state.buildMode;
+      const worker = this.stationWorker(state, counter.id);
       const lanes = [
         CustomerSystem.pickLaneId(counter.id),
         CustomerSystem.dropLaneId(counter.id),
       ];
 
-      if (!working) {
+      if (!worker) {
         for (const laneId of lanes) {
           const front = this.queues.get(laneId)?.[0];
           if (!front || front.mode !== "pay") continue;
           if (front.counseling) {
             // Counsel cut short — the bag is already handed over; they go.
             front.counseling = false;
+            this.counselCharm.delete(front.id);
+            this.staff?.endCounsel(counter.id);
             this.leaveQueueStructures(front);
             this.beginLeave(front, false);
           } else {
-            front.mode = "queue"; // player stepped away
+            front.mode = "queue"; // whoever was serving stepped away
           }
         }
         continue;
       }
 
-      // One pharmacist: continue whoever is mid-serve, else start with pickup.
+      // One pair of hands: continue whoever is mid-serve, else start with pickup.
       let serving: Customer | null = null;
       let servingLane = "";
       for (const laneId of lanes) {
@@ -732,7 +776,8 @@ export class CustomerSystem {
           servingLane = laneId;
           front.mode = "pay";
           if (front.serveLeft <= 0) {
-            front.serveLeft = laneId.endsWith("#pick") ? CHECKOUT_IGM : DROPOFF_IGM;
+            front.serveLeft =
+              (laneId.endsWith("#pick") ? CHECKOUT_IGM : DROPOFF_IGM) * worker.mult;
           }
           const [fx, fy] = FACING[counter.rot]!;
           front.yaw = Math.atan2(-fx, -fy);
@@ -797,9 +842,16 @@ export class CustomerSystem {
       post(state, "otc.sale", basketTotal, emit);
     }
     let cashDelta = COPAY + drug.reimbursement + basketTotal;
+    const counterId = c.laneId ? c.laneId.split("#")[0]! : null;
 
     const wrong = script.filledWithDrugId !== script.drugId;
-    const counseled = !wrong && c.archetype === "chatty";
+    // Chatty patients take the chat if a pharmacist can give it: the owner
+    // behind the counter, or a stationed one who isn't mid-verify (§8, §9).
+    let counsel: StationWorker | null = null;
+    if (!wrong && c.archetype === "chatty" && counterId) {
+      if (state.workingStationId === counterId) counsel = { mult: 1, charming: false };
+      else counsel = this.staff?.requestCounsel(state, counterId, COUNSEL_IGM) ?? null;
+    }
     if (wrong) {
       // §8 copy voice: an error is refunded, never depicted as harm.
       const refund = COPAY + drug.reimbursement;
@@ -810,18 +862,21 @@ export class CustomerSystem {
       emit({ type: "rx.errorDispensed", scriptId: script.id, refund });
     } else {
       applyRep(state, REP_SERVE, emit, REP_REASONS.serve);
+      const worker = counterId ? this.stationWorker(state, counterId) : null;
+      if (worker?.charming) applyRep(state, REP_CHARMING, emit, REP_REASONS.charming);
     }
 
-    emit({ type: "rx.pickedUp", scriptId: script.id, total: cashDelta, counseled });
+    emit({ type: "rx.pickedUp", scriptId: script.id, total: cashDelta, counseled: counsel !== null });
     this.workflow.finish(script, emit);
     c.scriptId = 0;
     c.basket.length = 0;
     c.hasBag = true;
 
-    if (counseled) {
-      // Chatty patients take the 10 igm counsel chat at the counter (§8).
+    if (counsel) {
+      // The 10 igm counsel chat at the counter (§8), at the counselor's pace.
       c.counseling = true;
-      c.serveLeft = COUNSEL_IGM;
+      c.serveLeft = COUNSEL_IGM * counsel.mult;
+      if (counsel.charming) this.counselCharm.add(c.id);
       return;
     }
     this.leaveQueueStructures(c);
@@ -831,6 +886,11 @@ export class CustomerSystem {
   private completeCounsel(state: GameState, c: Customer, emit: Emit): void {
     c.counseling = false;
     applyRep(state, REP_COUNSEL, emit, REP_REASONS.counsel);
+    if (this.counselCharm.delete(c.id)) {
+      applyRep(state, REP_CHARMING, emit, REP_REASONS.charming);
+    }
+    const counterId = c.laneId ? c.laneId.split("#")[0]! : null;
+    if (counterId) this.staff?.endCounsel(counterId);
     if (Math.random() < COUNSEL_BASKET_CHANCE) {
       post(state, "otc.sale", COUNSEL_BASKET_VALUE, emit);
     }
@@ -986,6 +1046,7 @@ export class CustomerSystem {
       c.chairId = null;
     }
     this.removeFromQueue(c);
+    this.counselCharm.delete(c.id);
     c.basket.length = 0;
     c.active = false;
     this.freeSlots.push(c.poolIndex);
@@ -1314,6 +1375,8 @@ export class CustomerSystem {
     post(state, "otc.sale", total, emit);
     emit({ type: "sale.completed", customerId: c.id, items: c.basket.length, total });
     applyRep(state, REP_SERVE, emit, REP_REASONS.serve); // happy serve (§15)
+    const worker = c.laneId ? this.stationWorker(state, c.laneId) : null;
+    if (worker?.charming) applyRep(state, REP_CHARMING, emit, REP_REASONS.charming);
     c.basket.length = 0;
     c.hasBag = true;
     this.leaveQueueStructures(c);

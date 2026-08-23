@@ -31,14 +31,19 @@
 //      reorderRules                                                  (M05)
 //    · settings{volume,sfx,ambience,reducedMotion}                   (M06)
 //
+//  Version 2 (milestone 07) adds the staffed era:
+//    · store.staff (roster, §9/§24) · hiring (weekly candidate pool + its
+//      per-save seed)                                                 (M07)
+//
 //  §24's fuller schema (worldSeed, stores[], competitors, patientPools, dc,
 //  aitech, legacy, stats) is not here because those systems do not exist yet.
-//  They arrive field-by-field with the milestones that own them — 07 staff,
+//  They arrive field-by-field with the milestones that own them —
 //  08 licenses/expansion, 09 cold chain, 10 legacy, 12 city, 13 competitors,
 //  14 branches, 15 logistics, 16 AI tech — each with its own migrate step.
 //  Season is derived from `day` (§5), never stored.
 // ===========================================================================
 
+import type { HiringPool, StaffMember } from "./staff";
 import {
   defaultSettings,
   type DayPhase,
@@ -48,7 +53,7 @@ import {
   type StoreState,
 } from "./state";
 
-export const SAVE_VERSION = 1;
+export const SAVE_VERSION = 2;
 
 export interface SaveFile {
   version: number;
@@ -61,6 +66,7 @@ export interface SaveFile {
   licenses: string[];
   era: 1 | 2 | 3 | 4;
   store: StoreState;
+  hiring: HiringPool;
   dayStats: DayStats;
   settings: GameSettings;
 }
@@ -70,10 +76,22 @@ type RawSave = Record<string, unknown>;
 
 /**
  * Stepwise migrations. `MIGRATIONS[n - 1]` upgrades a version-`n` file to
- * version `n + 1`; the chain runs until the file reaches SAVE_VERSION. Empty
- * at version 1 — the identity chain — and one step longer per schema change.
+ * version `n + 1`; the chain runs until the file reaches SAVE_VERSION.
  */
-const MIGRATIONS: readonly ((file: RawSave) => RawSave)[] = [];
+const MIGRATIONS: readonly ((file: RawSave) => RawSave)[] = [
+  // 1 → 2 (milestone 07): the solo era had no staff. The roster starts empty
+  // and the hiring pool unrefreshed — the first morning after loading draws
+  // the week's candidates.
+  (file) => {
+    (file.store as RawSave).staff = [];
+    file.hiring = {
+      seed: Math.floor(Math.random() * 0x7fffffff),
+      refreshedOnDay: 0,
+      candidates: [],
+    } satisfies HiringPool;
+    return file;
+  },
+];
 
 // --- Deep copies: a save must never alias live state, and a hydrated state
 //     must never alias the file it came from. ---
@@ -100,6 +118,21 @@ function copyStore(store: StoreState): StoreState {
     gross7d: [...store.gross7d],
     reorderUnlocked: store.reorderUnlocked,
     reorderRules: copyMap(store.reorderRules, (rule) => ({ ...rule })),
+    staff: store.staff.map(copyStaffMember),
+  };
+}
+
+function copyStaffMember(member: StaffMember): StaffMember {
+  const copy: StaffMember = { ...member };
+  if (member.assignment) copy.assignment = { ...member.assignment };
+  return copy;
+}
+
+function copyHiring(hiring: HiringPool): HiringPool {
+  return {
+    seed: hiring.seed,
+    refreshedOnDay: hiring.refreshedOnDay,
+    candidates: hiring.candidates.map((candidate) => ({ ...candidate })),
   };
 }
 
@@ -143,6 +176,7 @@ export function serialize(state: GameState): SaveFile {
     licenses: [...state.licenses],
     era: state.era,
     store: copyStore(state.store),
+    hiring: copyHiring(state.hiring),
     dayStats: copyDayStats(state.dayStats),
     settings: { ...state.settings },
   };
@@ -162,6 +196,7 @@ export function hydrate(file: SaveFile): GameState {
     licenses: [...file.licenses],
     era: file.era,
     store: copyStore(file.store),
+    hiring: copyHiring(file.hiring),
     workingStationId: null,
     dayStats: copyDayStats(file.dayStats),
     settings: { ...defaultSettings(), ...file.settings },
@@ -200,9 +235,12 @@ function validate(file: RawSave): SaveFile {
   for (const key of ["stock", "shelfSlots", "otcPricing", "salesToday", "reorderRules"]) {
     requireObject(store[key], `store ${key}`);
   }
-  for (const key of ["furniture", "inbound", "salesLog", "fillRate7d", "gross7d"]) {
+  for (const key of ["furniture", "inbound", "salesLog", "fillRate7d", "gross7d", "staff"]) {
     requireArray(store[key], `store ${key}`);
   }
+
+  const hiring = requireObject(file.hiring, "hiring pool");
+  requireArray(hiring.candidates, "hiring candidates");
 
   const stats = requireObject(file.dayStats, "day totals");
   for (const key of ["ledger", "stockOuts", "balks", "repReasons"]) {

@@ -20,6 +20,7 @@ const STATION_NAMES: Record<string, string> = {
   counter_register: "register",
   counter_service: "counter",
   fill_bench: "fill bench",
+  verify_desk: "verify desk",
 };
 
 /** Fixtures a click restocks from the backroom (§11). */

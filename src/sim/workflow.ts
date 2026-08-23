@@ -1,13 +1,17 @@
 // Prescription workflow (SPEC §8, §24, §26): RxScript cards moving
 // dropoff → fillQueue → filling → verifyQueue → verifying → ready → done.
-// Solo era: the player fills at the bench by picking the right bin among
-// confusable neighbors; with no verify desk, verification is implicit at
-// handoff with a 90% catch. Pure sim — no DOM, no three.js.
+// The player fills at the bench by picking the right bin among confusable
+// neighbors; techs fill probabilistically (claimFill/finishStaffFill, §26
+// error table). With a manned verify desk the verify stages are real —
+// pharmacists (or the player at the desk) check filled scripts and bounce
+// caught errors back to the fill queue; with no verifier, verification is
+// implicit at handoff with the owner's 90% catch. Pure sim — no DOM.
 
 import { IGM_PER_TICK } from "../core/clock";
 import { DRUG_DEFS, TIER1_DRUGS, drugDef, type DrugDef } from "../data/drugs";
 import type { SimEvent } from "./events";
 import { returnShelved, takeShelved } from "./inventory";
+import { OWNER_CATCH_RATE } from "./staff";
 import type { GameState } from "./state";
 
 export type RxStage =
@@ -32,8 +36,8 @@ export interface RxScript {
 
 type Emit = (event: SimEvent) => void;
 
-const FILL_IGM = 6; // §26 task durations
-const SOLO_CATCH_RATE = 0.9; // §26 solo-owner implicit catch
+export const FILL_IGM = 6; // §26 task durations
+export const VERIFY_IGM = 8;
 export const BIN_ROWS = 4; // shelf bin face (render/meshes/furniture.ts)
 export const BIN_COLS = 3;
 
@@ -56,15 +60,10 @@ function drawTier1Drug(): DrugDef {
   return TIER1_DRUGS[TIER1_DRUGS.length - 1]!;
 }
 
-/**
- * Bin layout for one fill: 12 drug ids over the shelf's 4×3 face. The correct
- * bin's confusables (both directions of §25 `confusableWith`, padded with
- * same-category look-alikes up to 3) are always placed orthogonally adjacent,
- * shuffled each script; the rest is a Tier-1 spread.
- */
-export function generateBins(correctId: string): string[] {
+/** Look-alike ids for a drug: §25 `confusableWith` both ways, padded with
+ *  same-category neighbors up to 3 — the bins a hand reaches past. */
+export function confusableNeighbors(correctId: string): string[] {
   const correct = drugDef(correctId);
-
   const confusables: string[] = [...(correct.confusableWith ?? [])];
   for (const def of DRUG_DEFS) {
     if (def.confusableWith?.includes(correct.id) && !confusables.includes(def.id)) {
@@ -79,7 +78,16 @@ export function generateBins(correctId: string): string[] {
         !confusables.includes(def.id),
     ).map((def) => def.id),
   );
-  const neighbors = [...confusables, ...sameCategory].slice(0, 3);
+  return [...confusables, ...sameCategory].slice(0, 3);
+}
+
+/**
+ * Bin layout for one fill: 12 drug ids over the shelf's 4×3 face. The correct
+ * bin's confusables are always placed orthogonally adjacent, shuffled each
+ * script; the rest is a Tier-1 spread.
+ */
+export function generateBins(correctId: string): string[] {
+  const neighbors = confusableNeighbors(correctId);
 
   // Cells with enough orthogonal room for every required neighbor.
   const cellCount = BIN_ROWS * BIN_COLS;
@@ -100,7 +108,7 @@ export function generateBins(correctId: string): string[] {
   const correctCell = candidates[Math.floor(Math.random() * candidates.length)]!;
 
   const bins = new Array<string>(cellCount).fill("");
-  bins[correctCell] = correct.id;
+  bins[correctCell] = correctId;
   const slots = shuffle(adjacentOf(correctCell));
   neighbors.forEach((id, i) => {
     bins[slots[i]!] = id;
@@ -117,14 +125,41 @@ export function generateBins(correctId: string): string[] {
 export class RxWorkflow {
   private scripts = new Map<number, RxScript>();
   private fillQueue: number[] = [];
+  private verifyQueue: number[] = [];
+  /** Player's fill in progress at the bench, or null. */
   private fillingId: number | null = null;
   /** <0 = waiting on a bin pick; ≥0 = igm left on the fill animation. */
   private fillLeft = -1;
+  /** Player's verify in progress at the desk, or null. */
+  private playerVerifyId: number | null = null;
+  private playerVerifyLeft = 0;
+  /** True while a verifier is on duty (§8): filled scripts route to the desk
+   *  instead of the implicit handoff check. Sim keeps this current. */
+  private verifierActive = false;
   private nextScriptId = 1;
 
-  /** Scripts waiting for (or on) the bench — the bench's stage stack. */
+  /** Scripts a bench worker could claim right now (§9 task AI). */
+  get fillQueueLength(): number {
+    return this.fillQueue.length;
+  }
+
+  /** Scripts a verifier could claim right now (§9 task AI). */
+  get verifyQueueLength(): number {
+    return this.verifyQueue.length;
+  }
+
+  /** Scripts waiting for (or on) a bench — the fill stage stack. */
   get fillDepth(): number {
-    return this.fillQueue.length + (this.fillingId !== null ? 1 : 0);
+    let n = this.fillQueue.length;
+    for (const script of this.scripts.values()) if (script.stage === "filling") n++;
+    return n;
+  }
+
+  /** Scripts waiting for (or under) the verify desk's lamp. */
+  get verifyDepth(): number {
+    let n = this.verifyQueue.length;
+    for (const script of this.scripts.values()) if (script.stage === "verifying") n++;
+    return n;
   }
 
   get readyCount(): number {
@@ -171,13 +206,141 @@ export class RxWorkflow {
     return true;
   }
 
-  /** Reconcile the fill interaction with wherever the player is working. */
+  // --- Verifier routing (§8: the desk becomes real in the staffed era) ---
+
+  /**
+   * A verifier is "on duty" while the player works a desk or a pharmacist is
+   * assigned to one — scripts queue for them even mid-walk. When the duty
+   * ends, the pile drains through the owner's implicit handoff check.
+   */
+  setVerifier(state: GameState, active: boolean, emit: Emit): void {
+    if (this.verifierActive === active) return;
+    this.verifierActive = active;
+    if (!active) this.flushVerifyImplicit(state, emit);
+  }
+
+  /** Filled script leaves a bench: to the desk, or the implicit check. */
+  private routeFilled(state: GameState, script: RxScript, emit: Emit): void {
+    if (this.verifierActive) {
+      script.stage = "verifyQueue";
+      this.verifyQueue.push(script.id);
+      emit({ type: "rx.stageChanged", scriptId: script.id, stage: script.stage });
+      return;
+    }
+    this.resolveVerdict(state, script, OWNER_CATCH_RATE, emit);
+  }
+
+  /** Verification outcome: a caught error bounces to the fill queue (time
+   *  cost, no rep loss); everything else is bagged and ready (§8). */
+  private resolveVerdict(
+    state: GameState,
+    script: RxScript,
+    catchRate: number,
+    emit: Emit,
+  ): void {
+    const wrong = script.filledWithDrugId !== script.drugId;
+    if (wrong && Math.random() < catchRate) {
+      script.filledWithDrugId = null;
+      script.stage = "fillQueue";
+      this.fillQueue.unshift(script.id);
+      emit({ type: "rx.caught", scriptId: script.id });
+      emit({ type: "rx.stageChanged", scriptId: script.id, stage: script.stage });
+    } else {
+      script.stage = "ready";
+      emit({ type: "rx.ready", scriptId: script.id });
+      emit({ type: "rx.stageChanged", scriptId: script.id, stage: script.stage });
+    }
+    this.syncStation(state, emit);
+  }
+
+  /** The desk went dark: the owner glances over the pile at handoff (§8). */
+  private flushVerifyImplicit(state: GameState, emit: Emit): void {
+    if (this.playerVerifyId !== null) this.releaseVerify(this.playerVerifyId, emit);
+    const queued = this.verifyQueue.splice(0);
+    for (const id of queued) {
+      const script = this.scripts.get(id);
+      if (script) this.resolveVerdict(state, script, OWNER_CATCH_RATE, emit);
+    }
+  }
+
+  // --- Staff claims (§9 task AI): techs fill, pharmacists verify ---
+
+  /** A tech at a bench takes the top script. No card, no bins — their hands
+   *  are trusted to the §26 error table instead. */
+  claimFill(emit: Emit): RxScript | null {
+    const id = this.fillQueue.shift();
+    if (id === undefined) return null;
+    const script = this.scripts.get(id)!;
+    script.stage = "filling";
+    emit({ type: "rx.stageChanged", scriptId: script.id, stage: script.stage });
+    return script;
+  }
+
+  /** Tech fill done: roll the §26 mis-pick, then route to verification. */
+  finishStaffFill(state: GameState, scriptId: number, errorRate: number, emit: Emit): void {
+    const script = this.scripts.get(scriptId);
+    if (!script || script.stage !== "filling") return;
+    let filledId = script.drugId;
+    if (Math.random() < errorRate) {
+      const neighbors = confusableNeighbors(script.drugId);
+      if (neighbors.length > 0) {
+        filledId = neighbors[Math.floor(Math.random() * neighbors.length)]!;
+      }
+    }
+    script.filledWithDrugId = filledId;
+    this.routeFilled(state, script, emit);
+  }
+
+  /** Interrupted mid-fill (player takeover, firing): back on top of the pile. */
+  releaseFill(scriptId: number, emit: Emit): void {
+    const script = this.scripts.get(scriptId);
+    if (!script || script.stage !== "filling" || this.fillingId === scriptId) return;
+    script.filledWithDrugId = null;
+    script.stage = "fillQueue";
+    this.fillQueue.unshift(scriptId);
+    emit({ type: "rx.stageChanged", scriptId, stage: script.stage });
+  }
+
+  /** A verifier takes the next filled script under the lamp. */
+  claimVerify(emit: Emit): RxScript | null {
+    const id = this.verifyQueue.shift();
+    if (id === undefined) return null;
+    const script = this.scripts.get(id)!;
+    script.stage = "verifying";
+    emit({ type: "rx.stageChanged", scriptId: script.id, stage: script.stage });
+    return script;
+  }
+
+  /** Verification done at the given catch rate (§26 by accuracy; owner 90%). */
+  finishVerify(state: GameState, scriptId: number, catchRate: number, emit: Emit): void {
+    const script = this.scripts.get(scriptId);
+    if (!script || script.stage !== "verifying") return;
+    if (this.playerVerifyId === scriptId) this.playerVerifyId = null;
+    this.resolveVerdict(state, script, catchRate, emit);
+  }
+
+  /** Interrupted mid-verify: back on top of the desk's pile. */
+  releaseVerify(scriptId: number, emit: Emit): void {
+    const script = this.scripts.get(scriptId);
+    if (this.playerVerifyId === scriptId) this.playerVerifyId = null;
+    if (!script || script.stage !== "verifying") return;
+    script.stage = "verifyQueue";
+    this.verifyQueue.unshift(scriptId);
+    emit({ type: "rx.stageChanged", scriptId, stage: script.stage });
+  }
+
+  // --- The player's own hands (§8) ---
+
+  /** Reconcile the fill/verify interactions with wherever the player works. */
   syncStation(state: GameState, emit: Emit): void {
     const station = state.store.furniture.find((f) => f.id === state.workingStationId);
     if (station?.defId === "fill_bench" && !state.buildMode) {
       this.takeNext(state, emit);
     } else if (this.fillingId !== null) {
       this.abortFilling(state, emit);
+    }
+    if (!(station?.defId === "verify_desk" && !state.buildMode) && this.playerVerifyId !== null) {
+      this.releaseVerify(this.playerVerifyId, emit);
     }
   }
 
@@ -242,8 +405,13 @@ export class RxWorkflow {
     emit({ type: "rx.binPicked", scriptId: script.id });
   }
 
-  /** Advance the fill animation; resolve implicit verification at its end. */
+  /** Advance the player's fill animation and desk work. */
   tick(state: GameState, emit: Emit): void {
+    this.tickPlayerFill(state, emit);
+    this.tickPlayerVerify(state, emit);
+  }
+
+  private tickPlayerFill(state: GameState, emit: Emit): void {
     if (this.fillingId === null || this.fillLeft < 0) return;
     this.fillLeft -= IGM_PER_TICK;
     if (this.fillLeft > 0) return;
@@ -252,22 +420,22 @@ export class RxWorkflow {
     this.fillingId = null;
     this.fillLeft = -1;
     emit({ type: "rx.fillEnded", scriptId: script.id });
+    this.routeFilled(state, script, emit);
+  }
 
-    // Solo era: verifyQueue/verifying collapse into an implicit handoff
-    // check (§8) — a pharmacist at a desk owns these stages from M07.
-    const wrong = script.filledWithDrugId !== script.drugId;
-    if (wrong && Math.random() < SOLO_CATCH_RATE) {
-      script.filledWithDrugId = null;
-      script.stage = "fillQueue";
-      this.fillQueue.unshift(script.id);
-      emit({ type: "rx.caught", scriptId: script.id });
-      emit({ type: "rx.stageChanged", scriptId: script.id, stage: script.stage });
-    } else {
-      script.stage = "ready";
-      emit({ type: "rx.ready", scriptId: script.id });
-      emit({ type: "rx.stageChanged", scriptId: script.id, stage: script.stage });
+  /** The owner at the desk checks scripts by hand: 8 igm each, 90% (§26). */
+  private tickPlayerVerify(state: GameState, emit: Emit): void {
+    const station = state.store.furniture.find((f) => f.id === state.workingStationId);
+    if (station?.defId !== "verify_desk" || state.buildMode) return;
+    if (this.playerVerifyId === null) {
+      const script = this.claimVerify(emit);
+      if (!script) return;
+      this.playerVerifyId = script.id;
+      this.playerVerifyLeft = VERIFY_IGM;
     }
-    this.syncStation(state, emit);
+    this.playerVerifyLeft -= IGM_PER_TICK;
+    if (this.playerVerifyLeft > 0) return;
+    this.finishVerify(state, this.playerVerifyId!, OWNER_CATCH_RATE, emit);
   }
 
   /** Script handed over at pickup; the customer system settles the money. */
@@ -284,11 +452,16 @@ export class RxWorkflow {
     if (script.stage !== "dropoff") returnShelved(state.store, script.drugId);
     const queued = this.fillQueue.indexOf(scriptId);
     if (queued !== -1) this.fillQueue.splice(queued, 1);
+    const verifying = this.verifyQueue.indexOf(scriptId);
+    if (verifying !== -1) this.verifyQueue.splice(verifying, 1);
     if (this.fillingId === scriptId) {
       this.fillingId = null;
       this.fillLeft = -1;
       emit({ type: "rx.fillEnded", scriptId });
     }
+    if (this.playerVerifyId === scriptId) this.playerVerifyId = null;
+    // A staff member holding this script notices it is gone on their next
+    // tick — `script()` returns undefined and they drop the task.
     this.scripts.delete(scriptId);
     emit({ type: "rx.cancelled", scriptId });
     this.syncStation(state, emit);

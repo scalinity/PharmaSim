@@ -1718,6 +1718,404 @@ html.app-shell .topbar {
   color: var(--rose);
 }
 
+/* ---- Role glyph: who's stationed where ($ rings · ℞ fills · ✓ verifies) ---- */
+
+.rglyph {
+  position: fixed;
+  top: 0;
+  left: 0;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  background: var(--pine);
+  border: 1.5px solid var(--paper);
+  border-radius: 50%;
+  box-shadow: var(--chip-shadow);
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  font-weight: var(--w-semibold);
+  color: var(--paper);
+  pointer-events: none;
+  will-change: transform;
+}
+
+/* ---- Team: the personnel folder (§9, §28) ---- */
+
+.team {
+  position: absolute;
+  top: 68px;
+  bottom: 76px;
+  left: 12px;
+  width: min(760px, calc(100% - 24px));
+  z-index: 15;
+  pointer-events: none;
+}
+
+.teamp {
+  height: 100%;
+  pointer-events: auto;
+}
+
+.teamp .panel__inner {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding: 14px 0 0;
+}
+
+.teamp__top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 20px;
+}
+
+.teamp__eyebrow {
+  margin: 0 0 2px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-75);
+}
+
+.teamp .panel__title {
+  margin: 0 0 10px;
+}
+
+.teamp__payroll {
+  padding: 3px 10px;
+  border: 1.5px solid var(--ink);
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.teamp__body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 8px;
+}
+
+.teamp__section {
+  padding: 16px 20px 6px;
+}
+
+.teamp__sectitle {
+  margin: 0;
+  padding-bottom: 3px;
+  border-bottom: 1px dashed var(--ink-25);
+  font-family: var(--font-display);
+  font-size: var(--fs-14);
+  font-weight: var(--w-semibold);
+}
+
+/* Empty-state slip: a note where a person should be (§28 copy voice). */
+.teamp__slip {
+  margin: 4px 20px 6px;
+  padding: 9px 12px;
+  background: rgba(32, 48, 43, 0.04);
+  border: 1px dashed var(--ink-60);
+  font-size: var(--fs-12);
+  line-height: 1.45;
+  color: var(--ink-75);
+}
+
+.teamp__hint,
+.teamp__note {
+  margin: 2px 20px 6px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--ink-75);
+}
+
+.teamp__note {
+  margin-top: 12px;
+  font-size: var(--fs-12);
+}
+
+.teamp__foot {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 12px 20px 14px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+}
+
+.teamp__dots {
+  flex: 1;
+  border-bottom: 1.5px dotted var(--ink-25);
+  transform: translateY(-3px);
+}
+
+.teamp__footnum {
+  font-weight: var(--w-semibold);
+}
+
+/* ---- File-folder tabs (§28 kit) ---- */
+
+.tabs {
+  display: flex;
+  gap: 6px;
+  padding: 6px 20px 0;
+  border-bottom: 1.5px solid var(--ink);
+}
+
+.tabs__tab {
+  margin-bottom: -1.5px;
+  padding: 8px 18px 7px;
+  background: rgba(32, 48, 43, 0.08);
+  clip-path: polygon(7px 0, calc(100% - 7px) 0, 100% 100%, 0 100%);
+  font-size: var(--fs-14);
+  font-weight: var(--w-semibold);
+  color: var(--ink-75);
+  transition: background-color var(--dur-fast) var(--ease-out);
+}
+
+.tabs__tab:hover {
+  background: rgba(32, 48, 43, 0.13);
+}
+
+/* The active tab is the open folder: it joins the sheet below. */
+.tabs__tab--active,
+.tabs__tab--active:hover {
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: 0 1.5px 0 var(--paper), inset 0 2.5px 0 var(--pine);
+}
+
+/* ---- Meter: blister-pack pips (§28 kit) ---- */
+
+.meter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.meter__label {
+  width: 62px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-75);
+}
+
+.meter__pips {
+  display: inline-flex;
+  gap: 3px;
+  padding: 3px 5px;
+  background: rgba(32, 48, 43, 0.05);
+  border: 1px solid var(--ink-25);
+  border-radius: 999px;
+}
+
+.meter__pip {
+  display: block;
+  width: 8px;
+  height: 8px;
+  border: 1px solid var(--ink-25);
+  border-radius: 50%;
+}
+
+.meter__pip--in {
+  background: var(--pine);
+  border-color: var(--pine);
+  box-shadow: inset 0 -2px 1px rgba(32, 48, 43, 0.3);
+}
+
+/* ---- Roster rows ---- */
+
+.srow {
+  padding: 9px 20px 10px;
+  border-bottom: 1px solid rgba(32, 48, 43, 0.08);
+}
+
+.srow__head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  align-items: center;
+  gap: 10px;
+}
+
+.srow__name {
+  overflow: hidden;
+  font-family: var(--font-display);
+  font-size: var(--fs-16);
+  font-weight: var(--w-semibold);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.srow__wage {
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+}
+
+.srow__assign {
+  height: 28px;
+  padding: 0 6px;
+  background: var(--paper);
+  border: 1.5px solid var(--ink);
+  border-radius: 3px;
+  font-family: var(--font-ui);
+  font-size: var(--fs-12);
+  color: var(--ink);
+}
+
+.srow__fire {
+  border-color: var(--rose);
+  color: var(--rose);
+}
+
+.srow__detail {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 18px;
+  margin-top: 7px;
+}
+
+/* Trait: a label sticker stuck slightly crooked. */
+.trait {
+  display: inline-flex;
+  flex-direction: column;
+  padding: 3px 9px 4px;
+  background: rgba(231, 160, 60, 0.16);
+  border: 1px dashed var(--ink-60);
+  transform: rotate(-0.8deg);
+}
+
+.trait__name {
+  font-size: 11px;
+  font-weight: var(--w-bold);
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.trait__note {
+  font-size: 10px;
+  line-height: 1.3;
+  color: var(--ink-75);
+}
+
+/* ---- Applications: index cards on the counter ---- */
+
+.acards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  padding: 10px 20px 14px;
+}
+
+.acard {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 7px;
+  padding: 10px 14px 12px;
+  background: var(--paper-gen1);
+  border: 1px solid var(--ink-25);
+  box-shadow: var(--chip-shadow);
+  transform: rotate(-0.7deg);
+}
+
+.acard--tilt {
+  transform: rotate(0.8deg);
+}
+
+/* The index card's printed head rule. */
+.acard__rule {
+  align-self: stretch;
+  height: 2px;
+  margin-bottom: 1px;
+  background: var(--rose);
+  opacity: 0.65;
+}
+
+.acard__role {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-75);
+}
+
+.acard__name {
+  margin: 0 0 2px;
+  font-family: var(--font-display);
+  font-size: var(--fs-20);
+  font-weight: var(--w-semibold);
+  line-height: 1.1;
+}
+
+.acard .meters {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.acard__wage {
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  font-weight: var(--w-semibold);
+}
+
+.acard__base {
+  margin-right: 2px;
+  font-weight: var(--w-regular);
+  color: var(--ink-60);
+}
+
+.acard__hire {
+  margin-top: 2px;
+}
+
+/* The slot a hired card left behind. */
+.acard--gone {
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  min-height: 170px;
+  background: transparent;
+  border-style: dashed;
+  box-shadow: none;
+  transform: none;
+}
+
+.acard__gonemark {
+  padding: 2px 12px;
+  border: 2.5px solid var(--ink-25);
+  border-radius: 4px;
+  font-size: var(--fs-14);
+  font-weight: var(--w-bold);
+  letter-spacing: 0.22em;
+  text-indent: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink-25);
+  transform: rotate(-7deg);
+}
+
+.acard__gonenote {
+  margin: 0;
+  font-size: 11px;
+  color: var(--ink-60);
+}
+
+.srow .meters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 14px;
+}
+
 /* ---- Receipt: family-loan stamp + Aunt Rosa's note ---- */
 
 .rcpt__stamp--family {

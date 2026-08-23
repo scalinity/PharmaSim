@@ -38,7 +38,7 @@ and is only used when a milestone brief calls for it.
 - [x] 04 Prescription vertical slice
 - [x] 05 Inventory + economy
 - [x] 06 Saves + app shell
-- [ ] 07 Staff + automation
+- [x] 07 Staff + automation
 - [ ] 08 Licenses + expansion
 - [ ] 09 Cold chain + vaccinations
 - [ ] 10 Modernization + legacy

@@ -15,6 +15,8 @@ import {
   validatePlacement,
   type PlacementCheck,
 } from "./placement";
+import { refreshHiringPool } from "./staff";
+import { StaffSystem } from "./staffSystem";
 import { createGameState, type GameState } from "./state";
 import { RxWorkflow } from "./workflow";
 
@@ -24,6 +26,7 @@ const REP_FAMILY_LOAN = -0.3;
 export class Sim {
   readonly customers: CustomerSystem;
   readonly workflow: RxWorkflow;
+  readonly staff: StaffSystem;
   private state: GameState;
   private lastEmittedMinute: number;
   private emit: (event: SimEvent) => void;
@@ -38,6 +41,10 @@ export class Sim {
     this.emit = (event) => this.bus.emit(event);
     this.workflow = new RxWorkflow();
     this.customers = new CustomerSystem(this.state, this.workflow);
+    this.staff = new StaffSystem(this.state, this.workflow, this.customers);
+    this.customers.bindStaff(this.staff);
+    // New games and freshly migrated saves start with an undrawn pool (§9).
+    refreshHiringPool(this.state);
   }
 
   /** Read-only view of the state for HUD rendering. Never mutate through this. */
@@ -51,16 +58,27 @@ export class Sim {
       case "store.open":
         if (this.state.phase === "shift") this.customers.beginDay(this.state);
         break;
+      case "day.advance":
+        this.staff.beginDay(this.state);
+        break;
       case "furniture.place":
       case "furniture.move":
       case "furniture.sell":
         this.customers.layoutChanged(this.state, this.emit);
+        this.staff.layoutChanged(this.state);
         this.workflow.syncStation(this.state, this.emit);
         break;
       case "station.workHere":
       case "station.leave":
       case "build.enter":
+        // The displaced worker lets go of their script before the player's
+        // hands reach for the same queue.
+        this.staff.playerStationChanged(this.state, this.emit);
         this.workflow.syncStation(this.state, this.emit);
+        break;
+      case "staff.hire":
+      case "staff.fire":
+        this.staff.rosterChanged(this.state, this.emit);
         break;
       case "fill.pickBin":
         this.workflow.pickBin(command.drugId, this.emit);
@@ -116,6 +134,20 @@ export class Sim {
     return hasEmptySlot(this.state, furnitureId);
   }
 
+  /** A verifier is on duty when the player works a desk or a pharmacist is
+   *  stationed at one (§8: scripts queue for them, even mid-walk). */
+  private verifierOnDuty(): boolean {
+    const desks = this.state.store.furniture.filter((f) => f.defId === "verify_desk");
+    if (desks.length === 0) return false;
+    if (desks.some((d) => d.id === this.state.workingStationId)) return true;
+    return this.state.store.staff.some(
+      (m) =>
+        m.role === "pharmacist" &&
+        m.assignment &&
+        desks.some((d) => d.id === m.assignment!.stationId),
+    );
+  }
+
   /** Advance one fixed tick (100 ms scaled). Clock only moves during the shift. */
   tick(): void {
     if (this.state.buildMode) return;
@@ -133,6 +165,8 @@ export class Sim {
       }
     }
 
+    this.workflow.setVerifier(this.state, this.verifierOnDuty(), this.emit);
+    this.staff.tick(this.state, this.emit);
     this.customers.tick(this.state, this.emit);
     this.workflow.tick(this.state, this.emit);
 

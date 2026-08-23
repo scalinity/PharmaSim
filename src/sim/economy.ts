@@ -35,6 +35,7 @@ export const LEDGER_REASONS = [
   { id: "otc.sale", group: "revenue", label: "OTC sales" },
   { id: "refund", group: "revenue", label: "Refunds" },
   { id: "order", group: "cost", label: "Wholesale orders" },
+  { id: "wages", group: "cost", label: "Wages" },
   { id: "rent", group: "cost", label: "Rent" },
   { id: "utilities", group: "cost", label: "Utilities" },
   { id: "loan.interest", group: "cost", label: "Loan interest" },
@@ -275,6 +276,9 @@ export interface CloseSummary {
  * negative till back to +$2,500 — once, until it is repaid.
  */
 export function closeDay(state: GameState, emit: Emit): CloseSummary {
+  // §9/§26 wages, one line per person still on the roster. Anyone fired
+  // mid-shift was paid on the spot, so firing stops wages from tomorrow.
+  for (const member of state.store.staff) post(state, "wages", -member.dailyWage, emit);
   post(state, "rent", -rentCost(), emit);
   post(state, "utilities", -utilitiesCost(state), emit);
 

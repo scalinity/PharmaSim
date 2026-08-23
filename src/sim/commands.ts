@@ -23,6 +23,7 @@ import {
   restock,
 } from "./inventory";
 import { validatePlacement } from "./placement";
+import { refreshHiringPool, ROLE_STATIONS, type StaffMember } from "./staff";
 import { emptyDayStats, type GameState, type GameSpeed, type OrderLine } from "./state";
 
 export type Command =
@@ -47,14 +48,18 @@ export type Command =
   | { type: "reorder.setRule"; skuId: string; min: number; target: number }
   | { type: "loan.draw"; amount: number }
   | { type: "loan.repay"; amount: number }
+  // --- Staff (§9) ---
+  | { type: "staff.hire"; candidateId: string }
+  | { type: "staff.fire"; staffId: string }
+  | { type: "staff.assign"; staffId: string; stationId: string | null }
   // --- App shell (§23, §24) ---
   /** Reduced motion is the only live setting; volumes wait for milestone 17. */
   | { type: "settings.set"; reducedMotion: boolean }
   /** Dev-only spawn stress cycle ×1/×3/×9/×27 (milestone 03); handled by Sim, not here. */
   | { type: "dev.stressToggle" };
 
-/** Stations the player can work at (§8 solo era). */
-const WORKABLE = new Set(["counter_register", "counter_service", "fill_bench"]);
+/** Stations the player can work at (§8; the desk joins in the staffed era). */
+const WORKABLE = new Set(["counter_register", "counter_service", "fill_bench", "verify_desk"]);
 
 function leaveStation(state: GameState, emit: (event: SimEvent) => void): void {
   if (state.workingStationId === null) return;
@@ -95,9 +100,12 @@ export function handleCommand(
       state.dayStats = emptyDayStats(state.cash);
       // Morning: yesterday's wholesale order is on the loading step (§5).
       const delivery = receiveDeliveries(state.store);
+      // Mondays put a fresh stack of applications on the counter (§9).
+      const refreshed = refreshHiringPool(state);
       emit({ type: "day.phaseChanged", phase: state.phase, day: state.day });
       emit({ type: "clock.minute", igm: state.clockIgm });
       if (delivery.units > 0) emit({ type: "order.delivered", ...delivery });
+      if (refreshed) emit({ type: "staff.poolRefreshed", day: state.day });
       return;
     }
     case "speed.set": {
@@ -150,6 +158,13 @@ export function handleCommand(
       // Stock on a sold shelf goes back in a box, not in the bin.
       if (item.defId === "otc_shelf") clearShelf(state.store, item.id);
       if (state.workingStationId === item.id) leaveStation(state, emit);
+      // Anyone stationed at a sold fixture is off duty until reassigned.
+      for (const member of state.store.staff) {
+        if (member.assignment?.stationId === item.id) {
+          delete member.assignment;
+          emit({ type: "staff.assigned", id: member.id, stationId: null });
+        }
+      }
       post(state, "fixtures", refund, emit);
       emit({ type: "furniture.sold", id: item.id, refund });
       return;
@@ -219,6 +234,67 @@ export function handleCommand(
       state.loans.bank = round2(state.loans.bank - amount);
       post(state, "bank.payment", -amount, emit);
       emit({ type: "loan.changed", bank: state.loans.bank, family: state.loans.family });
+      return;
+    }
+    case "staff.hire": {
+      if (state.phase === "close") return;
+      const index = state.hiring.candidates.findIndex((c) => c.id === command.candidateId);
+      if (index === -1) return;
+      const candidate = state.hiring.candidates[index]!;
+      state.hiring.candidates.splice(index, 1);
+      const member: StaffMember = {
+        id: candidate.id,
+        name: candidate.name,
+        role: candidate.role,
+        speed: candidate.speed,
+        accuracy: candidate.accuracy,
+        warmth: candidate.warmth,
+        trait: candidate.trait,
+        dailyWage: candidate.wageAsked,
+        hiredOnDay: state.day,
+      };
+      // Straight to the first open station their role can hold (§9).
+      const defs = ROLE_STATIONS[member.role];
+      const taken = new Set(
+        state.store.staff.map((m) => m.assignment?.stationId).filter(Boolean),
+      );
+      const station = state.store.furniture.find(
+        (f) => defs.includes(f.defId) && !taken.has(f.id),
+      );
+      if (station) member.assignment = { stationId: station.id };
+      state.store.staff.push(member);
+      emit({ type: "staff.hired", member });
+      return;
+    }
+    case "staff.fire": {
+      if (state.phase === "close") return;
+      const index = state.store.staff.findIndex((m) => m.id === command.staffId);
+      if (index === -1) return;
+      const member = state.store.staff[index]!;
+      state.store.staff.splice(index, 1);
+      // Fired mid-shift, paid for the day on the spot — no severance (§9,
+      // cozy not cruel), and wages stop from tomorrow's receipt.
+      if (state.phase === "shift") post(state, "wages", -member.dailyWage, emit);
+      emit({ type: "staff.fired", id: member.id, name: member.name });
+      return;
+    }
+    case "staff.assign": {
+      const member = state.store.staff.find((m) => m.id === command.staffId);
+      if (!member) return;
+      if (command.stationId === null) {
+        if (!member.assignment) return;
+        delete member.assignment;
+        emit({ type: "staff.assigned", id: member.id, stationId: null });
+        return;
+      }
+      const station = state.store.furniture.find((f) => f.id === command.stationId);
+      if (!station || !ROLE_STATIONS[member.role].includes(station.defId)) return;
+      const held = state.store.staff.some(
+        (m) => m.id !== member.id && m.assignment?.stationId === station.id,
+      );
+      if (held) return;
+      member.assignment = { stationId: station.id };
+      emit({ type: "staff.assigned", id: member.id, stationId: station.id });
       return;
     }
     case "settings.set": {

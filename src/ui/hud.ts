@@ -20,9 +20,11 @@ import { createRxCard } from "./components/RxCard";
 import { createToastHost, type ToastTone } from "./components/Toast";
 import { h } from "./dom";
 import { money } from "./format";
+import { ROLE_LABELS } from "../sim/staff";
 import { createBuildPalette } from "./screens/buildPalette";
 import { createOrdersPanel } from "./screens/ordersPanel";
 import { buildReceipt } from "./screens/receipt";
+import { createStaffPanel } from "./screens/staffPanel";
 
 const STAR_GLYPHS = "★★★★★";
 
@@ -63,6 +65,9 @@ export interface HudHandle {
   /** Position/update a stage-queue mini-card stack (§8) over a station. */
   updateStageStack(key: string, screenX: number, screenY: number, count: number, label: string): void;
   hideStageStack(key: string): void;
+  /** Small role glyph over a staffed station (§27: $ · ℞ · ✓). */
+  updateRoleGlyph(id: string, screenX: number, screenY: number, glyph: string): void;
+  hideRoleGlyph(id: string): void;
 }
 
 function formatCash(cash: number): string {
@@ -176,7 +181,18 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
   );
   ordersPill.addEventListener("pointerdown", (e) => e.preventDefault());
   ordersPill.addEventListener("click", () => toggleOrders());
-  const dock = h("div", { cls: "dock" }, [buildPill, ordersPill]);
+
+  const teamPill = h(
+    "button",
+    {
+      cls: "pill pill--secondary pill--dock",
+      attrs: { type: "button", "aria-pressed": "false", "aria-label": "Team (T)" },
+    },
+    [h("span", { cls: "keycap", attrs: { "aria-hidden": "true" }, text: "T" }), "Team"],
+  );
+  teamPill.addEventListener("pointerdown", (e) => e.preventDefault());
+  teamPill.addEventListener("click", () => toggleTeam());
+  const dock = h("div", { cls: "dock" }, [buildPill, ordersPill, teamPill]);
 
   // --- Build palette + move/sell context card ---
 
@@ -228,11 +244,14 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
   const queueChips = new Map<string, { el: HTMLElement; count: number }>();
   const stageStacks = new Map<string, { el: HTMLElement; count: number; label: string }>();
   const stockChips = new Map<string, { el: HTMLElement; label: string }>();
+  const roleGlyphs = new Map<string, { el: HTMLElement; glyph: string }>();
 
   // --- Orders panel + the shelf's own price-tag card (§11) ---
 
   const orders = createOrdersPanel(sim, bus);
   let ordersOpen = false;
+  const team = createStaffPanel(sim, bus);
+  let teamOpen = false;
 
   function setOrders(open: boolean): void {
     const allowed = sim.snapshot.phase !== "close" && !sim.snapshot.buildMode;
@@ -241,10 +260,25 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     ordersPill.classList.toggle("pill--primary", ordersOpen);
     ordersPill.classList.toggle("pill--secondary", !ordersOpen);
     ordersPill.setAttribute("aria-pressed", String(ordersOpen));
+    if (ordersOpen) setTeam(false);
   }
 
   function toggleOrders(): void {
     setOrders(!ordersOpen);
+  }
+
+  function setTeam(open: boolean): void {
+    const allowed = sim.snapshot.phase !== "close" && !sim.snapshot.buildMode;
+    teamOpen = open && allowed;
+    team.setVisible(teamOpen);
+    teamPill.classList.toggle("pill--primary", teamOpen);
+    teamPill.classList.toggle("pill--secondary", !teamOpen);
+    teamPill.setAttribute("aria-pressed", String(teamOpen));
+    if (teamOpen) setOrders(false);
+  }
+
+  function toggleTeam(): void {
+    setTeam(!teamOpen);
   }
 
   const shelfCard = h("div", { cls: "shelfcard" });
@@ -326,6 +360,7 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     topbar,
     palette.root,
     orders.root,
+    team.root,
     contextCard,
     morningStage,
     closeStage,
@@ -357,7 +392,10 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     if (phase === "close") {
       closeStage.append(buildReceipt(sim, () => sim.dispatch({ type: "day.advance" })));
     }
-    if (phase === "close") setOrders(false);
+    if (phase === "close") {
+      setOrders(false);
+      setTeam(false);
+    }
     if (phase !== "shift") {
       hoverHint = null;
       refreshStationHint();
@@ -412,6 +450,7 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     // One sheet on the counter at a time.
     if (active) {
       setOrders(false);
+      setTeam(false);
       setShelfCard(null, 0, 0);
       clearStockChips();
     }
@@ -460,6 +499,7 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     counter_register: "register",
     counter_service: "counter",
     fill_bench: "fill bench",
+    verify_desk: "verify desk",
   };
   bus.on("station.changed", (e) => {
     const item = e.stationId
@@ -496,10 +536,23 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
   });
   bus.on("stock.restocked", (e) => {
     if (shelfCardId === e.furnitureId) buildShelfCard(e.furnitureId);
-    toast(`Brought out ${e.units} ${e.units === 1 ? "unit" : "units"}`);
+    const units = `${e.units} ${e.units === 1 ? "unit" : "units"}`;
+    toast(e.by ? `${e.by} brought out ${units}` : `Brought out ${units}`);
   });
   bus.on("reorder.unlocked", () => {
     toast("An empty shelf cost you a sale. Orders now takes min/target levels.", "error");
+  });
+
+  // --- Staff (§9) ---
+
+  bus.on("staff.hired", (e) => {
+    toast(
+      `${e.member.name} joins as ${ROLE_LABELS[e.member.role]} — ${money(e.member.dailyWage)} a day`,
+    );
+  });
+  bus.on("staff.fired", (e) => toast(`${e.name} let go — wages stop tomorrow`));
+  bus.on("staff.poolRefreshed", () => {
+    if (sim.snapshot.day > 1) toast("Monday — fresh applications on the counter");
   });
 
   bus.on("dev.stress", (e) => toast(e.mult === 1 ? "Stress spawn off" : `Stress spawn ×${e.mult}`));
@@ -525,6 +578,8 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
       sim.dispatch({ type: "speed.set", speed: 2 });
     } else if (e.code === "KeyO" && !e.repeat) {
       toggleOrders();
+    } else if (e.code === "KeyT" && !e.repeat) {
+      toggleTeam();
     } else if (e.code === "KeyN" && !e.repeat) {
       sim.dispatch({ type: "dev.stressToggle" });
     }
@@ -547,6 +602,10 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     dismiss: () => {
       if (ordersOpen) {
         setOrders(false);
+        return true;
+      }
+      if (teamOpen) {
+        setTeam(false);
         return true;
       }
       // Build mode owns Escape for its ghost, selection and its own exit
@@ -632,6 +691,26 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
       if (stack) {
         stack.el.remove();
         stageStacks.delete(key);
+      }
+    },
+    updateRoleGlyph: (id, screenX, screenY, glyph) => {
+      let chip = roleGlyphs.get(id);
+      if (!chip) {
+        chip = { el: h("div", { cls: "rglyph" }), glyph: "" };
+        root.append(chip.el);
+        roleGlyphs.set(id, chip);
+      }
+      if (chip.glyph !== glyph) {
+        chip.glyph = glyph;
+        chip.el.textContent = glyph;
+      }
+      chip.el.style.transform = `translate(${screenX.toFixed(1)}px, ${screenY.toFixed(1)}px) translate(-50%, -100%)`;
+    },
+    hideRoleGlyph: (id) => {
+      const chip = roleGlyphs.get(id);
+      if (chip) {
+        chip.el.remove();
+        roleGlyphs.delete(id);
       }
     },
   };
