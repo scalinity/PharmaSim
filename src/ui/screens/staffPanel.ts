@@ -190,7 +190,7 @@ export function createStaffPanel(sim: Sim, bus: EventBus<SimEvent>): StaffPanelH
           rosterView.append(
             h("p", {
               cls: "teamp__hint",
-              text: "No verify desk on the floor either — the Build palette sells one for $800.",
+              text: `No verify desk on the floor either — the Build palette sells one for ${money(furnitureDef("verify_desk").cost)}.`,
             }),
           );
         }
