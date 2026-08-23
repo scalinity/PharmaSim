@@ -163,7 +163,7 @@ export class StaffSystem {
   // --- Roster / layout / player churn ---
 
   /** Sync agents to the roster: fired staff vanish, hires walk in the door. */
-  rosterChanged(state: GameState, emit: Emit = () => {}): void {
+  rosterChanged(state: GameState, emit: Emit): void {
     for (let i = this.agentList.length - 1; i >= 0; i--) {
       const agent = this.agentList[i]!;
       const member = state.store.staff.find((m) => m.id === agent.member.id);
