@@ -931,7 +931,10 @@ export class CustomerSystem {
       if (slot0 === undefined) continue;
       if (front.mode === "queue" && this.atCell(front, slot0)) {
         // §14: no dose to give — better they leave now than wait on nothing.
+        // It's a sale lost to an empty bin like any other (§11): it counts
+        // against the fill rate and can trip the reorder-rules unlock.
         if (shelvedUnits(state.store, VACCINE_DOSE_ID) <= 0) {
+          recordStockOut(state, VACCINE_DOSE_ID, emit);
           emit({ type: "vaccine.noDose", customerId: front.id });
           this.walkout(state, front, emit);
           continue;
@@ -952,6 +955,7 @@ export class CustomerSystem {
   private completeVaccination(state: GameState, c: Customer, emit: Emit): void {
     if (!takeShelved(state.store, VACCINE_DOSE_ID)) {
       // Another station used the last dose mid-shot — vanishingly rare.
+      recordStockOut(state, VACCINE_DOSE_ID, emit);
       emit({ type: "vaccine.noDose", customerId: c.id });
       this.walkout(state, c, emit);
       return;

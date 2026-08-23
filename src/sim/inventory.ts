@@ -372,7 +372,7 @@ export function rollHistory(state: GameState, gross: number): void {
 
   let missed = stats.refusals;
   for (const count of Object.values(stats.stockOuts)) missed += count;
-  const served = stats.fills + stats.otcUnits;
+  const served = stats.fills + stats.otcUnits + stats.vaccinations;
   const rate = served + missed === 0 ? 1 : round2(served / (served + missed));
   store.fillRate7d.unshift(rate);
   store.fillRate7d.length = Math.min(store.fillRate7d.length, HISTORY_DAYS);
