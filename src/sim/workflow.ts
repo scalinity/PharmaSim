@@ -213,7 +213,9 @@ export class RxWorkflow {
   private fillQueue: number[] = [];
   private verifyQueue: number[] = [];
   /** The robotic dispenser's own fill lane (§6): Tier-1/2 scripts queue here
-   *  while a machine stands; stage-wise they are ordinary "fillQueue". */
+   *  while a machine stands; stage-wise they are ordinary "fillQueue", and
+   *  idle hands (claimFill/takeNext) fall back to this lane so the machine
+   *  adds capacity rather than fencing benches off from Tier-1/2 work. */
   private autoQueue: number[] = [];
   /** In-progress machine fills, keyed by dispenser furniture id. */
   private dispenserTasks = new Map<string, { scriptId: number; left: number }>();
@@ -232,9 +234,12 @@ export class RxWorkflow {
   private verifierActive = false;
   private nextScriptId = 1;
 
-  /** Scripts a bench worker could claim right now (§9 task AI). */
+  /** Scripts a bench worker could claim right now (§9 task AI): the
+   *  benches' own pile plus the machine's backlog — hands fall back to the
+   *  auto lane when their own queue is dry, so one dispenser adds capacity
+   *  instead of monopolizing every Tier-1/2 script. */
   get fillQueueLength(): number {
-    return this.fillQueue.length;
+    return this.fillQueue.length + this.autoQueue.length;
   }
 
   /** Scripts a verifier could claim right now (§9 task AI). */
@@ -382,10 +387,11 @@ export class RxWorkflow {
 
   // --- Staff claims (§9 task AI): techs fill, pharmacists verify ---
 
-  /** A tech at a bench takes the top script. No card, no bins — their hands
-   *  are trusted to the §26 error table instead. */
+  /** A tech at a bench takes the top script — their own pile first, then
+   *  the machine's backlog. No card, no bins — their hands are trusted to
+   *  the §26 error table instead. */
   claimFill(emit: Emit): RxScript | null {
-    const id = this.fillQueue.shift();
+    const id = this.fillQueue.shift() ?? this.autoQueue.shift();
     if (id === undefined) return null;
     const script = this.scripts.get(id)!;
     script.stage = "filling";
@@ -530,10 +536,11 @@ export class RxWorkflow {
     }
   }
 
-  /** Player at the bench takes the top script; the RxCard + bins appear. */
+  /** Player at the bench takes the top script — the benches' pile first,
+   *  then the machine's backlog; the RxCard + bins appear. */
   private takeNext(state: GameState, emit: Emit): void {
     if (this.fillingId !== null) return;
-    const id = this.fillQueue.shift();
+    const id = this.fillQueue.shift() ?? this.autoQueue.shift();
     if (id === undefined) return;
     const script = this.scripts.get(id)!;
     script.stage = "filling";
