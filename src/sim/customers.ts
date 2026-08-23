@@ -238,16 +238,17 @@ export function applyRep(state: GameState, delta: number, emit: Emit, reason: st
 }
 
 export class CustomerSystem {
-  private cols: number;
-  private rows: number;
-  private pathfinder: Pathfinder;
+  // Cell-indexed world — assigned by resizeGrid (constructor + expansion).
+  private cols!: number;
+  private rows!: number;
+  private pathfinder!: Pathfinder;
   /** Cells customers may path through: public zone minus furniture. */
-  private staticWalk: Uint8Array;
-  private scratchWalk: Uint8Array;
+  private staticWalk!: Uint8Array;
+  private scratchWalk!: Uint8Array;
   /** Per-cell claim: poolIndex + 1, or 0 (door cells stay unclaimed). */
-  private occupied: Int32Array;
-  private doorExempt: Uint8Array;
-  private doors: [number, number][];
+  private occupied!: Int32Array;
+  private doorExempt!: Uint8Array;
+  private doors!: [number, number][];
 
   private pool: Customer[] = [];
   private freeSlots: number[] = [];
@@ -282,7 +283,14 @@ export class CustomerSystem {
     state: GameState,
     private workflow: RxWorkflow,
   ) {
-    const { cols, rows } = state.store.grid;
+    this.resizeGrid(state.store.grid.cols, state.store.grid.rows);
+    this.layoutChanged(state);
+  }
+
+  /** Allocate every cell-indexed structure for a cols×rows floor. The
+   *  constructor and gridChanged both come through here, so a new buffer
+   *  can't be added to one and silently missed by the other. */
+  private resizeGrid(cols: number, rows: number): void {
     this.cols = cols;
     this.rows = rows;
     this.pathfinder = new Pathfinder(cols, rows);
@@ -292,7 +300,6 @@ export class CustomerSystem {
     this.doorExempt = new Uint8Array(cols * rows);
     this.doors = doorCells(cols, rows);
     for (const [x, y] of this.doors) this.doorExempt[cellIndex(cols, x, y)] = 1;
-    this.layoutChanged(state);
   }
 
   /** Pooled customer array for render iteration (check `active`). */
@@ -449,15 +456,7 @@ export class CustomerSystem {
   gridChanged(state: GameState): void {
     const { cols, rows } = state.store.grid;
     if (cols === this.cols && rows === this.rows) return;
-    this.cols = cols;
-    this.rows = rows;
-    this.pathfinder = new Pathfinder(cols, rows);
-    this.staticWalk = new Uint8Array(cols * rows);
-    this.scratchWalk = new Uint8Array(cols * rows);
-    this.occupied = new Int32Array(cols * rows);
-    this.doorExempt = new Uint8Array(cols * rows);
-    this.doors = doorCells(cols, rows);
-    for (const [x, y] of this.doors) this.doorExempt[cellIndex(cols, x, y)] = 1;
+    this.resizeGrid(cols, rows);
     this.queues.clear();
     this.chairOccupants.clear();
     this.layoutChanged(state);

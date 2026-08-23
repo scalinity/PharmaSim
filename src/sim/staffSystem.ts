@@ -90,15 +90,16 @@ export interface StationWorker {
 }
 
 export class StaffSystem {
-  private cols: number;
-  private rows: number;
-  private pathfinder: Pathfinder;
+  // Cell-indexed world — assigned by resizeGrid (constructor + expansion).
+  private cols!: number;
+  private rows!: number;
+  private pathfinder!: Pathfinder;
   /** Cells staff may cross: everything but furniture — both zones (§6). */
-  private walk: Uint8Array;
+  private walk!: Uint8Array;
   private breakCells: number[] = [];
   private agentList: StaffAgent[] = [];
   private pathScratch: number[] = [];
-  private doors: [number, number][];
+  private doors!: [number, number][];
   /** Who took each counter's chat (counter id → member id): endCounsel must
    *  end that pharmacist's chat, not everyone standing near the counter. */
   private counselors = new Map<string, string>();
@@ -108,12 +109,7 @@ export class StaffSystem {
     private workflow: RxWorkflow,
     private customers: CustomerSystem,
   ) {
-    const { cols, rows } = state.store.grid;
-    this.cols = cols;
-    this.rows = rows;
-    this.pathfinder = new Pathfinder(cols, rows);
-    this.walk = new Uint8Array(cols * rows);
-    this.doors = doorCells(cols, rows);
+    this.resizeGrid(state.store.grid.cols, state.store.grid.rows);
     // Back-register with the customer system here, so the two can never be
     // constructed half-wired (§9: stations manned by staff, not just the
     // player).
@@ -122,6 +118,17 @@ export class StaffSystem {
     this.rosterChanged(state, NO_EMIT);
     // A loaded save starts the crew already on the floor, at their spots.
     this.agentList.forEach((agent, i) => this.placeAtBreak(agent, i, NO_EMIT));
+  }
+
+  /** Allocate every cell-indexed structure for a cols×rows floor. The
+   *  constructor and gridChanged both come through here, so a new buffer
+   *  can't be added to one and silently missed by the other. */
+  private resizeGrid(cols: number, rows: number): void {
+    this.cols = cols;
+    this.rows = rows;
+    this.pathfinder = new Pathfinder(cols, rows);
+    this.walk = new Uint8Array(cols * rows);
+    this.doors = doorCells(cols, rows);
   }
 
   /** Live agents for the render layer (positions interpolate on stride). */
@@ -253,11 +260,7 @@ export class StaffSystem {
   gridChanged(state: GameState, emit: Emit): void {
     const { cols, rows } = state.store.grid;
     if (cols === this.cols && rows === this.rows) return;
-    this.cols = cols;
-    this.rows = rows;
-    this.pathfinder = new Pathfinder(cols, rows);
-    this.walk = new Uint8Array(cols * rows);
-    this.doors = doorCells(cols, rows);
+    this.resizeGrid(cols, rows);
     this.layoutChanged(state, emit);
     this.agentList.forEach((agent, i) => this.placeAtBreak(agent, i, emit));
   }
