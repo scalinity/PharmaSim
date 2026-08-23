@@ -86,6 +86,54 @@ bus.on("era.changed", (e) => {
   document.documentElement.dataset.era = String(e.era);
 });
 
+// --- Saves (§5, §23) ---
+//
+// The profile always holds a *day boundary*: the morning the player is
+// playing, or the close they are reading the receipt of. Both are untimed
+// phases with no customer or script in flight. A shift is never snapshotted,
+// so quitting mid-shift resumes from that morning — by design, the day is
+// replayed rather than half-restored.
+//
+// Registered before the HUD exists on purpose: emit runs listeners in
+// registration order, so persistence sits ahead of every UI listener in the
+// chain — a throwing panel or receipt can never starve the autosave.
+
+let snapshot: SaveFile = serialize(sim.snapshot);
+/** True once we are deliberately reloading, so the unload hook can't write
+ *  the old run over the file we just replaced. */
+let handingOver = false;
+/** A run only becomes a file once it is played. Looking at the title screen
+ *  and closing the window leaves no save behind, so "Start a new store" has
+ *  nothing to ask about. */
+let started = saved !== null;
+
+function persist(): void {
+  if (!started) return;
+  void storage.save(snapshot).catch((error: unknown) => {
+    console.warn("[save] the profile couldn't be written", error);
+  });
+}
+
+bus.on("day.phaseChanged", (event) => {
+  if (event.phase === "shift") return;
+  snapshot = serialize(sim.snapshot);
+  persist(); // autosave: the new morning, and the close behind the receipt
+});
+
+// Settings live in the save (§24), so they follow the toggle, not the day.
+bus.on("settings.changed", (event) => {
+  snapshot.settings = { ...event.settings };
+  persist();
+  document.documentElement.classList.toggle("reduce-motion", event.settings.reducedMotion);
+  if (hudRoot.hidden) rig.setAutoOrbit(titleOrbit());
+});
+
+// Closing the window is a quit (§23): the last boundary goes down with it.
+window.addEventListener("beforeunload", () => {
+  if (handingOver || !started) return;
+  void storage.save(snapshot);
+});
+
 const hud = createHud(hudRoot, sim, bus);
 const binBoard = new RxBinBoard();
 store.scene.add(binBoard.group);
@@ -296,50 +344,6 @@ function updateOverlays(): void {
 
   store.setBottleneck(worstDepth >= 4 ? worstId : null);
 }
-
-// --- Saves (§5, §23) ---
-//
-// The profile always holds a *day boundary*: the morning the player is
-// playing, or the close they are reading the receipt of. Both are untimed
-// phases with no customer or script in flight. A shift is never snapshotted,
-// so quitting mid-shift resumes from that morning — by design, the day is
-// replayed rather than half-restored.
-
-let snapshot: SaveFile = serialize(sim.snapshot);
-/** True once we are deliberately reloading, so the unload hook can't write
- *  the old run over the file we just replaced. */
-let handingOver = false;
-/** A run only becomes a file once it is played. Looking at the title screen
- *  and closing the window leaves no save behind, so "Start a new store" has
- *  nothing to ask about. */
-let started = saved !== null;
-
-function persist(): void {
-  if (!started) return;
-  void storage.save(snapshot).catch((error: unknown) => {
-    console.warn("[save] the profile couldn't be written", error);
-  });
-}
-
-bus.on("day.phaseChanged", (event) => {
-  if (event.phase === "shift") return;
-  snapshot = serialize(sim.snapshot);
-  persist(); // autosave: the new morning, and the close behind the receipt
-});
-
-// Settings live in the save (§24), so they follow the toggle, not the day.
-bus.on("settings.changed", (event) => {
-  snapshot.settings = { ...event.settings };
-  persist();
-  document.documentElement.classList.toggle("reduce-motion", event.settings.reducedMotion);
-  if (hudRoot.hidden) rig.setAutoOrbit(titleOrbit());
-});
-
-// Closing the window is a quit (§23): the last boundary goes down with it.
-window.addEventListener("beforeunload", () => {
-  if (handingOver || !started) return;
-  void storage.save(snapshot);
-});
 
 function reboot(intent: "play" | null): void {
   handingOver = true;
