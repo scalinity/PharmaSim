@@ -855,11 +855,14 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
       togglePanel("legacy");
     } else if (e.code === "KeyN" && !e.repeat) {
       sim.dispatch({ type: "dev.stressToggle" });
-    } else if (e.code === "KeyJ" && !e.repeat) {
+    } else if (import.meta.env.DEV && e.code === "KeyJ" && !e.repeat) {
+      // The §16 event console rides dev builds only — K in particular
+      // advances the day and autosaves it, unmodified and undoable by
+      // nothing, which is no key to leave live in a packaged app.
       sim.dispatch({ type: "dev.forceShortage" });
-    } else if (e.code === "KeyM" && !e.repeat) {
+    } else if (import.meta.env.DEV && e.code === "KeyM" && !e.repeat) {
       sim.dispatch({ type: "dev.forceStorm" });
-    } else if (e.code === "KeyK" && !e.repeat) {
+    } else if (import.meta.env.DEV && e.code === "KeyK" && !e.repeat) {
       sim.dispatch({ type: "dev.skipDay" });
     }
   });

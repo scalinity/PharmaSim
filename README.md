@@ -27,7 +27,8 @@ and is only used when a milestone brief calls for it.
 
 ## Dev keys
 
-Playtest helpers, active in any run:
+Playtest helpers. `N` works in any run; the event console (`J`/`M`/`K`) only exists in dev
+builds (`npm run dev`) — `K` in particular rewrites the save, so packaged builds leave it out.
 
 - `N` — cycle the stress spawner: ×1 → ×3 → ×9 → ×27 → off
 - `J` — force a regional drug shortage starting today (random open category, 4–8 days)
