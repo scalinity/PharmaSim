@@ -65,8 +65,18 @@ export function stockOf(store: StoreState, skuId: string): Readonly<StockLine> {
   return store.stock[skuId] ?? EMPTY;
 }
 
+/** Keys that would walk the prototype chain instead of storing stock — a
+ *  hand-edited save's inbound line must never reach them (§23). */
+const UNSAFE_KEYS: ReadonlySet<string> = new Set(["__proto__", "constructor", "prototype"]);
+
 /** Mutable line, created on first use. */
 function line(store: StoreState, skuId: string): StockLine {
+  // A save-controlled key like "__proto__" would make the ??= read return
+  // Object.prototype (truthy, so never assigned over) and turn the caller's
+  // `.backroom += n` into prototype pollution — every for-in over stock
+  // would then yield "backroom" as a SKU id. Hand such keys a detached line
+  // so the write lands nowhere.
+  if (UNSAFE_KEYS.has(skuId)) return { backroom: 0, shelved: 0 };
   return (store.stock[skuId] ??= { backroom: 0, shelved: 0 });
 }
 
