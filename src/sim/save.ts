@@ -40,6 +40,12 @@
 //    licenses, grid.expansions and placed cabinets already round-tripped in
 //    v1/v2 shapes — the step only has to seed `stats` from what's owned.
 //
+//  Version 4 (milestone 09) adds the cold chain:
+//    · dayStats.vaccinations (§14 receipt counter)                    (M09)
+//    Fridge stock is ordinary store.stock lines and the fridge, station and
+//    generator are ordinary store.furniture — all already round-tripping —
+//    so the step only has to seed the new counter.
+//
 //  §24's fuller schema (worldSeed, stores[], competitors, patientPools, dc,
 //  aitech, legacy, stats) is not here because those systems do not exist yet.
 //  They arrive field-by-field with the milestones that own them —
@@ -58,7 +64,7 @@ import {
   type StoreState,
 } from "./state";
 
-export const SAVE_VERSION = 3;
+export const SAVE_VERSION = 4;
 
 export interface SaveFile {
   version: number;
@@ -113,6 +119,17 @@ const MIGRATIONS: readonly ((file: RawSave) => RawSave)[] = [
       }
     }
     file.stats = stats;
+    return file;
+  },
+  // 3 → 4 (milestone 09): a pre-cold-chain day gave no shots, so the new
+  // receipt counter seeds at zero. A file whose dayStats isn't an object
+  // passes through untouched so validate() can refuse it with its own
+  // sentence.
+  (file) => {
+    const stats = file.dayStats;
+    if (typeof stats === "object" && stats !== null && !Array.isArray(stats)) {
+      (stats as RawSave).vaccinations = 0;
+    }
     return file;
   },
 ];
@@ -173,6 +190,7 @@ function copyDayStats(stats: DayStats): DayStats {
     otcSales: stats.otcSales,
     otcUnits: stats.otcUnits,
     fills: stats.fills,
+    vaccinations: stats.vaccinations,
     walkouts: stats.walkouts,
     errors: stats.errors,
     refusals: stats.refusals,

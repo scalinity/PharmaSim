@@ -133,11 +133,15 @@ export function canBuyLicense(state: GameState, def: LicenseDef): boolean {
 
 /**
  * Could this store fill a script for this drug today? Tier 2 needs L2; Tier 3
- * needs L3 and a controlled cabinet on the floor; refrigerated SKUs wait for
- * the cold chain (fridge stock lands in milestone 09).
+ * needs L3 and a controlled cabinet on the floor; refrigerated SKUs also need
+ * a medical fridge to live in (§14). Vaccine doses are the §14 service's
+ * stock, never script demand — no doctor writes a script for a flu shot.
  */
 export function canFillDrug(state: GameState, def: DrugDef): boolean {
-  if (def.refrigerated) return false;
+  if (def.category === "vaccines") return false;
+  if (def.refrigerated && !state.store.furniture.some((f) => f.defId === "fridge_medical")) {
+    return false;
+  }
   if (def.tier === 2) return ownsLicense(state, "L2");
   if (def.tier === 3) {
     return (

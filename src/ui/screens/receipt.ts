@@ -80,6 +80,7 @@ export function buildReceipt(sim: Sim, onNextDay: () => void): HTMLElement {
   section("the floor");
   line("Visitors", String(stats.visitors));
   line("Scripts filled", String(stats.fills));
+  if (stats.vaccinations > 0) line("Flu shots given", String(stats.vaccinations));
   line("Walk-outs", String(stats.walkouts), stats.walkouts > 0 ? "rcpt__line--rose" : "");
   if (stats.errors > 0) line("Dispensing errors", String(stats.errors), "rcpt__line--rose");
   if (stats.refusals > 0) line("Scripts refused", String(stats.refusals), "rcpt__line--rose");

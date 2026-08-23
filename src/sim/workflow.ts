@@ -12,7 +12,7 @@ import { districtById } from "../data/districts";
 import { DRUG_DEFS, drugDef, type DrugDef } from "../data/drugs";
 import { STORE_DISTRICT_ID } from "./economy";
 import type { SimEvent } from "./events";
-import { returnShelved, takeShelved } from "./inventory";
+import { binFixtureFor, returnShelved, takeShelved } from "./inventory";
 import { drugDailyDemand, fillableDrugs } from "./licenses";
 import { OWNER_CATCH_RATE } from "./staff";
 import type { GameState } from "./state";
@@ -45,6 +45,10 @@ export const BIN_ROWS = 4; // shelf bin face (render/meshes/furniture.ts)
 export const BIN_COLS = 3;
 /** The cabinet's face is a 3×3 of lockbox bins — Tier 3 is nine SKUs (§25). */
 export const CABINET_BIN_ROWS = 3;
+/** The fridge swings open on a 2×2 of cold bins — the §25 refrigerated
+ *  catalog is exactly four SKUs, so every one is always in reach. */
+export const FRIDGE_BIN_ROWS = 2;
+export const FRIDGE_BIN_COLS = 2;
 
 function shuffle<T>(items: T[]): T[] {
   for (let i = items.length - 1; i > 0; i--) {
@@ -60,10 +64,10 @@ function shuffle<T>(items: T[]): T[] {
  * category generation, so an L2 wall writes mental-health scripts and a
  * stocked cabinet brings the controlled ones — never before.
  *
- * The pool is memoized on license coverage (licenses owned + a cabinet on
- * the floor), so per-spawn work is one key build instead of re-deriving 49
- * demand slices — while a mid-shift license purchase still lands on the
- * very next spawn.
+ * The pool is memoized on license coverage (licenses owned + a cabinet or
+ * fridge on the floor), so per-spawn work is one key build instead of
+ * re-deriving 49 demand slices — while a mid-shift license purchase still
+ * lands on the very next spawn.
  */
 let drawPoolKey = "";
 let drawPool: DrugDef[] = [];
@@ -72,7 +76,8 @@ let drawTotal = 0;
 
 function drawScriptDrug(state: GameState): DrugDef {
   const cabinet = state.store.furniture.some((f) => f.defId === "cabinet_controlled");
-  const key = state.licenses.join(",") + (cabinet ? "|cabinet" : "");
+  const fridge = state.store.furniture.some((f) => f.defId === "fridge_medical");
+  const key = state.licenses.join(",") + (cabinet ? "|cabinet" : "") + (fridge ? "|fridge" : "");
   if (key !== drawPoolKey) {
     const district = districtById(STORE_DISTRICT_ID);
     drawPoolKey = key;
@@ -88,8 +93,11 @@ function drawScriptDrug(state: GameState): DrugDef {
   return drawPool[0]!;
 }
 
-/** Look-alike ids for a drug: §25 `confusableWith` both ways, padded with
- *  same-category neighbors up to 3 — the bins a hand reaches past. */
+/** Look-alike ids for a drug: §25 `confusableWith` both ways, padded up to 3
+ *  with the bins a hand actually reaches past — same-category shelf
+ *  neighbors, or, for a cold-chain drug, the fridge's other pens and vials
+ *  (glargine sits a hand's width from lispro). Shelf decoys never advertise
+ *  refrigerated SKUs: those live in the fridge, not on the shelf. */
 export function confusableNeighbors(correctId: string): string[] {
   const correct = drugDef(correctId);
   const confusables: string[] = [...(correct.confusableWith ?? [])];
@@ -98,47 +106,61 @@ export function confusableNeighbors(correctId: string): string[] {
       confusables.push(def.id);
     }
   }
-  const sameCategory = shuffle(
+  const sameFixture = shuffle(
     DRUG_DEFS.filter(
       (def) =>
-        def.category === correct.category &&
         def.id !== correct.id &&
-        // Cold-chain SKUs can't be stocked until the fridge lands (M09);
-        // a decoy bin shouldn't advertise them.
-        !def.refrigerated &&
-        !confusables.includes(def.id),
+        !confusables.includes(def.id) &&
+        (correct.refrigerated
+          ? def.refrigerated === true
+          : def.category === correct.category && !def.refrigerated),
     ).map((def) => def.id),
   );
-  return [...confusables, ...sameCategory].slice(0, 3);
+  return [...confusables, ...sameFixture].slice(0, 3);
 }
 
 /**
  * Bin layout for one fill: drug ids over the fixture's face, row-major. A
  * shelf fill spreads 4×3 across the store's licensed formulary; a controlled
- * fill is the cabinet's 3×3 of Tier-3 lockboxes. Either way the correct bin's
- * confusables are always placed orthogonally adjacent, shuffled each script —
- * a tramadol fill keeps trazodone within a hand's reach of the right bin
- * even though trazodone shelves outside the cabinet (§8, §25).
+ * fill is the cabinet's 3×3 of Tier-3 lockboxes; a cold fill is the fridge's
+ * 2×2 of pens and vials. Either way the correct bin's confusables are always
+ * placed orthogonally adjacent, shuffled each script — a tramadol fill keeps
+ * trazodone within a hand's reach of the right bin even though trazodone
+ * shelves outside the cabinet (§8, §25).
  */
 export function generateBins(state: GameState, correctId: string): string[] {
-  const correct = drugDef(correctId);
-  const neighbors = confusableNeighbors(correctId);
-  const rows = correct.tier === 3 ? CABINET_BIN_ROWS : BIN_ROWS;
-  // Both faces draw filler through the same license lens: the cabinet holds
-  // the fillable Tier 3, the shelf everything fillable below it.
-  const controlled = correct.tier === 3;
-  const fillerPool = fillableDrugs(state).filter((def) => (def.tier === 3) === controlled);
+  const fixture = binFixtureFor(correctId);
+  const rows =
+    fixture === "cabinet_controlled"
+      ? CABINET_BIN_ROWS
+      : fixture === "fridge_medical"
+        ? FRIDGE_BIN_ROWS
+        : BIN_ROWS;
+  const cols = fixture === "fridge_medical" ? FRIDGE_BIN_COLS : BIN_COLS;
+  // A 2×2 face has two orthogonal slots at most — trim the neighbor list to
+  // what the fixture can actually seat beside the correct bin.
+  const neighbors = confusableNeighbors(correctId).slice(0, fixture === "fridge_medical" ? 2 : 3);
+  // Each face draws filler through the same storage lens: the cabinet holds
+  // the fillable Tier 3, the fridge the whole cold catalog (§25 — four SKUs,
+  // licensed or not, because that is what a fridge physically holds), and the
+  // shelf everything fillable below Tier 3 that isn't refrigerated.
+  const fillerPool =
+    fixture === "fridge_medical"
+      ? DRUG_DEFS.filter((def) => def.refrigerated)
+      : fillableDrugs(state).filter(
+          (def) => !def.refrigerated && (def.tier === 3) === (fixture === "cabinet_controlled"),
+        );
 
   // Cells with enough orthogonal room for every required neighbor.
-  const cellCount = rows * BIN_COLS;
+  const cellCount = rows * cols;
   const adjacentOf = (cell: number): number[] => {
-    const row = Math.floor(cell / BIN_COLS);
-    const col = cell % BIN_COLS;
+    const row = Math.floor(cell / cols);
+    const col = cell % cols;
     const out: number[] = [];
-    if (row > 0) out.push(cell - BIN_COLS);
-    if (row < rows - 1) out.push(cell + BIN_COLS);
+    if (row > 0) out.push(cell - cols);
+    if (row < rows - 1) out.push(cell + cols);
     if (col > 0) out.push(cell - 1);
-    if (col < BIN_COLS - 1) out.push(cell + 1);
+    if (col < cols - 1) out.push(cell + 1);
     return out;
   };
   const candidates: number[] = [];
@@ -403,8 +425,8 @@ export class RxWorkflow {
     this.fillLeft = -1;
 
     // Frame the bin fixture nearest the worked bench (§8 camera glide):
-    // Tier-3 scripts fill from the controlled cabinet, the rest from a shelf.
-    const binDef = drugDef(script.drugId).tier === 3 ? "cabinet_controlled" : "rx_shelf";
+    // the cabinet for Tier 3, the fridge for cold chain, else an Rx shelf.
+    const binDef = binFixtureFor(script.drugId);
     const bench = state.store.furniture.find((f) => f.id === state.workingStationId);
     let shelfId: string | null = null;
     let best = Infinity;

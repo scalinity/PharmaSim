@@ -13,9 +13,11 @@ import {
   round2,
 } from "./economy";
 import type { SimEvent } from "./events";
+import { fridgeFree } from "./coldchain";
 import {
   clampMultiplier,
   clearControlled,
+  clearRefrigerated,
   clearShelf,
   isOtc,
   queueDelivery,
@@ -66,8 +68,15 @@ export type Command =
   /** Dev-only spawn stress cycle ×1/×3/×9/×27 (milestone 03); handled by Sim, not here. */
   | { type: "dev.stressToggle" };
 
-/** Stations the player can work at (§8; the desk joins in the staffed era). */
-const WORKABLE = new Set(["counter_register", "counter_service", "fill_bench", "verify_desk"]);
+/** Stations the player can work at (§8; the desk joins in the staffed era,
+ *  the vaccine station with the cold chain — §9: any role's task). */
+const WORKABLE = new Set([
+  "counter_register",
+  "counter_service",
+  "fill_bench",
+  "verify_desk",
+  "vaccine_station",
+]);
 
 function leaveStation(state: GameState, emit: (event: SimEvent) => void): void {
   if (state.workingStationId === null) return;
@@ -75,14 +84,22 @@ function leaveStation(state: GameState, emit: (event: SimEvent) => void): void {
   emit({ type: "station.changed", stationId: null });
 }
 
-/** Drop lines that are empty, unknown, or behind a licence gate (§12). */
+/** Drop lines that are empty, unknown, or behind a licence gate (§12), and
+ *  cap refrigerated lines to the fridge space still free (§14: 40 a fridge,
+ *  enforced at order time against held stock plus what's already inbound). */
 function acceptableLines(state: GameState, lines: readonly OrderLine[]): OrderLine[] {
   const orderable = new Map(catalog(state).map((entry) => [entry.skuId, entry]));
+  let coldFree = fridgeFree(state);
   const out: OrderLine[] = [];
   for (const l of lines) {
     const entry = orderable.get(l.skuId);
-    const units = Math.floor(l.units);
+    let units = Math.floor(l.units);
     if (!entry || entry.lock !== null || units <= 0) continue;
+    if (entry.refrigerated) {
+      units = Math.min(units, coldFree);
+      if (units <= 0) continue;
+      coldFree -= units;
+    }
     out.push({ skuId: l.skuId, units });
   }
   return out;
@@ -164,14 +181,20 @@ export function handleCommand(
       const refund = Math.round(furnitureDef(item.defId).cost / 2);
       state.store.furniture.splice(index, 1);
       // Stock on a sold shelf goes back in a box, not in the bin. Controlled
-      // stock is boxed only when the *last* cabinet goes — Tier-3 units are
-      // pooled across cabinets, so a surviving one still holds them (§25).
+      // and cold stock are boxed only when the *last* cabinet or fridge goes —
+      // units pool across the surviving fixtures (§14, §25).
       if (item.defId === "otc_shelf") clearShelf(state.store, item.id);
       if (
         item.defId === "cabinet_controlled" &&
         !state.store.furniture.some((f) => f.defId === "cabinet_controlled")
       ) {
         clearControlled(state.store);
+      }
+      if (
+        item.defId === "fridge_medical" &&
+        !state.store.furniture.some((f) => f.defId === "fridge_medical")
+      ) {
+        clearRefrigerated(state.store);
       }
       if (state.workingStationId === item.id) leaveStation(state, emit);
       // Anyone stationed at a sold fixture is off duty until reassigned.
@@ -306,14 +329,17 @@ export function handleCommand(
         dailyWage: candidate.wageAsked,
         hiredOnDay: state.day,
       };
-      // Straight to the first open station their role can hold (§9).
-      const defs = ROLE_STATIONS[member.role];
+      // Straight to the first open station their role can hold, in the
+      // role's own priority order (§9) — a pharmacist takes an open verify
+      // desk before a vaccine station (§14: scripts before shots).
       const taken = new Set(
         state.store.staff.map((m) => m.assignment?.stationId).filter(Boolean),
       );
-      const station = state.store.furniture.find(
-        (f) => defs.includes(f.defId) && !taken.has(f.id),
-      );
+      let station;
+      for (const defId of ROLE_STATIONS[member.role]) {
+        station = state.store.furniture.find((f) => f.defId === defId && !taken.has(f.id));
+        if (station) break;
+      }
       if (station) member.assignment = { stationId: station.id };
       state.store.staff.push(member);
       // Events carry copies, never live roster state (furniture.placed style).

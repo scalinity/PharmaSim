@@ -1259,6 +1259,30 @@ html.app-shell .topbar {
   color: var(--ink-75);
 }
 
+/* ---- Fridge capacity meter (§14): a blister card under the cold section ---- */
+
+.oform__fridge {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 6px 0 4px;
+}
+
+.oform__coldnum,
+.oform__coldnote {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-75);
+}
+
+/* One pip per cold unit, wrapped ten to a row like a blister card. */
+.meter__pips--fridge {
+  flex-wrap: wrap;
+  max-width: 122px;
+  border-radius: 6px;
+}
+
 .orow {
   min-height: 44px;
   border-bottom: 1px solid rgba(32, 48, 43, 0.08);
@@ -1692,6 +1716,14 @@ html.app-shell .topbar {
   margin: 6px 0 0;
   font-size: 11px;
   line-height: 1.4;
+  color: var(--ink-75);
+}
+
+/* The fridge's cold-unit count under its §14 blister pips. */
+.shelfcard__cold {
+  margin: 6px 0 0;
+  font-family: var(--font-mono);
+  font-size: 11px;
   color: var(--ink-75);
 }
 

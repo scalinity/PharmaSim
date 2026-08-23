@@ -15,16 +15,17 @@ import { FLOOR_Y, type StoreScene } from "./storeScene";
 
 const CLICK_SLOP_PX = 5;
 
-/** Stations the player can work mid-shift (§8), with hint copy names. */
+/** Stations the player can work mid-shift (§8, §14), with hint copy names. */
 const STATION_NAMES: Record<string, string> = {
   counter_register: "register",
   counter_service: "counter",
   fill_bench: "fill bench",
   verify_desk: "verify desk",
+  vaccine_station: "vaccine station",
 };
 
-/** Fixtures a click restocks from the backroom (§11, §25). */
-const RESTOCK_DEFS = new Set(["otc_shelf", "rx_shelf", "cabinet_controlled"]);
+/** Fixtures a click restocks from the backroom (§11, §14, §25). */
+const RESTOCK_DEFS = new Set(["otc_shelf", "rx_shelf", "cabinet_controlled", "fridge_medical"]);
 
 export interface BuildSelection {
   id: string;
@@ -41,6 +42,8 @@ export interface PickingCallbacks {
   stationHint(text: string | null): void;
   /** OTC shelf under the pointer (§11 price tags + restock), or null. */
   shelfHover(shelfId: string | null, clientX: number, clientY: number): void;
+  /** Medical fridge under the pointer (§14 capacity meter), or null. */
+  fridgeHover(fridgeId: string | null, clientX: number, clientY: number): void;
 }
 
 export class Picking {
@@ -214,10 +217,17 @@ export class Picking {
       this.setCursor(units > 0 ? "pointer" : "");
       if (item.defId === "otc_shelf") {
         this.callbacks.stationHint(null);
+        this.callbacks.fridgeHover(null, 0, 0);
         this.callbacks.shelfHover(item.id, e.clientX, e.clientY);
+      } else if (item.defId === "fridge_medical") {
+        // The fridge's card carries the §14 capacity meter and load hint.
+        this.callbacks.stationHint(null);
+        this.callbacks.shelfHover(null, 0, 0);
+        this.callbacks.fridgeHover(item.id, e.clientX, e.clientY);
       } else {
         const into = item.defId === "cabinet_controlled" ? "the cabinet" : "the bins";
         this.callbacks.shelfHover(null, 0, 0);
+        this.callbacks.fridgeHover(null, 0, 0);
         this.callbacks.stationHint(
           units > 0
             ? `Click to move ${units} ${units === 1 ? "box" : "boxes"} into ${into}`
@@ -227,6 +237,7 @@ export class Picking {
       return;
     }
     this.callbacks.shelfHover(null, 0, 0);
+    this.callbacks.fridgeHover(null, 0, 0);
 
     // Mid-shift: registers, the counter and the bench are workable (§8).
     const stationName = state.phase === "shift" && item ? STATION_NAMES[item.defId] : undefined;
@@ -252,6 +263,7 @@ export class Picking {
   private clearHints(): void {
     this.callbacks.stationHint(null);
     this.callbacks.shelfHover(null, 0, 0);
+    this.callbacks.fridgeHover(null, 0, 0);
   }
 
   private setCursor(cursor: string): void {

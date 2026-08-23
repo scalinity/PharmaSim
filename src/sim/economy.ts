@@ -33,6 +33,7 @@ export const LEDGER_REASONS = [
   { id: "rx.reimbursement", group: "revenue", label: "Rx reimbursements" },
   { id: "rx.copay", group: "revenue", label: "Copays" },
   { id: "otc.sale", group: "revenue", label: "OTC sales" },
+  { id: "vaccine", group: "revenue", label: "Vaccinations" },
   { id: "refund", group: "revenue", label: "Refunds" },
   { id: "order", group: "cost", label: "Wholesale orders" },
   { id: "wages", group: "cost", label: "Wages" },
@@ -134,6 +135,8 @@ export interface CatalogEntry {
   /** Rx tier (1–3) or 0 for OTC — drives the catalog's sections. */
   tier: number;
   category: string;
+  /** Cold-chain SKU: lives in the fridge, counts against its 40 units (§14). */
+  refrigerated: boolean;
   /** Fixed reimbursement (Rx) or MSRP (OTC). */
   listPrice: number;
   /** Null when orderable; otherwise why it is locked (§12 gates). */
@@ -165,9 +168,12 @@ export function categoryLabel(category: string): string {
   return CATEGORY_LABELS[category] ?? category;
 }
 
-/** §12: Tier 2 needs L2; Tier 3 needs L3 and a cabinet in this store. */
+/** §12/§14: Tier 2 needs L2; Tier 3 needs L3 and a cabinet; refrigerated
+ *  SKUs need a fridge too, and the vaccine dose rides L4, not L2 (§25). */
 function rxLock(state: GameState, def: DrugDef): string | null {
-  if (def.tier === 2 && !state.licenses.includes("L2")) {
+  if (def.category === "vaccines") {
+    if (!state.licenses.includes("L4")) return "Needs the Immunization Certification license";
+  } else if (def.tier === 2 && !state.licenses.includes("L2")) {
     return "Needs the Expanded Formulary license";
   }
   if (def.tier === 3) {
@@ -175,6 +181,9 @@ function rxLock(state: GameState, def: DrugDef): string | null {
     if (!state.store.furniture.some((f) => f.defId === "cabinet_controlled")) {
       return "Needs a controlled cabinet";
     }
+  }
+  if (def.refrigerated && !state.store.furniture.some((f) => f.defId === "fridge_medical")) {
+    return "Requires medical refrigeration";
   }
   return null;
 }
@@ -187,21 +196,20 @@ export function skuLock(state: GameState, skuId: string): string | null {
 }
 
 /**
- * Orderable catalog for the Orders panel. Refrigerated SKUs are absent
- * entirely — cold-chain ordering arrives with the fridge in milestone 09 —
- * while licence-gated tiers stay listed with their reason, so the player can
- * see what a licence would buy them (§11, §12).
+ * Orderable catalog for the Orders panel. Every SKU stays listed with its
+ * reason when gated — a licence, a cabinet, or medical refrigeration — so
+ * the player can see what the purchase would buy them (§11, §12, §14).
  */
 export function catalog(state: GameState): CatalogEntry[] {
   const entries: CatalogEntry[] = [];
   for (const def of DRUG_DEFS) {
-    if (def.refrigerated) continue;
     entries.push({
       skuId: def.id,
       name: def.name,
       kind: "rx",
       tier: def.tier,
       category: def.category,
+      refrigerated: def.refrigerated === true,
       listPrice: def.reimbursement,
       lock: rxLock(state, def),
     });
@@ -213,6 +221,7 @@ export function catalog(state: GameState): CatalogEntry[] {
       kind: "otc",
       tier: 0,
       category: def.category,
+      refrigerated: false,
       listPrice: def.msrp,
       lock: null,
     });

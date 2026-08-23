@@ -1,7 +1,8 @@
-// Customer simulation (SPEC §7, §8, §15, §17, §26): district-driven arrival
-// scheduling with rush bumps, archetypes, the browse → queue → pay → exit
-// state machine for OTC shoppers, the drop-off → wait (sit/browse) → pickup
-// flow for Rx patients, patience with chair relief, walk-outs, shelf stock
+// Customer simulation (SPEC §7, §8, §14, §15, §17, §26): district-driven
+// arrival scheduling with rush bumps, archetypes, the browse → queue → pay →
+// exit state machine for OTC shoppers, the drop-off → wait (sit/browse) →
+// pickup flow for Rx patients, vaccine walk-ins queuing at the station for
+// their 15 igm shot, patience with chair relief, walk-outs, shelf stock
 // decrement, and station service while the player works registers, the
 // service counter, or the fill bench. Pure sim — no DOM, no three.js.
 // Customer objects are pooled; the per-tick path is allocation-free.
@@ -14,6 +15,14 @@ import { drugDef, TIER1_DRUGS } from "../data/drugs";
 import { furnitureDef } from "../data/furniture";
 import { randomFullName } from "../data/names";
 import { otcDef } from "../data/otc";
+import {
+  VACCINE_DOSE_ID,
+  VACCINE_IGM,
+  VACCINE_REIMBURSEMENT,
+  VACCINE_WALKINS_MAX,
+  VACCINE_WALKINS_MIN,
+  vaccinationUnlocked,
+} from "./coldchain";
 import { COPAY, post, STORE_DISTRICT_ID } from "./economy";
 import type { SimEvent } from "./events";
 import { drugDailyDemand, fillableDrugs } from "./licenses";
@@ -35,7 +44,7 @@ import type { RxWorkflow } from "./workflow";
 
 export type Archetype = "hurried" | "steady" | "bargain" | "chatty";
 
-export type CustomerKind = "otc" | "rx";
+export type CustomerKind = "otc" | "rx" | "vaccine";
 
 export type CustomerMode =
   | "enter" // outside → door cell
@@ -177,6 +186,7 @@ const COUNSEL_BASKET_CHANCE = 0.5; // §8: +$4 basket chance after counsel
 const COUNSEL_BASKET_VALUE = 4;
 const REP_SERVE = 0.02;
 const REP_COUNSEL = 0.03;
+const REP_VACCINE = 0.01; // §26: +0.01 a shot
 const REP_WALKOUT = -0.06;
 const REP_WALKOUT_HURRIED = -0.09;
 const REP_REFUSED = -0.08; // §15 unfillable script (stock-out)
@@ -187,6 +197,7 @@ const REP_CHARMING = 0.01; // §9 Charming trait, per counsel or checkout
 export const REP_REASONS = {
   serve: "Happy serves",
   counsel: "Counsel chats",
+  vaccine: "Vaccinations",
   walkout: "Walk-outs",
   refused: "Scripts refused",
   error: "Dispensing errors",
@@ -267,6 +278,10 @@ export class CustomerSystem {
 
   private arrivals: number[] = [];
   private arrivalIdx = 0;
+  /** §14/§26 vaccine walk-ins: their own 3–6/day schedule once the service
+   *  exists — the §7 mix's 5% slice, kept apart from the demand streams. */
+  private vaccineArrivals: number[] = [];
+  private vaccineIdx = 0;
   /** Today's Rx slice of the visitor mix — set by beginDay from formulary
    *  breadth (§17); starts at the §26 baseline for a mid-morning load. */
   private rxShare = 0.35;
@@ -336,13 +351,15 @@ export class CustomerSystem {
     return false;
   }
 
-  /** True while someone is mid-checkout at this station — a worker walking
-   *  off mid-serve wastes the customer's progress, so staff finish first. */
+  /** True while someone is mid-checkout (or mid-shot) at this station — a
+   *  worker walking off mid-serve wastes the customer's progress, so staff
+   *  finish first. */
   frontIsPaying(stationId: string): boolean {
     if (this.queues.get(stationId)?.[0]?.mode === "pay") return true;
     return (
       this.queues.get(CustomerSystem.dropLaneId(stationId))?.[0]?.mode === "pay" ||
-      this.queues.get(CustomerSystem.pickLaneId(stationId))?.[0]?.mode === "pay"
+      this.queues.get(CustomerSystem.pickLaneId(stationId))?.[0]?.mode === "pay" ||
+      this.queues.get(CustomerSystem.vaxLaneId(stationId))?.[0]?.mode === "pay"
     );
   }
 
@@ -374,6 +391,13 @@ export class CustomerSystem {
     n *= 3 ** this.stressLevel;
     this.arrivals = this.sampleArrivals(n, DAY_START_IGM);
     this.arrivalIdx = 0;
+
+    // §14/§26: 3–6 vaccine walk-ins a day once L4, fridge and station stand,
+    // on the same rush curve as everyone else.
+    this.vaccineArrivals = vaccinationUnlocked(state)
+      ? this.sampleArrivals(randInt(VACCINE_WALKINS_MIN, VACCINE_WALKINS_MAX), DAY_START_IGM)
+      : [];
+    this.vaccineIdx = 0;
   }
 
   /** Dev stress spawner (milestone 03): each N press ×3s the remaining spawn
@@ -435,6 +459,12 @@ export class CustomerSystem {
     return `${counterId}#pick`;
   }
 
+  /** The vaccine station's own short line (§14). The `#` keeps it out of
+   *  every register-only sweep, like the counter lanes. */
+  static vaxLaneId(stationId: string): string {
+    return `${stationId}#vax`;
+  }
+
   /**
    * The counter's two lane cells: the drop-off tray sits on the local-west
    * half of the mesh, pickup on the local-east (render/meshes/furniture.ts).
@@ -492,12 +522,21 @@ export class CustomerSystem {
       }
     }
 
-    // Queue slot lines: one per register, two lanes per service counter.
+    // Queue slot lines: one per register, two lanes per service counter, one
+    // short line per vaccine station (§14).
     this.queueSlots.clear();
     for (const item of state.store.furniture) {
       const [fx, fy] = FACING[item.rot]!;
       if (item.defId === "counter_register") {
         this.queueSlots.set(item.id, this.computeSlots(item.cellX + fx, item.cellY + fy, fx, fy, 1));
+      } else if (item.defId === "vaccine_station") {
+        // The line forms at the prep-table half — the same local-west cell
+        // the counter calls its drop tray (render/meshes/furniture.ts).
+        const { drop } = CustomerSystem.laneCells(item);
+        this.queueSlots.set(
+          CustomerSystem.vaxLaneId(item.id),
+          this.computeSlots(drop[0] + fx, drop[1] + fy, fx, fy, 1),
+        );
       } else if (item.defId === "counter_service") {
         const { drop, pick } = CustomerSystem.laneCells(item);
         // Lanes bend apart so the two lines never share cells.
@@ -626,6 +665,21 @@ export class CustomerSystem {
       this.spawn(state, emit);
       this.arrivalIdx++;
     }
+    while (
+      this.vaccineIdx < this.vaccineArrivals.length &&
+      state.clockIgm >= this.vaccineArrivals[this.vaccineIdx]!
+    ) {
+      if (this.vaccineArrivals[this.vaccineIdx]! >= SPAWN_END_IGM) {
+        this.vaccineIdx++;
+        continue;
+      }
+      if (this.activeCountInternal >= NPC_CAP) {
+        this.vaccineArrivals[this.vaccineIdx] = state.clockIgm + 5;
+        break;
+      }
+      this.spawn(state, emit, "vaccine");
+      this.vaccineIdx++;
+    }
 
     for (const c of this.pool) {
       if (!c.active) continue;
@@ -638,6 +692,7 @@ export class CustomerSystem {
 
     this.serveRegisters(state, dIgm, emit);
     this.serveCounters(state, dIgm, emit);
+    this.serveVaccines(state, dIgm, emit);
   }
 
   /** True when `c` is between drop-off and pickup, waiting on their script. */
@@ -683,6 +738,7 @@ export class CustomerSystem {
       case "enter":
         if (this.step(c, dIgm)) {
           if (c.kind === "rx") this.goDropoff(state, c, emit);
+          else if (c.kind === "vaccine") this.goVaccineQueue(state, c);
           else this.planNextTarget(state, c);
         }
         return;
@@ -854,6 +910,61 @@ export class CustomerSystem {
     }
   }
 
+  /**
+   * Vaccine station service (§14, §26): 15 igm a shot by whoever staffs the
+   * station — the stationed pharmacist, or the player's own hands. The dose
+   * comes out of the fridge at the end; a walk-in who reaches the front with
+   * no dose in the bins leaves the §15 walk-out way.
+   */
+  private serveVaccines(state: GameState, dIgm: number, emit: Emit): void {
+    for (const station of state.store.furniture) {
+      if (station.defId !== "vaccine_station") continue;
+      const laneId = CustomerSystem.vaxLaneId(station.id);
+      const front = this.queues.get(laneId)?.[0];
+      if (!front) continue;
+      const worker = this.stationWorker(state, station.id);
+      if (!worker) {
+        if (front.mode === "pay") front.mode = "queue"; // the needle stepped away
+        continue;
+      }
+      const slot0 = this.queueSlots.get(laneId)?.[0];
+      if (slot0 === undefined) continue;
+      if (front.mode === "queue" && this.atCell(front, slot0)) {
+        // §14: no dose to give — better they leave now than wait on nothing.
+        if (shelvedUnits(state.store, VACCINE_DOSE_ID) <= 0) {
+          emit({ type: "vaccine.noDose", customerId: front.id });
+          this.walkout(state, front, emit);
+          continue;
+        }
+        front.mode = "pay";
+        if (front.serveLeft <= 0) front.serveLeft = VACCINE_IGM * worker.mult;
+        const [fx, fy] = FACING[station.rot]!;
+        front.yaw = Math.atan2(-fx, -fy);
+      }
+      if (front.mode === "pay") {
+        front.serveLeft -= dIgm;
+        if (front.serveLeft <= 0) this.completeVaccination(state, front, emit);
+      }
+    }
+  }
+
+  /** Shot done: one dose out of the fridge, $30 in, +0.01 rep (§14, §26). */
+  private completeVaccination(state: GameState, c: Customer, emit: Emit): void {
+    if (!takeShelved(state.store, VACCINE_DOSE_ID)) {
+      // Another station used the last dose mid-shot — vanishingly rare.
+      emit({ type: "vaccine.noDose", customerId: c.id });
+      this.walkout(state, c, emit);
+      return;
+    }
+    state.dayStats.vaccinations++;
+    recordSale(state.store, VACCINE_DOSE_ID, 1);
+    post(state, "vaccine", VACCINE_REIMBURSEMENT, emit);
+    applyRep(state, REP_VACCINE, emit, REP_REASONS.vaccine);
+    emit({ type: "vaccine.given", customerId: c.id, total: VACCINE_REIMBURSEMENT });
+    this.leaveQueueStructures(c);
+    this.beginLeave(c, false);
+  }
+
   /** Drop-off handoff done: accept into the fill queue, or refuse (§15). */
   private completeDropoff(state: GameState, c: Customer, emit: Emit): void {
     const script = this.workflow.script(c.scriptId);
@@ -1009,7 +1120,7 @@ export class CustomerSystem {
     return c;
   }
 
-  private spawn(state: GameState, emit: Emit): void {
+  private spawn(state: GameState, emit: Emit, kind?: CustomerKind): void {
     const c = this.obtain();
     const def = pickArchetype();
     c.id = this.nextId++;
@@ -1056,11 +1167,16 @@ export class CustomerSystem {
 
     // §26 mix, ~35% Rx at the Tier-1 baseline; today's actual split follows
     // formulary breadth (§17). Rx needs a service counter to drop off at.
-    const counterExists = state.store.furniture.some((f) => f.defId === "counter_service");
-    c.kind = counterExists && Math.random() < this.rxShare ? "rx" : "otc";
+    // Vaccine walk-ins arrive on their own §14 schedule, already decided.
+    if (kind === "vaccine") {
+      c.kind = "vaccine";
+    } else {
+      const counterExists = state.store.furniture.some((f) => f.defId === "counter_service");
+      c.kind = counterExists && Math.random() < this.rxShare ? "rx" : "otc";
+    }
     if (c.kind === "rx") {
       c.scriptId = this.workflow.createScript(state, c.id, c.name).id;
-    } else {
+    } else if (c.kind === "otc") {
       this.pickShelfTargets(state, c, def.targetsMin, def.targetsMax);
     }
 
@@ -1141,6 +1257,28 @@ export class CustomerSystem {
     if (c.scriptId === 0) return;
     this.workflow.cancel(state, c.scriptId, emit);
     c.scriptId = 0;
+  }
+
+  /** Vaccine walk-in through the door: the shortest station line (§14). */
+  private goVaccineQueue(state: GameState, c: Customer): void {
+    let bestLane: string | null = null;
+    let bestLen = Infinity;
+    for (const item of state.store.furniture) {
+      if (item.defId !== "vaccine_station") continue;
+      const laneId = CustomerSystem.vaxLaneId(item.id);
+      if (!this.queueSlots.get(laneId)?.length) continue;
+      const len = this.queues.get(laneId)?.length ?? 0;
+      if (len < bestLen) {
+        bestLen = len;
+        bestLane = laneId;
+      }
+    }
+    if (!bestLane) {
+      // The station went away while they crossed the lot: leave quietly.
+      this.beginLeave(c, false);
+      return;
+    }
+    this.joinLane(state, c, bestLane);
   }
 
   /** Fresh through the door: line up at the drop-off lane. */

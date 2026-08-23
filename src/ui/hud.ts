@@ -9,11 +9,13 @@ import { dayProgress, formatClock, seasonForDay } from "../core/clock";
 import { drugDef } from "../data/drugs";
 import { furnitureDef } from "../data/furniture";
 import { otcDef } from "../data/otc";
+import { fridgeCapacity, refrigeratedHeld, refrigeratedInbound } from "../sim/coldchain";
 import type { SimEvent } from "../sim/events";
-import { SHELF_SLOT_UNITS, shelvedUnits, stockOf } from "../sim/inventory";
+import { binFixtureFor, SHELF_SLOT_UNITS, shelvedUnits, stockOf } from "../sim/inventory";
 import type { Sim } from "../sim/sim";
 import { ROLE_LABELS } from "../sim/staff";
 import type { DayPhase, GameSpeed } from "../sim/state";
+import { fridgePips } from "./components/Meter";
 import { Panel } from "./components/Panel";
 import { PillButton } from "./components/PillButton";
 import { PriceTag } from "./components/PriceTag";
@@ -57,6 +59,8 @@ export interface HudHandle {
   stationHint(text: string | null): void;
   /** OTC shelf under the pointer: its price tags + restock card (§11). */
   shelfHover(shelfId: string | null, clientX: number, clientY: number): void;
+  /** Medical fridge under the pointer: the §14 capacity meter card. */
+  fridgeHover(fridgeId: string | null, clientX: number, clientY: number): void;
   /** Position/update the "restock" nudge chip over a shelf that needs it. */
   updateStockChip(id: string, screenX: number, screenY: number, units: number, empty: boolean): void;
   hideStockChip(id: string): void;
@@ -393,6 +397,55 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     shelfCard.style.transform = `translate(${x.toFixed(0)}px, ${y.toFixed(0)}px)`;
   }
 
+  // --- The fridge's own card: the §14 blister-pip capacity meter ---
+
+  const fridgeCard = h("div", { cls: "shelfcard" });
+  fridgeCard.hidden = true;
+  let fridgeCardId: string | null = null;
+
+  function buildFridgeCard(): void {
+    const state = sim.snapshot;
+    const capacity = fridgeCapacity(state);
+    const held = refrigeratedHeld(state.store);
+    const inbound = refrigeratedInbound(state.store);
+    const boxes = fridgeCardId === null ? 0 : sim.restockableUnits(fridgeCardId);
+    const lines = [
+      h("p", { cls: "shelfcard__eyebrow", text: "Medical fridge" }),
+      fridgePips(Math.min(held + inbound, capacity), capacity),
+      h("p", {
+        cls: "shelfcard__cold",
+        text:
+          `${held} of ${capacity} cold units` + (inbound > 0 ? ` · ${inbound} arriving at dawn` : ""),
+      }),
+      h("p", {
+        cls: "shelfcard__hint",
+        text:
+          boxes > 0
+            ? `Click to load ${boxes} ${boxes === 1 ? "unit" : "units"} into the fridge`
+            : held > 0
+              ? "Everything cold is in its bin"
+              : "Empty — refrigerated stock is ordered like any other, in Orders",
+      }),
+    ];
+    fridgeCard.replaceChildren(...lines);
+  }
+
+  function setFridgeCard(fridgeId: string | null, clientX: number, clientY: number): void {
+    if (fridgeId === null) {
+      fridgeCardId = null;
+      fridgeCard.hidden = true;
+      return;
+    }
+    if (fridgeId !== fridgeCardId) {
+      fridgeCardId = fridgeId;
+      buildFridgeCard();
+    }
+    fridgeCard.hidden = false;
+    const x = Math.min(clientX + 18, window.innerWidth - fridgeCard.offsetWidth - 12);
+    const y = Math.min(clientY + 14, window.innerHeight - fridgeCard.offsetHeight - 12);
+    fridgeCard.style.transform = `translate(${x.toFixed(0)}px, ${y.toFixed(0)}px)`;
+  }
+
   root.append(
     topbar,
     palette.root,
@@ -404,6 +457,7 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     closeStage,
     stationHintEl,
     shelfCard,
+    fridgeCard,
     dock,
   );
   const toast = createToastHost(root);
@@ -439,6 +493,7 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
       hoverHint = null;
       refreshStationHint();
       setShelfCard(null, 0, 0);
+      setFridgeCard(null, 0, 0);
       rxCard.hide();
       for (const [id, chip] of queueChips) {
         chip.el.remove();
@@ -492,6 +547,7 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
       setTeam(false);
       setLicenses(false);
       setShelfCard(null, 0, 0);
+      setFridgeCard(null, 0, 0);
       clearStockChips();
     }
   }
@@ -534,12 +590,14 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
       stockChips.delete(e.id);
     }
     if (shelfCardId === e.id) setShelfCard(null, 0, 0);
+    if (fridgeCardId === e.id) setFridgeCard(null, 0, 0);
   });
   const STATION_HINT_NAMES: Record<string, string> = {
     counter_register: "register",
     counter_service: "counter",
     fill_bench: "fill bench",
     verify_desk: "verify desk",
+    vaccine_station: "vaccine station",
   };
   bus.on("station.changed", (e) => {
     const item = e.stationId
@@ -552,15 +610,17 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
 
   // --- Prescription workflow (§8): the RxCard + workflow toasts ---
 
+  /** What the stuck-state copy calls a fill's missing bin fixture (§25). */
+  const MISSING_FIXTURE_NAMES = {
+    rx_shelf: "Rx shelf",
+    cabinet_controlled: "controlled cabinet",
+    fridge_medical: "medical fridge",
+  } as const;
+
   bus.on("rx.fillStarted", (e) => {
-    // A Tier-3 script fills from the controlled cabinet (§25); the stuck-state
-    // copy must name the fixture that is actually missing.
-    const missing =
-      e.shelfId !== null
-        ? null
-        : drugDef(e.drugId).tier === 3
-          ? "controlled cabinet"
-          : "Rx shelf";
+    // A Tier-3 script fills from the cabinet, a cold one from the fridge
+    // (§25); the stuck-state copy must name the fixture actually missing.
+    const missing = e.shelfId !== null ? null : MISSING_FIXTURE_NAMES[binFixtureFor(e.drugId)];
     rxCard.show(e.patientName, drugDef(e.drugId).name, e.quantity, missing);
   });
   bus.on("rx.binPicked", () => rxCard.setFilling());
@@ -584,11 +644,22 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
   });
   bus.on("stock.restocked", (e) => {
     if (shelfCardId === e.furnitureId) buildShelfCard(e.furnitureId);
+    if (fridgeCardId === e.furnitureId) buildFridgeCard();
     const units = `${e.units} ${e.units === 1 ? "unit" : "units"}`;
     toast(e.by ? `${e.by} brought out ${units}` : `Brought out ${units}`);
   });
   bus.on("reorder.unlocked", () => {
     toast("An empty shelf cost you a sale. Orders now takes min/target levels.", "error");
+  });
+
+  // --- Vaccination service (§14) ---
+
+  bus.on("vaccine.given", (e) => {
+    toast(`Flu shot given — ${money(e.total)} reimbursed`);
+    if (fridgeCardId !== null) buildFridgeCard();
+  });
+  bus.on("vaccine.noDose", () => {
+    toast("Out of vaccine doses — a walk-in left", "error");
   });
 
   // --- Licenses + expansion (§6, §12) ---
@@ -704,6 +775,7 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
       refreshStationHint();
     },
     shelfHover: (shelfId, clientX, clientY) => setShelfCard(shelfId, clientX, clientY),
+    fridgeHover: (fridgeId, clientX, clientY) => setFridgeCard(fridgeId, clientX, clientY),
     updateStockChip: (id, screenX, screenY, units, empty) => {
       const label = empty && units === 0 ? "empty" : `restock ${units}`;
       let chip = stockChips.get(id);

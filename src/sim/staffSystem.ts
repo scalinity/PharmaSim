@@ -1,11 +1,13 @@
-// Staff on the floor (SPEC §9, §26, §27): hired staff walk the store as NPCs,
-// path to their assigned station and work its queue — cashiers ring checkouts
-// and counter lanes, techs fill (probabilistically, §26), pharmacists verify
-// and step over to counsel — with the §9 priority: own-station queue, else an
-// unmanned front desk (cashiers), else a Stock Hawk restock run, else drift
-// to a break spot. The player clicking a station displaces its worker; the
-// worker resumes when the player steps away. Staff cross both zones (§6) and
-// don't claim cells — a small crew slips through the crowd.
+// Staff on the floor (SPEC §9, §14, §26, §27): hired staff walk the store as
+// NPCs, path to their assigned station and work its queue — cashiers ring
+// checkouts and counter lanes, techs fill (probabilistically, §26),
+// pharmacists verify, step over to counsel, and give shots — with the §9
+// priority: own-station queue, else an unmanned front desk (cashiers) or an
+// uncovered vaccine line (pharmacists, verify always first — the §14
+// scripts-vs-shots tension), else a Stock Hawk restock run, else drift to a
+// break spot. The player clicking a station displaces its worker; the worker
+// resumes when the player steps away. Staff cross both zones (§6) and don't
+// claim cells — a small crew slips through the crowd.
 // Pure sim — no DOM, no three.js.
 
 import { IGM_PER_TICK } from "../core/clock";
@@ -49,6 +51,7 @@ const RESTOCK_DEFS: ReadonlySet<string> = new Set([
   "otc_shelf",
   "rx_shelf",
   "cabinet_controlled",
+  "fridge_medical",
 ]);
 
 /** What an agent is walking toward / standing at. */
@@ -160,6 +163,14 @@ export class StaffSystem {
       const member = agent.member;
       if (member.role !== "pharmacist" || agent.taskScriptId !== 0) continue;
       if (agent.targetKind === "counsel") continue;
+      // Mid-shot at a vaccine station: the needle finishes first (§14).
+      if (
+        agent.targetKind === "post" &&
+        agent.targetId !== null &&
+        this.customers.frontIsPaying(agent.targetId)
+      ) {
+        continue;
+      }
       if (!this.isOnDuty(state, member)) continue;
       const mult = taskDuration(member, 1);
       agent.counselLeft = baseIgm * mult + COUNSEL_SLACK_IGM;
@@ -404,8 +415,37 @@ export class StaffSystem {
         this.setTarget(agent, "post", best.id, this.workCell(best));
         return;
       }
+    } else if (member.role === "pharmacist") {
+      // Mid-shot: finish the vaccination in hand before answering the desk —
+      // §8's finish-first rule, same as a cashier mid-checkout.
+      if (
+        agent.targetKind === "post" &&
+        agent.targetId !== null &&
+        agent.arrived &&
+        state.workingStationId !== agent.targetId &&
+        this.customers.frontIsPaying(agent.targetId)
+      ) {
+        agent.idleIgm = 0;
+        return;
+      }
+      // Own station first (§9) — which is what keeps verify ahead of shots
+      // for a desk pharmacist: the vaccine line only gets them once the
+      // verify pile is clear (§14 scripts-vs-shots tension).
+      if (assigned && !displaced && this.stationNeed(assigned) > 0) {
+        agent.idleIgm = 0;
+        this.setTarget(agent, "post", assigned.id, this.workCell(assigned));
+        return;
+      }
+      // A free pharmacist covers a vaccine line nobody else is working —
+      // the second pharmacist assigned to the station makes it theirs.
+      const station = this.bestVaccineStation(state, member, displaced ? null : assigned);
+      if (station) {
+        agent.idleIgm = 0;
+        this.setTarget(agent, "post", station.id, this.workCell(station));
+        return;
+      }
     } else if (assigned && !displaced && this.stationNeed(assigned) > 0) {
-      // Techs and pharmacists: own-station queue first (§9).
+      // Techs: own-station queue first (§9).
       agent.idleIgm = 0;
       this.setTarget(agent, "post", assigned.id, this.workCell(assigned));
       return;
@@ -508,8 +548,9 @@ export class StaffSystem {
       agent.idleIgm = 0; // work just ended — the break-spot fuse starts fresh
       this.workflow.finishVerify(state, scriptId, verifyCatchRate(member), emit);
     }
-    // Registers and counter lanes are served by the customer system, which
-    // asks workerAt() — the cashier just has to be standing here.
+    // Registers, counter lanes and the vaccine station are served by the
+    // customer system, which asks workerAt() — the cashier or pharmacist
+    // just has to be standing here.
   }
 
   private releaseTask(agent: StaffAgent, emit: Emit): void {
@@ -544,6 +585,8 @@ export class StaffSystem {
         return this.workflow.fillQueueLength;
       case "verify_desk":
         return this.workflow.verifyQueueLength;
+      case "vaccine_station":
+        return this.customers.queueLength(CustomerSystem.vaxLaneId(station.id));
       default:
         return 0;
     }
@@ -578,6 +621,41 @@ export class StaffSystem {
         (a) => a.member.id !== member.id && a.targetKind === "post" && a.targetId === item.id,
       );
       if (covered) continue;
+      const need = this.stationNeed(item);
+      if (need > bestNeed) {
+        bestNeed = need;
+        best = item;
+      }
+    }
+    return best;
+  }
+
+  /**
+   * The vaccine line a free pharmacist should cover (§14): the longest one
+   * with walk-ins waiting and nobody on it — no player, no other assignee,
+   * no other worker already heading over. Their own assigned station is
+   * always theirs to work.
+   */
+  private bestVaccineStation(
+    state: GameState,
+    member: StaffMember,
+    assigned: PlacedFurniture | null,
+  ): PlacedFurniture | null {
+    let best: PlacedFurniture | null = null;
+    let bestNeed = 0;
+    for (const item of state.store.furniture) {
+      if (item.defId !== "vaccine_station") continue;
+      if (item.id === state.workingStationId) continue;
+      if (item.id !== assigned?.id) {
+        const owned = state.store.staff.some(
+          (m) => m.id !== member.id && m.assignment?.stationId === item.id,
+        );
+        if (owned) continue;
+        const covered = this.agentList.some(
+          (a) => a.member.id !== member.id && a.targetKind === "post" && a.targetId === item.id,
+        );
+        if (covered) continue;
+      }
       const need = this.stationNeed(item);
       if (need > bestNeed) {
         bestNeed = need;

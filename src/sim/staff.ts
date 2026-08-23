@@ -77,7 +77,7 @@ const SWIFT_ERROR_BONUS_PCT = 2;
 export const ROLE_STATIONS: Record<StaffRole, readonly string[]> = {
   cashier: ["counter_register", "counter_service"],
   tech: ["fill_bench"],
-  pharmacist: ["verify_desk"],
+  pharmacist: ["verify_desk", "vaccine_station"],
   manager: [],
 };
 

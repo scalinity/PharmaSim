@@ -91,6 +91,8 @@ export interface DayStats {
   otcUnits: number;
   /** Scripts handed over at pickup (errors included — counted separately too). */
   fills: number;
+  /** Flu shots given at the vaccine station (§14). */
+  vaccinations: number;
   walkouts: number;
   /** Dispensed errors discovered at pickup (§8). */
   errors: number;
@@ -199,6 +201,7 @@ export function emptyDayStats(cashOpen: number): DayStats {
     otcSales: 0,
     otcUnits: 0,
     fills: 0,
+    vaccinations: 0,
     walkouts: 0,
     errors: 0,
     refusals: 0,

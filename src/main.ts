@@ -89,6 +89,7 @@ const picking = new Picking(sim, bus, store, binBoard, rig.camera, renderer.canv
   paletteChanged: hud.paletteChanged,
   stationHint: hud.stationHint,
   shelfHover: hud.shelfHover,
+  fridgeHover: hud.fridgeHover,
 });
 hud.bindBuild(picking);
 
@@ -191,7 +192,8 @@ function updateOverlays(): void {
       if (
         item.defId !== "otc_shelf" &&
         item.defId !== "rx_shelf" &&
-        item.defId !== "cabinet_controlled"
+        item.defId !== "cabinet_controlled" &&
+        item.defId !== "fridge_medical"
       ) {
         continue;
       }
@@ -235,6 +237,18 @@ function updateOverlays(): void {
   for (const item of state.store.furniture) {
     if (item.defId === "counter_register") {
       const count = sim.queueLength(item.id);
+      consider(item.id, count);
+      if (count >= 4) {
+        const [wx, wz] = cellToWorld(cols, rows, item.cellX, item.cellY);
+        const [sx, sy] = project(wx, 2.2, wz);
+        hud.updateQueueChip(item.id, sx, sy, count);
+      } else {
+        hud.hideQueueChip(item.id);
+      }
+    } else if (item.defId === "vaccine_station") {
+      // The vaccine line is a station queue like any other (§14): it feeds
+      // the amber bottleneck ring and gets the ≥4 waiting chip.
+      const count = sim.queueLength(CustomerSystem.vaxLaneId(item.id));
       consider(item.id, count);
       if (count >= 4) {
         const [wx, wz] = cellToWorld(cols, rows, item.cellX, item.cellY);

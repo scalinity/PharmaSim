@@ -47,6 +47,7 @@ const STATION_LABELS: Record<string, string> = {
   counter_service: "Service counter",
   fill_bench: "Fill bench",
   verify_desk: "Verify desk",
+  vaccine_station: "Vaccine station",
 };
 
 interface StationOption {

@@ -1,8 +1,9 @@
-// Rx bin label board (SPEC §8, §25, §27): during a fill, the worked fixture's
-// bin face grows generated paper labels — the one allowed canvas texture
-// atlas — and the player clicks the right bin. The Rx shelf shows the 4×3
-// face; the controlled cabinet swings open into a 3×3 of Tier-3 lockboxes.
-// One merged quad mesh (bin = faceIndex/2) plus an amber hover frame.
+// Rx bin label board (SPEC §8, §14, §25, §27): during a fill, the worked
+// fixture's bin face grows generated paper labels — the one allowed canvas
+// texture atlas — and the player clicks the right bin. The Rx shelf shows
+// the 4×3 face; the controlled cabinet swings open into a 3×3 of Tier-3
+// lockboxes; the medical fridge opens on a 2×2 of cold bins. One merged
+// quad mesh (bin = faceIndex/2) plus an amber hover frame.
 
 import {
   BufferAttribute,
@@ -28,9 +29,12 @@ import { FLOOR_Y } from "./storeScene";
 // face (render/meshes/furniture.ts rxShelf); the cabinet's are the same face
 // scaled to span exactly its 1 m cell — the 0.82 m safe plus a hand's width
 // of swung-open door rack — and centered on the body's height, in front of
-// its deeper 0.66 m carcass. `view` is how much tighter the §8 fill glide
-// frames the smaller face so a label keeps its on-screen size (main.ts).
+// its deeper 0.66 m carcass. The fridge's 2×2 rides its two door halves,
+// split at the mesh's y 0.62 door line, clear of the handle. `view` is how
+// much tighter the §8 fill glide frames the smaller face so a label keeps
+// its on-screen size (main.ts).
 interface FaceLayout {
+  cols: number; // bin columns across the face
   x0: number; // first column's center
   dx: number; // column pitch
   y0: number; // bottom row's center
@@ -42,6 +46,7 @@ interface FaceLayout {
 }
 
 const SHELF_FACE: FaceLayout = {
+  cols: 3,
   x0: -0.6,
   dx: 0.6,
   y0: 0.36,
@@ -53,6 +58,7 @@ const SHELF_FACE: FaceLayout = {
 };
 
 const CABINET_FACE: FaceLayout = {
+  cols: 3,
   x0: -0.345,
   dx: 0.345,
   y0: 0.52,
@@ -61,6 +67,18 @@ const CABINET_FACE: FaceLayout = {
   h: 0.213,
   z: 0.38,
   view: 0.575,
+};
+
+const FRIDGE_FACE: FaceLayout = {
+  cols: 2,
+  x0: -0.19,
+  dx: 0.38,
+  y0: 0.55,
+  dy: 0.6,
+  w: 0.34,
+  h: 0.235,
+  z: 0.42,
+  view: 0.62,
 };
 
 const TILE_W = 256;
@@ -74,19 +92,19 @@ function splitName(name: string): [string, string] {
   return space === -1 ? [name, ""] : [name.slice(0, space), name.slice(space + 1)];
 }
 
-function drawAtlas(canvas: HTMLCanvasElement, bins: string[]): void {
-  // The atlas stays at the shelf's 4-row size whatever face is shown — a
+function drawAtlas(canvas: HTMLCanvasElement, bins: string[], cols: number): void {
+  // The atlas stays at the shelf's 4×3 size whatever face is shown — a
   // resized canvas would force the GPU texture to reallocate mid-session
-  // (GL_INVALID_VALUE on the sub-texture copy). A 3-row face just leaves the
-  // bottom atlas row unsampled; the quads' UVs never reach it.
+  // (GL_INVALID_VALUE on the sub-texture copy). A smaller face just leaves
+  // trailing atlas tiles unsampled; the quads' UVs never reach them.
   canvas.width = TILE_W * BIN_COLS;
   canvas.height = TILE_H * BIN_ROWS;
   const g = canvas.getContext("2d")!;
   g.clearRect(0, 0, canvas.width, canvas.height);
 
   for (let i = 0; i < bins.length; i++) {
-    const x = (i % BIN_COLS) * TILE_W;
-    const y = Math.floor(i / BIN_COLS) * TILE_H;
+    const x = (i % cols) * TILE_W;
+    const y = Math.floor(i / cols) * TILE_H;
 
     // Paper label with an ink frame (§28 shelf-label language).
     g.fillStyle = "#fbf4e4";
@@ -167,14 +185,14 @@ export class RxBinBoard {
   /** One quad per bin at its face position; UVs point into the atlas tile. */
   private buildQuads(): BufferGeometry {
     const { rows, layout } = this;
-    const count = rows * BIN_COLS;
+    const count = rows * layout.cols;
     const positions = new Float32Array(count * 6 * 3);
     const uvs = new Float32Array(count * 6 * 2);
     let p = 0;
     let t = 0;
     for (let i = 0; i < count; i++) {
-      const col = i % BIN_COLS;
-      const visualRow = Math.floor(i / BIN_COLS); // 0 = top row
+      const col = i % layout.cols;
+      const visualRow = Math.floor(i / layout.cols); // 0 = top row
       const cx = layout.x0 + col * layout.dx;
       const cy = layout.y0 + (rows - 1 - visualRow) * layout.dy;
       const x0 = cx - layout.w / 2;
@@ -216,12 +234,17 @@ export class RxBinBoard {
   }
 
   /** Show the labeled bins on this fixture for the fill's drug layout — the
-   *  face shape follows the bins array (12 = shelf 4×3, 9 = cabinet 3×3). */
+   *  face shape follows the fixture (shelf 4×3, cabinet 3×3, fridge 2×2). */
   show(shelf: PlacedFurniture, cols: number, rows: number, bins: string[]): void {
     this.bins = bins;
 
-    const binRows = bins.length / BIN_COLS;
-    const layout = shelf.defId === "cabinet_controlled" ? CABINET_FACE : SHELF_FACE;
+    const layout =
+      shelf.defId === "cabinet_controlled"
+        ? CABINET_FACE
+        : shelf.defId === "fridge_medical"
+          ? FRIDGE_FACE
+          : SHELF_FACE;
+    const binRows = bins.length / layout.cols;
     if (binRows !== this.rows || layout !== this.layout) {
       this.rows = binRows;
       this.layout = layout;
@@ -231,7 +254,7 @@ export class RxBinBoard {
       this.hoverFrame.geometry = new PlaneGeometry(layout.w + 0.08, layout.h + 0.08);
       this.hoverFrame.position.z = layout.z - 0.004;
     }
-    drawAtlas(this.canvas, bins);
+    drawAtlas(this.canvas, bins, layout.cols);
     this.texture.needsUpdate = true;
 
     const def = furnitureDef(shelf.defId);
@@ -269,8 +292,8 @@ export class RxBinBoard {
       this.hoverFrame.visible = false;
       return;
     }
-    const col = index % BIN_COLS;
-    const visualRow = Math.floor(index / BIN_COLS);
+    const col = index % this.layout.cols;
+    const visualRow = Math.floor(index / this.layout.cols);
     this.hoverFrame.position.x = this.layout.x0 + col * this.layout.dx;
     this.hoverFrame.position.y = this.layout.y0 + (this.rows - 1 - visualRow) * this.layout.dy;
     this.hoverFrame.visible = true;

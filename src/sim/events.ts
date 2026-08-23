@@ -30,11 +30,12 @@ export type SimEvent =
       drugId: string;
       patientName: string;
       quantity: number;
-      /** Drug ids, row-major over the fixture's 3-wide bin face: 12 on the
-       *  Rx shelf's 4×3, 9 on the controlled cabinet's 3×3 (§8, §25). */
+      /** Drug ids, row-major over the fixture's bin face: 12 on the Rx
+       *  shelf's 4×3, 9 on the controlled cabinet's 3×3, 4 on the medical
+       *  fridge's 2×2 (§8, §25). */
       bins: string[];
-      /** Bin fixture the picking frames (Rx shelf, or the controlled cabinet
-       *  for a Tier-3 script), or null when none is placed. */
+      /** Bin fixture the picking frames (Rx shelf, controlled cabinet for a
+       *  Tier-3 script, fridge for cold chain), or null when none is placed. */
       shelfId: string | null;
     }
   | { type: "rx.binPicked"; scriptId: number }
@@ -59,6 +60,10 @@ export type SimEvent =
   // --- Licenses + expansion (§6, §12, milestone 08; legacy moments for 10, §22) ---
   | { type: "license.bought"; id: string; name: string; cost: number; day: number }
   | { type: "expansion.bought"; level: number; cols: number; rows: number; cost: number; day: number }
+  // --- Vaccination service (§14, milestone 09) ---
+  | { type: "vaccine.given"; customerId: number; total: number }
+  /** A walk-in reached the station and there was no dose to give (§14). */
+  | { type: "vaccine.noDose"; customerId: number }
   // --- Staff (§9, milestone 07) ---
   | { type: "staff.hired"; member: StaffMember }
   | { type: "staff.fired"; id: string; name: string }

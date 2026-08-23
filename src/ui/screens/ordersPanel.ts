@@ -5,7 +5,14 @@
 // card clipped underneath. All money is Plex Mono (§28).
 
 import type { EventBus } from "../../core/bus";
+import { furnitureDef } from "../../data/furniture";
 import { otcDef } from "../../data/otc";
+import {
+  fridgeCapacity,
+  fridgeFree,
+  refrigeratedHeld,
+  refrigeratedInbound,
+} from "../../sim/coldchain";
 import {
   bankStatus,
   catalog,
@@ -22,6 +29,7 @@ import {
 import type { SimEvent } from "../../sim/events";
 import { draftOrder, otcPrice, priceMultiplier, sales7d, stockOf } from "../../sim/inventory";
 import type { Sim } from "../../sim/sim";
+import { fridgePips } from "../components/Meter";
 import { Panel } from "../components/Panel";
 import { PillButton } from "../components/PillButton";
 import { PriceTag, type PriceTagHandle } from "../components/PriceTag";
@@ -40,6 +48,8 @@ interface Section {
   title: string;
   note: string;
   keep: (entry: CatalogEntry) => boolean;
+  /** Marks the cold-chain section so the fridge meter can ride under it. */
+  cold?: boolean;
 }
 
 const SECTIONS: readonly Section[] = [
@@ -56,7 +66,13 @@ const SECTIONS: readonly Section[] = [
   {
     title: "Tier 2 \u00b7 expanded formulary",
     note: "Listed so you can see what the licence would buy you.",
-    keep: (e) => e.kind === "rx" && e.tier === 2,
+    keep: (e) => e.kind === "rx" && e.tier === 2 && !e.refrigerated,
+  },
+  {
+    title: "Refrigerated \u00b7 cold chain",
+    note: "Lives in the medical fridge \u2014 40 cold units each. The vaccine dose is what the station gives out.",
+    keep: (e) => e.kind === "rx" && e.refrigerated,
+    cold: true,
   },
   {
     title: "Tier 3 \u00b7 controlled substances",
@@ -141,10 +157,24 @@ export function createOrdersPanel(sim: Sim, bus: EventBus<SimEvent>): OrdersPane
   }
 
   function commit(row: Row): void {
-    const units = readNumber(row.field, 9999);
+    let units = readNumber(row.field, 9999);
+    if (row.entry.refrigerated && units > 0) {
+      // The fridge is the ceiling (§14): this row may only claim whatever
+      // cold space the rest of the cart hasn't already spoken for.
+      let free = fridgeFree(sim.snapshot);
+      for (const [skuId, u] of cart) {
+        if (skuId !== row.entry.skuId && rows.get(skuId)?.entry.refrigerated) free -= u;
+      }
+      const capped = Math.max(0, Math.min(units, free));
+      if (capped !== units) {
+        units = capped;
+        row.field.value = units === 0 ? "" : String(units);
+      }
+    }
     if (units > 0) cart.set(row.entry.skuId, units);
     else cart.delete(row.entry.skuId);
     row.root.classList.toggle("orow--ordered", units > 0);
+    refreshFridgeMeter();
     refreshStub();
   }
 
@@ -232,15 +262,47 @@ export function createOrdersPanel(sim: Sim, bus: EventBus<SimEvent>): OrdersPane
     return row;
   }
 
+  // The §14 fridge meter rides under the cold-chain section's note and
+  // tracks held stock, tomorrow's van and the cart being written right now.
+  const fridgeMeterHost = h("div", { cls: "oform__fridge" });
+
+  function refreshFridgeMeter(): void {
+    const state = sim.snapshot;
+    const capacity = fridgeCapacity(state);
+    fridgeMeterHost.replaceChildren();
+    if (capacity === 0) {
+      fridgeMeterHost.append(
+        h("p", {
+          cls: "oform__coldnote",
+          text: `No medical fridge on the floor — the Build palette sells one for ${money(furnitureDef("fridge_medical").cost)}.`,
+        }),
+      );
+      return;
+    }
+    let cartCold = 0;
+    for (const [skuId, units] of cart) {
+      if (rows.get(skuId)?.entry.refrigerated) cartCold += units;
+    }
+    const spoken = refrigeratedHeld(state.store) + refrigeratedInbound(state.store) + cartCold;
+    const free = Math.max(0, capacity - spoken);
+    fridgeMeterHost.append(
+      fridgePips(Math.min(spoken, capacity), capacity),
+      h("span", {
+        cls: "oform__coldnum",
+        text: `${spoken} of ${capacity} cold units spoken for · ${free} to order`,
+      }),
+    );
+  }
+
   for (const section of SECTIONS) {
     const entries = catalog(sim.snapshot).filter(section.keep);
     if (entries.length === 0) continue;
-    list.append(
-      h("div", { cls: "oform__section" }, [
-        h("h3", { cls: "oform__sectitle", text: section.title }),
-        h("p", { cls: "oform__secnote", text: section.note }),
-      ]),
-    );
+    const head = h("div", { cls: "oform__section" }, [
+      h("h3", { cls: "oform__sectitle", text: section.title }),
+      h("p", { cls: "oform__secnote", text: section.note }),
+    ]);
+    if (section.cold) head.append(fridgeMeterHost);
+    list.append(head);
     entries.forEach((entry, index) => {
       const row = buildRow(entry);
       if (index % 2 === 1) row.root.classList.add("orow--stripe");
@@ -439,6 +501,7 @@ export function createOrdersPanel(sim: Sim, bus: EventBus<SimEvent>): OrdersPane
 
   function refreshAll(): void {
     for (const row of rows.values()) refreshRow(row);
+    refreshFridgeMeter();
     refreshStub();
     refreshBank();
     headMin.hidden = !sim.snapshot.store.reorderUnlocked;
@@ -462,6 +525,7 @@ export function createOrdersPanel(sim: Sim, bus: EventBus<SimEvent>): OrdersPane
       row.field.value = "";
       row.root.classList.remove("orow--ordered");
     }
+    refreshFridgeMeter();
     refreshStub();
   }
 
@@ -474,6 +538,7 @@ export function createOrdersPanel(sim: Sim, bus: EventBus<SimEvent>): OrdersPane
       cart.set(skuId, units);
       row.root.classList.add("orow--ordered");
     }
+    refreshFridgeMeter();
     refreshStub();
   }
 

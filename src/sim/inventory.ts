@@ -6,6 +6,7 @@
 
 import { DRUG_DEFS } from "../data/drugs";
 import { OTC_DEFS, otcDef } from "../data/otc";
+import { isRefrigerated } from "./coldchain";
 import { round2 } from "./economy";
 import type { SimEvent } from "./events";
 import type { GameState, OrderLine, StockLine, StoreState } from "./state";
@@ -41,10 +42,22 @@ export function isControlled(skuId: string): boolean {
   return CONTROLLED_IDS.has(skuId);
 }
 
-/** Which bin fixture holds this Rx SKU's stock out front. */
-function binDefFor(skuId: string): "rx_shelf" | "cabinet_controlled" {
-  return isControlled(skuId) ? "cabinet_controlled" : "rx_shelf";
+/** Which bin fixture holds this Rx SKU's stock out front (§14, §25): the
+ *  cabinet for Tier 3, the medical fridge for cold-chain SKUs, else the shelf. */
+export function binFixtureFor(
+  skuId: string,
+): "rx_shelf" | "cabinet_controlled" | "fridge_medical" {
+  if (isControlled(skuId)) return "cabinet_controlled";
+  if (isRefrigerated(skuId)) return "fridge_medical";
+  return "rx_shelf";
 }
+
+/** The fixtures whose bins pool stock by SKU rather than by shelf label. */
+const BIN_FIXTURE_DEFS: ReadonlySet<string> = new Set([
+  "rx_shelf",
+  "cabinet_controlled",
+  "fridge_medical",
+]);
 
 const EMPTY: StockLine = { backroom: 0, shelved: 0 };
 
@@ -175,11 +188,11 @@ export function restockableUnits(state: GameState, furnitureId: string): number 
     }
     return units;
   }
-  if (item.defId === "rx_shelf" || item.defId === "cabinet_controlled") {
+  if (BIN_FIXTURE_DEFS.has(item.defId)) {
     // for-in, not Object.entries: the overlay layer asks every frame (§30).
     let units = 0;
     for (const skuId in store.stock) {
-      if (isOtc(skuId) || binDefFor(skuId) !== item.defId) continue;
+      if (isOtc(skuId) || binFixtureFor(skuId) !== item.defId) continue;
       units += store.stock[skuId]!.backroom;
     }
     return units;
@@ -198,10 +211,10 @@ export function hasEmptySlot(state: GameState, furnitureId: string): boolean {
     if (!slots) return false;
     return slots.some((skuId) => shelvedUnits(store, skuId) === 0);
   }
-  if (item?.defId === "rx_shelf" || item?.defId === "cabinet_controlled") {
+  if (item && BIN_FIXTURE_DEFS.has(item.defId)) {
     // for-in, not Object.entries: the overlay layer asks every frame (§30).
     for (const skuId in store.stock) {
-      if (isOtc(skuId) || binDefFor(skuId) !== item.defId) continue;
+      if (isOtc(skuId) || binFixtureFor(skuId) !== item.defId) continue;
       const line = store.stock[skuId]!;
       if (line.shelved === 0 && line.backroom > 0) return true;
     }
@@ -237,9 +250,9 @@ export function restock(state: GameState, furnitureId: string): number {
     return moved;
   }
 
-  if (item.defId === "rx_shelf" || item.defId === "cabinet_controlled") {
+  if (BIN_FIXTURE_DEFS.has(item.defId)) {
     for (const [skuId, s] of Object.entries(store.stock)) {
-      if (isOtc(skuId) || binDefFor(skuId) !== item.defId || s.backroom <= 0) continue;
+      if (isOtc(skuId) || binFixtureFor(skuId) !== item.defId || s.backroom <= 0) continue;
       moved += s.backroom;
       s.shelved += s.backroom;
       s.backroom = 0;
@@ -264,6 +277,16 @@ export function clearShelf(store: StoreState, furnitureId: string): void {
 export function clearControlled(store: StoreState): void {
   for (const [skuId, s] of Object.entries(store.stock)) {
     if (!isControlled(skuId) || s.shelved <= 0) continue;
+    s.backroom += s.shelved;
+    s.shelved = 0;
+  }
+}
+
+/** The last fridge was sold: cold stock goes back in the box and off the
+ *  market — nothing else can keep it (§14). Nothing spoils outside an outage. */
+export function clearRefrigerated(store: StoreState): void {
+  for (const [skuId, s] of Object.entries(store.stock)) {
+    if (!isRefrigerated(skuId) || s.shelved <= 0) continue;
     s.backroom += s.shelved;
     s.shelved = 0;
   }
