@@ -1,6 +1,6 @@
 // Renovate panel (SPEC §13, §28): the shopfitters' proposal folder. The four
 // generations run down one lineage rail, oldest first — each a proposal card
-// led by its paint chips (the exact colors render/eras.ts will dress the
+// led by its paint chips (the exact colors data/eras.ts will dress the
 // store in, so the card is an honest preview). Built tiers carry a rubber
 // stamp; the next tier carries the buy pill and the closes-today warning in
 // the receipt's plain voice; later tiers wait their turn.
@@ -9,7 +9,7 @@ import type { EventBus } from "../../core/bus";
 import type { SimEvent } from "../../sim/events";
 import { ERA_DEFS, renovationLock, type EraDef } from "../../sim/renovation";
 import type { Sim } from "../../sim/sim";
-import { eraSwatches } from "../../render/eras";
+import { eraSwatches } from "../../data/eras";
 import { Panel } from "../components/Panel";
 import { h } from "../dom";
 import { money } from "../format";

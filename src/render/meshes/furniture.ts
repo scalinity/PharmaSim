@@ -12,7 +12,7 @@
 
 import { BoxGeometry, CylinderGeometry, IcosahedronGeometry, type BufferGeometry } from "three";
 import { furnitureDef } from "../../data/furniture";
-import { eraPalette, type EraPalette } from "../eras";
+import { eraPalette, type EraPalette } from "../../data/eras";
 import { PartsBuilder } from "./parts";
 
 const WHITE = 0xfafaf7;

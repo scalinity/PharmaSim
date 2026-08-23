@@ -1,8 +1,10 @@
 // Era material palettes (SPEC §13, §27): the four generations as color
 // systems. Furniture factories and the store shell both read these — the
-// silhouettes never change between eras, only the materials (§13). The
+// silhouettes never change between eras, only the materials (§13) — and the
 // Renovate sheet's paint chips read the same values, so the proposal the
-// player buys is the store they get. Plain numbers, no three.js imports.
+// player buys is the store they get. Plain numbers, no three.js imports:
+// this is content, not rendering, which is why it lives in data/ where
+// both render/ and ui/ may reach it (§4).
 
 export interface EraShell {
   /** Checkerboard floor tiles. */

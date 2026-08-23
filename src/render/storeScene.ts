@@ -2,7 +2,7 @@
 // south door gap, camera-facing wall fade, the furniture layer synced to sim
 // events, renovation scaffolding while the crew is in, and build-mode
 // overlays (grid, backroom tint, ghost, debug path ribbon). The shell and
-// every fixture reskin from render/eras.ts, rebuilt only on era change (§30).
+// every fixture reskin from data/eras.ts, rebuilt only on era change (§30).
 
 import {
   BoxGeometry,
@@ -25,7 +25,7 @@ import { furnitureDef } from "../data/furniture";
 import type { SimEvent } from "../sim/events";
 import type { Sim } from "../sim/sim";
 import type { PlacedFurniture } from "../sim/state";
-import { eraPalette } from "./eras";
+import { eraPalette } from "../data/eras";
 import { furnitureGeometry } from "./meshes/furniture";
 import { PartsBuilder } from "./meshes/parts";
 

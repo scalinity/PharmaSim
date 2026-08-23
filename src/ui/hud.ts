@@ -21,7 +21,7 @@ import { eraDef } from "../sim/renovation";
 import type { Sim } from "../sim/sim";
 import { ROLE_LABELS } from "../sim/staff";
 import type { DayPhase, GameSpeed } from "../sim/state";
-import { eraSwatches } from "../render/eras";
+import { eraSwatches } from "../data/eras";
 import { fridgePips } from "./components/Meter";
 import { Panel } from "./components/Panel";
 import { PillButton } from "./components/PillButton";
