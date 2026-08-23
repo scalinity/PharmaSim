@@ -8,7 +8,7 @@
 // Customer objects are pooled; the per-tick path is allocation-free.
 
 import { DAY_START_IGM, IGM_PER_TICK } from "../core/clock";
-import { cellIndex, doorCells, FACING, footprintRect, type CellRect } from "../core/grid";
+import { cellIndex, doorCells, FACING, footprintRect } from "../core/grid";
 import { Pathfinder } from "../core/pathfind";
 import { districtById } from "../data/districts";
 import { drugDef, TIER1_DRUGS } from "../data/drugs";
@@ -531,40 +531,34 @@ export class CustomerSystem {
     }
 
     // Queue slot lines: one per register, two lanes per service counter, one
-    // short line per vaccine station (§14).
+    // short line per vaccine station (§14). Placement only guarantees *some*
+    // reachable neighbor of a footprint, not the exact front cell a line
+    // seeds from — so every lane falls back to any open side rather than
+    // ever standing with zero slots, silently turning customers away.
     this.queueSlots.clear();
     for (const item of state.store.furniture) {
       const [fx, fy] = FACING[item.rot]!;
       if (item.defId === "counter_register") {
-        this.queueSlots.set(item.id, this.computeSlots(item.cellX + fx, item.cellY + fy, fx, fy, 1));
+        let slots = this.computeSlots(item.cellX + fx, item.cellY + fy, fx, fy, 1);
+        if (slots.length === 0) slots = this.fallbackSlots(item);
+        this.queueSlots.set(item.id, slots);
       } else if (item.defId === "vaccine_station") {
         // The line forms at the prep-table half — the same local-west cell
         // the counter calls its drop tray (render/meshes/furniture.ts).
-        // Placement only guarantees *some* reachable neighbor, not that
-        // exact cell, so a blocked table front falls back to the screen
-        // half, then to any open side — a station must never stand with a
-        // zero-slot line silently turning every walk-in around (§14).
-        const { drop, pick } = CustomerSystem.laneCells(item);
+        const { drop } = CustomerSystem.laneCells(item);
         let slots = this.computeSlots(drop[0] + fx, drop[1] + fy, fx, fy, 1);
-        if (slots.length === 0) {
-          slots = this.computeSlots(pick[0] + fx, pick[1] + fy, fx, fy, -1);
-        }
-        if (slots.length === 0) {
-          const rect = footprintRect(furnitureDef(item.defId).cells, item.cellX, item.cellY, item.rot);
-          slots = this.slotsFromAnyNeighbor(rect);
-        }
+        if (slots.length === 0) slots = this.fallbackSlots(item);
         this.queueSlots.set(CustomerSystem.vaxLaneId(item.id), slots);
       } else if (item.defId === "counter_service") {
         const { drop, pick } = CustomerSystem.laneCells(item);
-        // Lanes bend apart so the two lines never share cells.
-        this.queueSlots.set(
-          CustomerSystem.dropLaneId(item.id),
-          this.computeSlots(drop[0] + fx, drop[1] + fy, fx, fy, 1),
-        );
-        this.queueSlots.set(
-          CustomerSystem.pickLaneId(item.id),
-          this.computeSlots(pick[0] + fx, pick[1] + fy, fx, fy, -1),
-        );
+        // Lanes bend apart so the two lines never share cells; a lane that
+        // needs the fallback keeps that guarantee by avoiding its sibling.
+        let dropSlots = this.computeSlots(drop[0] + fx, drop[1] + fy, fx, fy, 1);
+        let pickSlots = this.computeSlots(pick[0] + fx, pick[1] + fy, fx, fy, -1);
+        if (dropSlots.length === 0) dropSlots = this.fallbackSlots(item, new Set(pickSlots));
+        if (pickSlots.length === 0) pickSlots = this.fallbackSlots(item, new Set(dropSlots));
+        this.queueSlots.set(CustomerSystem.dropLaneId(item.id), dropSlots);
+        this.queueSlots.set(CustomerSystem.pickLaneId(item.id), pickSlots);
       }
     }
 
@@ -619,18 +613,22 @@ export class CustomerSystem {
     for (const laneId of this.queues.keys()) this.refreshQueue(laneId);
   }
 
-  /** Last-resort queue seeding: the first walkable cell touching the rect,
-   *  with the line walking away from the fixture from there. */
-  private slotsFromAnyNeighbor(rect: CellRect): number[] {
+  /** Last-resort queue seeding when a lane's front cell is walled off: the
+   *  first walkable cell touching the fixture's footprint, with the line
+   *  walking away from there. `avoid` keeps the fallback (seed and snake
+   *  both) off a sibling lane's cells. */
+  private fallbackSlots(item: PlacedFurniture, avoid?: ReadonlySet<number>): number[] {
     const { cols, rows } = this;
+    const rect = footprintRect(furnitureDef(item.defId).cells, item.cellX, item.cellY, item.rot);
     for (let y = rect.y; y < rect.y + rect.h; y++) {
       for (let x = rect.x; x < rect.x + rect.w; x++) {
         for (const [dx, dy] of FACING) {
           const nx = x + dx;
           const ny = y + dy;
           if (nx < 0 || nx >= cols || ny < 0 || ny >= rows) continue;
-          if (!this.staticWalk[cellIndex(cols, nx, ny)]) continue;
-          const slots = this.computeSlots(nx, ny, dx, dy, 1);
+          const cell = cellIndex(cols, nx, ny);
+          if (!this.staticWalk[cell] || avoid?.has(cell)) continue;
+          const slots = this.computeSlots(nx, ny, dx, dy, 1, avoid);
           if (slots.length > 0) return slots;
         }
       }
@@ -639,8 +637,16 @@ export class CustomerSystem {
   }
 
   /** Queue slot cells snaking out from a station front (§27). `bend` picks
-   *  which perpendicular the line prefers, so paired lanes split apart. */
-  private computeSlots(startX: number, startY: number, fx: number, fy: number, bend: -1 | 1): number[] {
+   *  which perpendicular the line prefers, so paired lanes split apart;
+   *  `avoid` (fallback lanes only) hard-excludes a sibling's cells. */
+  private computeSlots(
+    startX: number,
+    startY: number,
+    fx: number,
+    fy: number,
+    bend: -1 | 1,
+    avoid?: ReadonlySet<number>,
+  ): number[] {
     const { cols, rows } = this;
     const slots: number[] = [];
     let dx = fx;
@@ -650,7 +656,7 @@ export class CustomerSystem {
     while (slots.length < QUEUE_MAX_SLOTS) {
       const inBounds = x >= 0 && x < cols && y >= 0 && y < rows;
       const cell = inBounds ? cellIndex(cols, x, y) : -1;
-      if (!inBounds || !this.staticWalk[cell] || slots.includes(cell)) {
+      if (!inBounds || !this.staticWalk[cell] || slots.includes(cell) || avoid?.has(cell)) {
         if (slots.length === 0) break;
         // Bend the line: try the two perpendicular directions off the tail.
         const last = slots[slots.length - 1]!;
@@ -665,7 +671,7 @@ export class CustomerSystem {
           const ny = ly + oy;
           if (nx < 0 || nx >= cols || ny < 0 || ny >= rows) continue;
           const nc = cellIndex(cols, nx, ny);
-          if (!this.staticWalk[nc] || slots.includes(nc)) continue;
+          if (!this.staticWalk[nc] || slots.includes(nc) || avoid?.has(nc)) continue;
           dx = ox;
           dy = oy;
           x = nx;
