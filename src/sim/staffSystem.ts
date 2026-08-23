@@ -164,12 +164,14 @@ export class StaffSystem {
       if (member.role !== "pharmacist" || agent.taskScriptId !== 0) continue;
       if (agent.targetKind === "counsel") continue;
       // Mid-shot at a vaccine station: the needle finishes first (§14).
-      if (
-        agent.targetKind === "post" &&
-        agent.targetId !== null &&
-        this.customers.frontIsPaying(agent.targetId)
-      ) {
-        continue;
+      // Gated on the fixture and on having arrived, so a pharmacist merely
+      // walking somewhere — or standing at any other post — is still free
+      // to take the chat.
+      if (agent.targetKind === "post" && agent.arrived && agent.targetId !== null) {
+        const post = state.store.furniture.find((f) => f.id === agent.targetId);
+        if (post?.defId === "vaccine_station" && this.customers.frontIsPaying(post.id)) {
+          continue;
+        }
       }
       if (!this.isOnDuty(state, member)) continue;
       const mult = taskDuration(member, 1);
@@ -417,16 +419,19 @@ export class StaffSystem {
       }
     } else if (member.role === "pharmacist") {
       // Mid-shot: finish the vaccination in hand before answering the desk —
-      // §8's finish-first rule, same as a cashier mid-checkout.
+      // §8's finish-first rule, same as a cashier mid-checkout. Gated on the
+      // fixture: only a vaccine station's front is ever theirs to hold.
       if (
         agent.targetKind === "post" &&
         agent.targetId !== null &&
         agent.arrived &&
-        state.workingStationId !== agent.targetId &&
-        this.customers.frontIsPaying(agent.targetId)
+        state.workingStationId !== agent.targetId
       ) {
-        agent.idleIgm = 0;
-        return;
+        const post = state.store.furniture.find((f) => f.id === agent.targetId);
+        if (post?.defId === "vaccine_station" && this.customers.frontIsPaying(post.id)) {
+          agent.idleIgm = 0;
+          return;
+        }
       }
       // Own station first (§9) — which is what keeps verify ahead of shots
       // for a desk pharmacist: the vaccine line only gets them once the
