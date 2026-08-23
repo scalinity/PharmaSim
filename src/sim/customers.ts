@@ -787,6 +787,11 @@ export class CustomerSystem {
       }
       if (!serving) continue;
 
+      // A chat waits for its pharmacist to reach the counter (§8); patience
+      // stays frozen in the meantime — they're being seen to.
+      if (serving.counseling && this.staff && !this.staff.counselorReady(counter.id)) {
+        continue;
+      }
       serving.serveLeft -= dIgm;
       if (serving.serveLeft > 0) continue;
 

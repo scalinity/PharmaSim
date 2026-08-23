@@ -173,6 +173,17 @@ export class StaffSystem {
     }
   }
 
+  /** True once the counter's chat can actually run: the counselor stands at
+   *  the counter — or the chat has no staff counselor at all (owner-run, or
+   *  the pharmacist is gone; don't hold the patient hostage). */
+  counselorReady(counterId: string): boolean {
+    const memberId = this.counselors.get(counterId);
+    if (memberId === undefined) return true;
+    const agent = this.agentList.find((a) => a.member.id === memberId);
+    if (!agent || agent.targetKind !== "counsel") return true;
+    return agent.arrived;
+  }
+
   /** Assigned to a station that exists — "stationed", §9. */
   private isOnDuty(state: GameState, member: StaffMember): boolean {
     if (!member.assignment) return false;
@@ -394,7 +405,9 @@ export class StaffSystem {
   /** Advance whatever the agent is standing at: fills, verifies, restocks. */
   private work(state: GameState, agent: StaffAgent, dIgm: number, emit: Emit): void {
     if (agent.targetKind === "counsel") {
-      agent.counselLeft -= dIgm;
+      // The chat clock starts when they reach the counter, in step with the
+      // customer's own timer (counselorReady).
+      if (agent.arrived) agent.counselLeft -= dIgm;
       return;
     }
     if (!agent.arrived) return;
