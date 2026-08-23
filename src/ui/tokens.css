@@ -16,6 +16,12 @@
   --paper-gen3: #fcf9f3;
   --paper-gen4: #fcfcfa;
 
+  /* Papers beyond the register roll: a pinned family note is older stock
+     than any era's paper (so it reads as the family's even on Gen 4's
+     clinical white), and the polaroid frame is photo stock. */
+  --paper-note: #f8efda;
+  --paper-photo: #fdfdfb;
+
   /* Ink at reduced strengths for lines and muted text */
   --ink-75: rgba(32, 48, 43, 0.75); /* small meta text; keeps ≥4.5:1 on paper */
   --ink-60: rgba(32, 48, 43, 0.6);

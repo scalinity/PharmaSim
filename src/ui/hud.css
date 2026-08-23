@@ -3178,7 +3178,7 @@ html.app-shell .topbar {
   font-size: 11px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: rgba(251, 244, 228, 0.75);
+  color: color-mix(in srgb, var(--paper-gen1) 75%, transparent);
 }
 
 .album__page {
@@ -3204,7 +3204,7 @@ html.app-shell .topbar {
 .album__polaroid {
   flex: 0 0 168px;
   padding: 8px 8px 8px;
-  background: #fdfdfb;
+  background: var(--paper-photo);
   border: 1px solid var(--ink-25);
   box-shadow: var(--chip-shadow);
   transform: rotate(-1.6deg);
@@ -3323,9 +3323,7 @@ html.app-shell .topbar {
   position: relative;
   margin: 12px 2px 8px;
   padding: 13px 12px 11px;
-  /* Older paper than any era's register roll — the note always reads as
-     the family's, even on the Gen 4 clinical white. */
-  background: #f8efda;
+  background: var(--paper-note);
   border: 1px solid var(--ink-25);
   box-shadow: var(--chip-shadow);
   transform: rotate(-1.2deg);
