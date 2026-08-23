@@ -61,6 +61,7 @@
 //  Season is derived from `day` (§5), never stored.
 // ===========================================================================
 
+import { isLegacyMoment } from "../data/flavor";
 import type { HiringPool, StaffMember } from "./staff";
 import {
   defaultSettings,
@@ -315,7 +316,10 @@ function validate(file: RawSave): SaveFile {
       typeof moment !== "object" ||
       moment === null ||
       typeof (moment as RawSave).id !== "string" ||
-      typeof (moment as RawSave).day !== "number"
+      typeof (moment as RawSave).day !== "number" ||
+      // The album and the receipt both look the id up in data/flavor.ts,
+      // and that lookup throws — an unknown id must not get past here.
+      !isLegacyMoment((moment as RawSave).id as string)
     ) {
       reject("readable legacy moments");
     }
