@@ -25,6 +25,8 @@ const RX_SEASON_MULT: Record<Season, Readonly<Record<string, number>>> = {
   Winter: { respiratory: 1.8, antibiotics: 1.8 },
 };
 
+// Summer's "more OTC first-aid" flavor (§16) carries no §26 number, so it
+// stays out of the table — the summer lull is the visitor multiplier alone.
 const OTC_SEASON_MULT: Record<Season, Readonly<Record<string, number>>> = {
   Spring: { allergy: 2.5 },
   Summer: {},
@@ -222,7 +224,14 @@ export function advanceWorld(state: GameState, emit: Emit): void {
 
 /** §14: the moment power drops, an unprotected cold chain is lost — every
  *  refrigerated unit, binned or boxed, at wholesale value on the ledger.
- *  Tomorrow's van is still on the road, so inbound stock survives. */
+ *  Tomorrow's van is still on the road, so inbound stock survives.
+ *
+ *  The post is deliberately a real cash movement on top of the stock
+ *  already paid for at order time: the §10 ledger is single-channel cash
+ *  (every receipt line moves the till, and `cashOpen + net = cash` must
+ *  hold), and the doubled sting is exactly the §14 insurance bite the
+ *  generator exists to buy off. Valued at list wholesale — "wholesale
+ *  value" per §14 — not today's discounted or shortage-inflated price. */
 function beginOutage(state: GameState, emit: Emit): void {
   const generator = state.store.furniture.some((f) => f.defId === "generator_backup");
   let units = 0;
