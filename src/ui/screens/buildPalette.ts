@@ -8,6 +8,7 @@
 
 import { rotatedSize } from "../../core/grid";
 import { EXPANSIONS, FURNITURE_DEFS, type FurnitureDef } from "../../data/furniture";
+import { doorwayBlocked } from "../../sim/placement";
 import type { Sim } from "../../sim/sim";
 import { Panel } from "../components/Panel";
 import { h } from "../dom";
@@ -115,6 +116,8 @@ export function createBuildPalette(
     const next = EXPANSIONS[state.store.grid.expansions];
     if (!next) return null;
     if (state.phase !== "morning") return "Morning work only";
+    // The door moves with the wall — anything standing in the new gap first.
+    if (doorwayBlocked(state, next.cols, next.rows)) return "Clear the new doorway first";
     if (state.cash < next.cost) {
       return `Short $${(next.cost - state.cash).toLocaleString("en-US")}`;
     }

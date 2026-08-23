@@ -33,6 +33,21 @@ export function backroomZone(state: GameState, ignoreId?: string): CellRect | nu
   return deriveBackroom(itemRect(counter), counter.rot, cols, rows);
 }
 
+/**
+ * True when furniture stands where the door would sit on a cols×rows floor.
+ * §6 keeps the door south-center, so it moves when the walls do — an
+ * expansion must not drop it under a fixture placed legally on the old floor,
+ * or the flood fill would refuse every placement from then on.
+ */
+export function doorwayBlocked(state: GameState, cols: number, rows: number): boolean {
+  const doors = doorCells(cols, rows);
+  return state.store.furniture.some((item) => {
+    if (furnitureDef(item.defId).walkable) return false;
+    const rect = itemRect(item);
+    return doors.some(([x, y]) => rectContains(rect, x, y));
+  });
+}
+
 /** Why a def can't be bought right now (license/era/equipment gates), or null. */
 export function gateReason(state: GameState, def: FurnitureDef): string | null {
   if (!def.requires) return null;

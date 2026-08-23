@@ -24,7 +24,7 @@ import {
   restock,
 } from "./inventory";
 import { canBuyLicense, licenseDef, ownsLicense } from "./licenses";
-import { validatePlacement } from "./placement";
+import { doorwayBlocked, validatePlacement } from "./placement";
 import { refreshHiringPool, ROLE_STATIONS, type StaffMember } from "./staff";
 import { emptyDayStats, type GameState, type GameSpeed, type OrderLine } from "./state";
 
@@ -262,6 +262,9 @@ export function handleCommand(
       const level = state.store.grid.expansions;
       const next = EXPANSIONS[level];
       if (!next || state.cash < next.cost) return;
+      // The door rides the south wall's center, so it moves when cols does —
+      // furniture legal on the old floor must not end up in the new gap.
+      if (doorwayBlocked(state, next.cols, next.rows)) return;
       state.store.grid.cols = next.cols;
       state.store.grid.rows = next.rows;
       state.store.grid.expansions = level + 1;
