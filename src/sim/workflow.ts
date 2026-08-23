@@ -106,10 +106,10 @@ export function generateBins(state: GameState, correctId: string): string[] {
   const correct = drugDef(correctId);
   const neighbors = confusableNeighbors(correctId);
   const rows = correct.tier === 3 ? CABINET_BIN_ROWS : BIN_ROWS;
-  const fillerPool =
-    correct.tier === 3
-      ? DRUG_DEFS.filter((def) => def.tier === 3)
-      : fillableDrugs(state).filter((def) => def.tier !== 3);
+  // Both faces draw filler through the same license lens: the cabinet holds
+  // the fillable Tier 3, the shelf everything fillable below it.
+  const controlled = correct.tier === 3;
+  const fillerPool = fillableDrugs(state).filter((def) => (def.tier === 3) === controlled);
 
   // Cells with enough orthogonal room for every required neighbor.
   const cellCount = rows * BIN_COLS;
@@ -138,8 +138,16 @@ export function generateBins(state: GameState, correctId: string): string[] {
 
   const used = new Set(bins.filter((id) => id !== ""));
   const filler = shuffle(fillerPool.filter((def) => !used.has(def.id)).map((def) => def.id));
+  // The pool can run dry — the cabinet face is exactly as big as Tier 3, so
+  // one catalog edit would leave holes. Pad from the rest of the catalog
+  // rather than ever put a blank (or a crash) in a bin.
+  const reserve = shuffle(
+    DRUG_DEFS.filter((def) => !used.has(def.id) && !fillerPool.includes(def)).map(
+      (def) => def.id,
+    ),
+  );
   for (let cell = 0; cell < cellCount; cell++) {
-    if (bins[cell] === "") bins[cell] = filler.pop()!;
+    if (bins[cell] === "") bins[cell] = filler.pop() ?? reserve.pop()!;
   }
   return bins;
 }
