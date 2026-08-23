@@ -18,7 +18,11 @@ export interface LegacyPanelHandle {
 
 export function createLegacyPanel(sim: Sim, bus: EventBus<SimEvent>): LegacyPanelHandle {
   let visible = false;
-  /** Count rendered last time — the page rebuilds only when the story grows. */
+  /** Count rendered last time — the page rebuilds only when the story grows.
+   *  Length alone is a sufficient key because state.legacy is append-only
+   *  within a session (recordMoment only ever pushes) and loading a save
+   *  reboots the page; a future path that removes or swaps moments
+   *  in-session would need a real key here. */
   let renderedCount = -1;
 
   const page = h("div", { cls: "album__page" });
