@@ -90,6 +90,9 @@ export class StaffSystem {
   private agentList: StaffAgent[] = [];
   private pathScratch: number[] = [];
   private doors: [number, number][];
+  /** Who took each counter's chat (counter id → member id): endCounsel must
+   *  end that pharmacist's chat, not everyone standing near the counter. */
+  private counselors = new Map<string, string>();
 
   constructor(
     state: GameState,
@@ -134,6 +137,7 @@ export class StaffSystem {
    * no counsel, no hard feelings.
    */
   requestCounsel(state: GameState, counterId: string, baseIgm: number): StationWorker | null {
+    if (this.counselors.has(counterId)) return null; // one chat per counter
     const counter = state.store.furniture.find((f) => f.id === counterId);
     if (!counter) return null;
     for (const agent of this.agentList) {
@@ -143,6 +147,7 @@ export class StaffSystem {
       if (!this.isOnDuty(state, member)) continue;
       const mult = taskDuration(member, 1);
       agent.counselLeft = baseIgm * mult + COUNSEL_SLACK_IGM;
+      this.counselors.set(counterId, member.id);
       this.setTarget(agent, "counsel", counterId, this.counselCell(counter));
       return { mult, charming: member.trait === "charming" };
     }
@@ -151,10 +156,20 @@ export class StaffSystem {
 
   /** The chat wrapped up (or the patient left): back to the desk. */
   endCounsel(counterId: string): void {
+    const memberId = this.counselors.get(counterId);
+    if (memberId === undefined) return;
+    this.counselors.delete(counterId);
     for (const agent of this.agentList) {
-      if (agent.targetKind === "counsel" && agent.targetId === counterId) {
+      if (agent.member.id === memberId && agent.targetKind === "counsel") {
         agent.counselLeft = 0;
       }
+    }
+  }
+
+  /** Drop any chat this member had taken (fired mid-walk, day reset). */
+  private dropCounselor(memberId: string): void {
+    for (const [counterId, holder] of this.counselors) {
+      if (holder === memberId) this.counselors.delete(counterId);
     }
   }
 
@@ -173,6 +188,7 @@ export class StaffSystem {
       const member = state.store.staff.find((m) => m.id === agent.member.id);
       if (!member) {
         this.releaseTask(agent, emit);
+        this.dropCounselor(agent.member.id);
         this.agentList.splice(i, 1);
       } else {
         agent.member = member; // hydrated states carry fresh objects
@@ -225,7 +241,9 @@ export class StaffSystem {
     this.computeBreakCells(state);
     // Paths may now cross new furniture; everyone re-plans from scratch.
     // A held claim goes back on the pile first — think() waits on a claim,
-    // so a break target would otherwise freeze its worker for good.
+    // so a break target would otherwise freeze its worker for good. Chats
+    // are dropped with the targets; the customer side ends its own timer.
+    this.counselors.clear();
     for (const agent of this.agentList) {
       this.releaseTask(agent, emit);
       agent.path.length = 0;
@@ -253,6 +271,7 @@ export class StaffSystem {
 
   /** New morning: the crew is back at their break spots, ready for open. */
   beginDay(state: GameState, emit: Emit): void {
+    this.counselors.clear();
     this.rosterChanged(state, emit);
     this.agentList.forEach((agent, i) => this.placeAtBreak(agent, i, emit));
   }
@@ -301,6 +320,7 @@ export class StaffSystem {
     // Mid-counsel: stay with the patient until the chat (or its slack) ends.
     if (agent.targetKind === "counsel") {
       if (agent.counselLeft > 0) return;
+      this.dropCounselor(member.id);
       agent.targetKind = "break";
       agent.targetId = null;
     }
