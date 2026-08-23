@@ -352,6 +352,12 @@ export function createOrdersPanel(sim: Sim, bus: EventBus<SimEvent>): OrdersPane
     row.sales.textContent = moved === 0 ? "\u2014" : String(moved);
 
     const locked = row.entry.lock !== null;
+    // A SKU that just locked (cabinet sold mid-cart) leaves the cart too —
+    // otherwise the stub totals units the order command would silently drop.
+    if (locked && cart.delete(row.entry.skuId)) {
+      row.field.value = "";
+      row.root.classList.remove("orow--ordered");
+    }
     row.root.classList.toggle("orow--locked", locked);
     row.meta.textContent = row.entry.lock ?? categoryLabel(row.entry.category);
     row.field.disabled = locked;
