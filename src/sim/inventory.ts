@@ -160,13 +160,22 @@ export function restockableUnits(state: GameState, furnitureId: string): number 
   return 0;
 }
 
-/** True when a label on this shelf (or a bin behind it) has run dry. */
+/** True when a label on this shelf (or a bin behind it) has run dry.
+ *  Rx bins count as dry only while the backroom could actually refill them —
+ *  a drug that is simply out of stock is an ordering problem, not a trip. */
 export function hasEmptySlot(state: GameState, furnitureId: string): boolean {
   const store = state.store;
   const item = store.furniture.find((f) => f.id === furnitureId);
-  if (item?.defId !== "otc_shelf") return false;
-  const slots = store.shelfSlots[furnitureId] ?? [];
-  return slots.some((skuId) => shelvedUnits(store, skuId) === 0);
+  if (item?.defId === "otc_shelf") {
+    const slots = store.shelfSlots[furnitureId] ?? [];
+    return slots.some((skuId) => shelvedUnits(store, skuId) === 0);
+  }
+  if (item?.defId === "rx_shelf") {
+    for (const [skuId, line] of Object.entries(store.stock)) {
+      if (!isOtc(skuId) && line.shelved === 0 && line.backroom > 0) return true;
+    }
+  }
+  return false;
 }
 
 /**
