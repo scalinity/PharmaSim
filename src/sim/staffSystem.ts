@@ -12,7 +12,7 @@ import { IGM_PER_TICK } from "../core/clock";
 import { cellIndex, doorCells, FACING, footprintRect, type CellRect } from "../core/grid";
 import { Pathfinder } from "../core/pathfind";
 import { furnitureDef } from "../data/furniture";
-import type { CustomerSystem } from "./customers";
+import { CustomerSystem } from "./customers";
 import type { SimEvent } from "./events";
 import { hasEmptySlot, restock, restockableUnits } from "./inventory";
 import { backroomZone } from "./placement";
@@ -604,16 +604,13 @@ export class StaffSystem {
     return this.anyAdjacent(rect) ?? cellIndex(this.cols, rect.x, rect.y);
   }
 
-  /** Where the pharmacist stands for a counter-side chat: behind pickup. */
+  /** Where the pharmacist stands for a counter-side chat: behind the pickup
+   *  half, wherever the rotation puts it (laneCells is the authority). */
   private counselCell(counter: PlacedFurniture): number {
     const [fx, fy] = FACING[counter.rot]!;
-    // Pickup tray sits on the second lane cell (customers.ts laneCells).
-    const def = furnitureDef(counter.defId);
-    const rect = footprintRect(def.cells, counter.cellX, counter.cellY, counter.rot);
-    const pickX = rect.x + rect.w - 1;
-    const pickY = rect.y + rect.h - 1;
-    const bx = pickX - fx;
-    const by = pickY - fy;
+    const { pick } = CustomerSystem.laneCells(counter);
+    const bx = pick[0] - fx;
+    const by = pick[1] - fy;
     if (this.inBounds(bx, by) && this.walk[cellIndex(this.cols, bx, by)]) {
       return cellIndex(this.cols, bx, by);
     }
