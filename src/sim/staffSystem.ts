@@ -598,7 +598,7 @@ export class StaffSystem {
       }
     }
     if (best !== -1) return best;
-    return this.anyAdjacent(rect) ?? this.workCell(state, shelf);
+    return this.anyAdjacent(rect) ?? this.workCell(shelf);
   }
 
   private anyAdjacent(rect: CellRect): number | null {
