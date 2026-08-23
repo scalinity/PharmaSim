@@ -174,6 +174,18 @@ export function furnitureDef(id: string): FurnitureDef {
   return def;
 }
 
+/** Hint-copy names for workable stations (§8, §28) — the words the hover
+ *  hints and the working-station chip share, kept beside the defs so a new
+ *  station is named once. The team panel's fuller select labels stay its
+ *  own (a different surface wants "Service counter", not "counter"). */
+export const STATION_NAMES: Record<string, string> = {
+  counter_register: "register",
+  counter_service: "counter",
+  fill_bench: "fill bench",
+  verify_desk: "verify desk",
+  vaccine_station: "vaccine station",
+};
+
 /** Palette copy for license gates (§12 names). */
 export const LICENSE_NAMES: Record<string, string> = {
   L2: "Expanded Formulary",

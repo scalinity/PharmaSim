@@ -7,7 +7,7 @@
 import type { EventBus } from "../core/bus";
 import { dayProgress, formatClock, seasonForDay } from "../core/clock";
 import { drugDef } from "../data/drugs";
-import { furnitureDef } from "../data/furniture";
+import { furnitureDef, STATION_NAMES } from "../data/furniture";
 import { otcDef } from "../data/otc";
 import {
   fridgeCapacity,
@@ -609,18 +609,11 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     if (shelfCardId === e.id) setShelfCard(null, 0, 0);
     if (fridgeCardId === e.id) setFridgeCard(null, 0, 0);
   });
-  const STATION_HINT_NAMES: Record<string, string> = {
-    counter_register: "register",
-    counter_service: "counter",
-    fill_bench: "fill bench",
-    verify_desk: "verify desk",
-    vaccine_station: "vaccine station",
-  };
   bus.on("station.changed", (e) => {
     const item = e.stationId
       ? sim.snapshot.store.furniture.find((f) => f.id === e.stationId)
       : undefined;
-    const name = item ? (STATION_HINT_NAMES[item.defId] ?? "station") : null;
+    const name = item ? (STATION_NAMES[item.defId] ?? "station") : null;
     workingHint = name ? `Working the ${name} — click anywhere else to step away` : null;
     refreshStationHint();
   });

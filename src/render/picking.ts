@@ -7,22 +7,13 @@ import { Plane, Raycaster, Vector2, Vector3, type Mesh, type OrthographicCamera 
 import type { EventBus } from "../core/bus";
 import { cellIndex, doorCells, rotatedSize, type Rot } from "../core/grid";
 import { Pathfinder } from "../core/pathfind";
-import { furnitureDef } from "../data/furniture";
+import { furnitureDef, STATION_NAMES } from "../data/furniture";
 import type { SimEvent } from "../sim/events";
 import type { Sim } from "../sim/sim";
 import type { RxBinBoard } from "./rxBins";
 import { FLOOR_Y, type StoreScene } from "./storeScene";
 
 const CLICK_SLOP_PX = 5;
-
-/** Stations the player can work mid-shift (§8, §14), with hint copy names. */
-const STATION_NAMES: Record<string, string> = {
-  counter_register: "register",
-  counter_service: "counter",
-  fill_bench: "fill bench",
-  verify_desk: "verify desk",
-  vaccine_station: "vaccine station",
-};
 
 /** Fixtures a click restocks from the backroom (§11, §14, §25). */
 const RESTOCK_DEFS = new Set(["otc_shelf", "rx_shelf", "cabinet_controlled", "fridge_medical"]);
