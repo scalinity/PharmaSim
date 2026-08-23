@@ -44,12 +44,21 @@ export const FILL_IGM = 6; // §26 task durations
 export const VERIFY_IGM = 8;
 export const BIN_ROWS = 4; // shelf bin face (render/meshes/furniture.ts)
 export const BIN_COLS = 3;
-/** The cabinet's face is a 3×3 of lockbox bins — Tier 3 is nine SKUs (§25). */
-export const CABINET_BIN_ROWS = 3;
-/** The fridge swings open on a 2×2 of cold bins — the §25 refrigerated
- *  catalog is exactly four SKUs, so every one is always in reach. */
-export const FRIDGE_BIN_ROWS = 2;
-export const FRIDGE_BIN_COLS = 2;
+
+/** Per-fixture bin-face shape — the one contract the sim's bin generation
+ *  and the render layer's label board both read (§8, §25), so the drug
+ *  behind a bin and the label drawn on it can never disagree: the shelf's
+ *  4×3 spread, the cabinet's 3×3 of Tier-3 lockboxes, and the fridge's 2×2
+ *  of cold bins (the refrigerated catalog is exactly four SKUs, so every
+ *  one is always in reach). */
+export const BIN_FACES: Record<
+  ReturnType<typeof binFixtureFor>,
+  { rows: number; cols: number }
+> = {
+  rx_shelf: { rows: BIN_ROWS, cols: BIN_COLS },
+  cabinet_controlled: { rows: 3, cols: BIN_COLS },
+  fridge_medical: { rows: 2, cols: 2 },
+};
 
 function shuffle<T>(items: T[]): T[] {
   for (let i = items.length - 1; i > 0; i--) {
@@ -131,16 +140,12 @@ export function confusableNeighbors(correctId: string): string[] {
  */
 export function generateBins(state: GameState, correctId: string): string[] {
   const fixture = binFixtureFor(correctId);
-  const rows =
-    fixture === "cabinet_controlled"
-      ? CABINET_BIN_ROWS
-      : fixture === "fridge_medical"
-        ? FRIDGE_BIN_ROWS
-        : BIN_ROWS;
-  const cols = fixture === "fridge_medical" ? FRIDGE_BIN_COLS : BIN_COLS;
-  // A 2×2 face has two orthogonal slots at most — trim the neighbor list to
-  // what the fixture can actually seat beside the correct bin.
-  const neighbors = confusableNeighbors(correctId).slice(0, fixture === "fridge_medical" ? 2 : 3);
+  const { rows, cols } = BIN_FACES[fixture];
+  // Trim the neighbor list to what the face can seat orthogonally beside
+  // the correct bin — a 2×2 face has two slots at most, derived from the
+  // shape so a resized face keeps its layout satisfiable.
+  const maxNeighbors = Math.min(3, Math.min(rows - 1, 2) + Math.min(cols - 1, 2));
+  const neighbors = confusableNeighbors(correctId).slice(0, maxNeighbors);
   // Each face draws filler through the same storage lens: the cabinet holds
   // the fillable Tier 3, the fridge the whole cold catalog (§25 — four SKUs,
   // licensed or not, because that is what a fridge physically holds), and the

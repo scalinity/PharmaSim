@@ -22,7 +22,7 @@ import { footprintRect, rectCenterWorld } from "../core/grid";
 import { drugDef } from "../data/drugs";
 import { furnitureDef } from "../data/furniture";
 import type { PlacedFurniture } from "../sim/state";
-import { BIN_COLS, BIN_ROWS } from "../sim/workflow";
+import { BIN_COLS, BIN_FACES, BIN_ROWS } from "../sim/workflow";
 import { FLOOR_Y } from "./storeScene";
 
 // Per-fixture face metrics. The shelf's numbers come from its mesh's bin
@@ -30,11 +30,12 @@ import { FLOOR_Y } from "./storeScene";
 // scaled to span exactly its 1 m cell — the 0.82 m safe plus a hand's width
 // of swung-open door rack — and centered on the body's height, in front of
 // its deeper 0.66 m carcass. The fridge's 2×2 rides its two door halves,
-// split at the mesh's y 0.62 door line, clear of the handle. `view` is how
-// much tighter the §8 fill glide frames the smaller face so a label keeps
-// its on-screen size (main.ts).
+// split at the mesh's y 0.62 door line, clear of the handle. The face's
+// row/column *shape* is not declared here — it comes from the sim's
+// BIN_FACES contract, so the label drawn on a bin and the drug behind it
+// can never disagree. `view` is how much tighter the §8 fill glide frames
+// the smaller face so a label keeps its on-screen size (main.ts).
 interface FaceLayout {
-  cols: number; // bin columns across the face
   x0: number; // first column's center
   dx: number; // column pitch
   y0: number; // bottom row's center
@@ -46,7 +47,6 @@ interface FaceLayout {
 }
 
 const SHELF_FACE: FaceLayout = {
-  cols: 3,
   x0: -0.6,
   dx: 0.6,
   y0: 0.36,
@@ -58,7 +58,6 @@ const SHELF_FACE: FaceLayout = {
 };
 
 const CABINET_FACE: FaceLayout = {
-  cols: 3,
   x0: -0.345,
   dx: 0.345,
   y0: 0.52,
@@ -70,7 +69,6 @@ const CABINET_FACE: FaceLayout = {
 };
 
 const FRIDGE_FACE: FaceLayout = {
-  cols: 2,
   x0: -0.19,
   dx: 0.38,
   y0: 0.55,
@@ -152,8 +150,10 @@ export class RxBinBoard {
   private texture: CanvasTexture;
   private bins: string[] | null = null;
   private hoverIndex = -1;
-  /** Current face layout — quads rebuild when a fill swaps fixtures. */
-  private rows = 4;
+  /** Current face shape (from BIN_FACES) and metrics — quads rebuild when a
+   *  fill swaps fixtures. */
+  private rows = BIN_ROWS;
+  private cols = BIN_COLS;
   private layout: FaceLayout = SHELF_FACE;
 
   constructor() {
@@ -184,15 +184,15 @@ export class RxBinBoard {
 
   /** One quad per bin at its face position; UVs point into the atlas tile. */
   private buildQuads(): BufferGeometry {
-    const { rows, layout } = this;
-    const count = rows * layout.cols;
+    const { rows, cols, layout } = this;
+    const count = rows * cols;
     const positions = new Float32Array(count * 6 * 3);
     const uvs = new Float32Array(count * 6 * 2);
     let p = 0;
     let t = 0;
     for (let i = 0; i < count; i++) {
-      const col = i % layout.cols;
-      const visualRow = Math.floor(i / layout.cols); // 0 = top row
+      const col = i % cols;
+      const visualRow = Math.floor(i / cols); // 0 = top row
       const cx = layout.x0 + col * layout.dx;
       const cy = layout.y0 + (rows - 1 - visualRow) * layout.dy;
       const x0 = cx - layout.w / 2;
@@ -234,19 +234,20 @@ export class RxBinBoard {
   }
 
   /** Show the labeled bins on this fixture for the fill's drug layout — the
-   *  face shape follows the fixture (shelf 4×3, cabinet 3×3, fridge 2×2). */
+   *  face shape comes from the sim's BIN_FACES contract for the fixture. */
   show(shelf: PlacedFurniture, cols: number, rows: number, bins: string[]): void {
     this.bins = bins;
 
+    const face = BIN_FACES[shelf.defId as keyof typeof BIN_FACES] ?? BIN_FACES.rx_shelf;
     const layout =
       shelf.defId === "cabinet_controlled"
         ? CABINET_FACE
         : shelf.defId === "fridge_medical"
           ? FRIDGE_FACE
           : SHELF_FACE;
-    const binRows = bins.length / layout.cols;
-    if (binRows !== this.rows || layout !== this.layout) {
-      this.rows = binRows;
+    if (face.rows !== this.rows || face.cols !== this.cols || layout !== this.layout) {
+      this.rows = face.rows;
+      this.cols = face.cols;
       this.layout = layout;
       this.labelMesh.geometry.dispose();
       this.labelMesh.geometry = this.buildQuads();
@@ -254,7 +255,7 @@ export class RxBinBoard {
       this.hoverFrame.geometry = new PlaneGeometry(layout.w + 0.08, layout.h + 0.08);
       this.hoverFrame.position.z = layout.z - 0.004;
     }
-    drawAtlas(this.canvas, bins, layout.cols);
+    drawAtlas(this.canvas, bins, face.cols);
     this.texture.needsUpdate = true;
 
     const def = furnitureDef(shelf.defId);
@@ -262,7 +263,7 @@ export class RxBinBoard {
     const [wx, wz] = rectCenterWorld(cols, rows, rect);
     this.group.position.set(wx, FLOOR_Y, wz);
     this.group.rotation.y = shelf.rot * (Math.PI / 2);
-    this.focus.set(wx, FLOOR_Y + layout.y0 + ((binRows - 1) * layout.dy) / 2, wz);
+    this.focus.set(wx, FLOOR_Y + layout.y0 + ((face.rows - 1) * layout.dy) / 2, wz);
     this.setHover(-1);
     this.group.visible = true;
   }
@@ -292,8 +293,8 @@ export class RxBinBoard {
       this.hoverFrame.visible = false;
       return;
     }
-    const col = index % this.layout.cols;
-    const visualRow = Math.floor(index / this.layout.cols);
+    const col = index % this.cols;
+    const visualRow = Math.floor(index / this.cols);
     this.hoverFrame.position.x = this.layout.x0 + col * this.layout.dx;
     this.hoverFrame.position.y = this.layout.y0 + (this.rows - 1 - visualRow) * this.layout.dy;
     this.hoverFrame.visible = true;
