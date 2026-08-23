@@ -8,7 +8,7 @@
 // Customer objects are pooled; the per-tick path is allocation-free.
 
 import { DAY_START_IGM, IGM_PER_TICK } from "../core/clock";
-import { cellIndex, doorCells, FACING, footprintRect } from "../core/grid";
+import { cellIndex, doorCells, FACING, footprintRect, type CellRect } from "../core/grid";
 import { Pathfinder } from "../core/pathfind";
 import { districtById } from "../data/districts";
 import { drugDef, TIER1_DRUGS } from "../data/drugs";
@@ -532,11 +532,20 @@ export class CustomerSystem {
       } else if (item.defId === "vaccine_station") {
         // The line forms at the prep-table half — the same local-west cell
         // the counter calls its drop tray (render/meshes/furniture.ts).
-        const { drop } = CustomerSystem.laneCells(item);
-        this.queueSlots.set(
-          CustomerSystem.vaxLaneId(item.id),
-          this.computeSlots(drop[0] + fx, drop[1] + fy, fx, fy, 1),
-        );
+        // Placement only guarantees *some* reachable neighbor, not that
+        // exact cell, so a blocked table front falls back to the screen
+        // half, then to any open side — a station must never stand with a
+        // zero-slot line silently turning every walk-in around (§14).
+        const { drop, pick } = CustomerSystem.laneCells(item);
+        let slots = this.computeSlots(drop[0] + fx, drop[1] + fy, fx, fy, 1);
+        if (slots.length === 0) {
+          slots = this.computeSlots(pick[0] + fx, pick[1] + fy, fx, fy, -1);
+        }
+        if (slots.length === 0) {
+          const rect = footprintRect(furnitureDef(item.defId).cells, item.cellX, item.cellY, item.rot);
+          slots = this.slotsFromAnyNeighbor(rect);
+        }
+        this.queueSlots.set(CustomerSystem.vaxLaneId(item.id), slots);
       } else if (item.defId === "counter_service") {
         const { drop, pick } = CustomerSystem.laneCells(item);
         // Lanes bend apart so the two lines never share cells.
@@ -600,6 +609,25 @@ export class CustomerSystem {
       } else if (c.mode === "leave") this.beginLeave(c, c.angry);
     }
     for (const laneId of this.queues.keys()) this.refreshQueue(laneId);
+  }
+
+  /** Last-resort queue seeding: the first walkable cell touching the rect,
+   *  with the line walking away from the fixture from there. */
+  private slotsFromAnyNeighbor(rect: CellRect): number[] {
+    const { cols, rows } = this;
+    for (let y = rect.y; y < rect.y + rect.h; y++) {
+      for (let x = rect.x; x < rect.x + rect.w; x++) {
+        for (const [dx, dy] of FACING) {
+          const nx = x + dx;
+          const ny = y + dy;
+          if (nx < 0 || nx >= cols || ny < 0 || ny >= rows) continue;
+          if (!this.staticWalk[cellIndex(cols, nx, ny)]) continue;
+          const slots = this.computeSlots(nx, ny, dx, dy, 1);
+          if (slots.length > 0) return slots;
+        }
+      }
+    }
+    return [];
   }
 
   /** Queue slot cells snaking out from a station front (§27). `bend` picks
