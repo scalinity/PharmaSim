@@ -62,7 +62,7 @@ export function eraDef(era: number): EraDef {
 }
 
 /** The renovation the store could buy next, or null at Gen 4. */
-export function renovationTarget(state: GameState): EraDef | null {
+function renovationTarget(state: GameState): EraDef | null {
   return state.era >= 4 ? null : eraDef(state.era + 1);
 }
 

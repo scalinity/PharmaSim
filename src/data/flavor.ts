@@ -18,7 +18,7 @@ export interface LegacyMomentDef {
 const PAPER = "#fbf4e4";
 const INK = "#20302b";
 
-export const LEGACY_MOMENTS: readonly LegacyMomentDef[] = [
+const LEGACY_MOMENTS: readonly LegacyMomentDef[] = [
   {
     id: "first_profit",
     title: "The first good day",
