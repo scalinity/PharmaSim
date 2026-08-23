@@ -113,11 +113,13 @@ export function licenseGates(state: GameState, def: LicenseDef): LicenseGate[] {
     gates.push({ met: false, text: `${def.needsBranches} branches — you run 1` });
   }
   const covered = state.cash >= def.cost;
+  // Cash is exact to the cent; the shortfall reads in whole dollars.
+  const short = Math.ceil(def.cost - state.cash);
   gates.push({
     met: covered,
     text: covered
       ? `$${def.cost.toLocaleString("en-US")} fee — the till covers it`
-      : `$${def.cost.toLocaleString("en-US")} fee — short $${(def.cost - state.cash).toLocaleString("en-US")}`,
+      : `$${def.cost.toLocaleString("en-US")} fee — short $${short.toLocaleString("en-US")}`,
   });
   return gates;
 }
@@ -163,6 +165,10 @@ for (const def of DRUG_DEFS) {
  * category's SKUs by demand weight. Scripts for SKUs the store can't fill are
  * simply never routed here — no artificial multiplier, more fillable
  * categories = more scripts (§17, milestone 08).
+ *
+ * This is pure district math, not licensing — it lives beside its first
+ * consumer (fillableDrugs) until milestone 12 builds the §17 demand module,
+ * and CATEGORY_WEIGHT above moves with it.
  */
 export function drugDailyDemand(district: District, def: DrugDef): number {
   let perDay = (district.population / 1000) * (district.prevalence[def.category] ?? 0);
