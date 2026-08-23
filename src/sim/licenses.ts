@@ -95,9 +95,11 @@ export interface LicenseGate {
 export function licenseGates(state: GameState, def: LicenseDef): LicenseGate[] {
   const gates: LicenseGate[] = [];
   if (def.stars > 0) {
-    const met = state.repStars >= def.stars;
+    // repStars accumulates float deltas, so compare at the precision shown —
+    // a form must never read "you're at 2.0★" beside an unmet 2.0★ box.
+    const shown = Math.round(state.repStars * 10) / 10;
     gates.push({
-      met,
+      met: shown >= def.stars,
       text: `${def.stars.toFixed(1)}★ standing — you're at ${state.repStars.toFixed(1)}★`,
     });
   }
