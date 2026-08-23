@@ -560,8 +560,16 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
   // --- Keys: Space pause toggle, 1 / 2 speeds, N dev stress spawn ---
 
   window.addEventListener("keydown", (e) => {
-    // Digits typed into the order form are quantities, not shortcuts.
-    if (e.target instanceof HTMLInputElement && e.target.type === "text") return;
+    // A focused form control owns the keyboard: order-form digits are
+    // quantities, select type-ahead isn't a panel toggle, Space belongs
+    // to the control.
+    if (
+      e.target instanceof HTMLInputElement ||
+      e.target instanceof HTMLSelectElement ||
+      e.target instanceof HTMLTextAreaElement
+    ) {
+      return;
+    }
     if (e.code === "Space") {
       if (e.target instanceof HTMLElement) {
         const button = e.target.closest("button");
