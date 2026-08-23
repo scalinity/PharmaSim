@@ -263,7 +263,10 @@ export function handleCommand(
       );
       if (station) member.assignment = { stationId: station.id };
       state.store.staff.push(member);
-      emit({ type: "staff.hired", member });
+      // Events carry copies, never live roster state (furniture.placed style).
+      const hired: StaffMember = { ...member };
+      if (member.assignment) hired.assignment = { ...member.assignment };
+      emit({ type: "staff.hired", member: hired });
       return;
     }
     case "staff.fire": {
