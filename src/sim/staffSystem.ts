@@ -39,6 +39,9 @@ const RESTOCK_IGM = 6; // a §26-scale task; ×speed curve like the rest
 /** A Stock Hawk won't make the trip for a couple of loose boxes — unless a
  *  label has run completely dry. */
 const RESTOCK_MIN_UNITS = 6;
+/** The shelf scan allocates (restockableUnits builds arrays), so an idle
+ *  hawk re-checks on this interval instead of every tick (§30). */
+const RESTOCK_SCAN_IGM = 5;
 const COUNSEL_SLACK_IGM = 3; // agent timer backs up the customer's, not vice versa
 
 const FRONT_DEFS: ReadonlySet<string> = new Set(["counter_register", "counter_service"]);
@@ -68,6 +71,8 @@ export interface StaffAgent {
   taskKind: "fill" | "verify" | null;
   taskLeft: number;
   restockLeft: number;
+  /** Igm until the next Stock Hawk shelf scan (≤0 = scan now). */
+  restockCooldown: number;
   counselLeft: number;
   idleIgm: number;
   path: number[];
@@ -226,6 +231,7 @@ export class StaffSystem {
         taskKind: null,
         taskLeft: 0,
         restockLeft: 0,
+        restockCooldown: 0,
         counselLeft: 0,
         idleIgm: 0,
         path: [],
@@ -381,16 +387,22 @@ export class StaffSystem {
       return;
     }
 
-    // Mid-restock: finish the trip.
-    if (agent.targetKind === "shelf" && agent.restockLeft > 0) return;
+    // Mid-restock (walking or working): finish the trip. The own-station
+    // branches above still preempt it when real work appears.
+    if (agent.targetKind === "shelf" && (agent.restockLeft > 0 || !agent.arrived)) return;
 
-    // Stock Hawks top the floor up between tasks (§9).
+    // Stock Hawks top the floor up between tasks (§9), re-scanning on a
+    // short interval rather than every tick.
     if (member.trait === "stockhawk") {
-      const shelf = this.restockTarget(state, agent);
-      if (shelf) {
-        agent.idleIgm = 0;
-        this.setTarget(agent, "shelf", shelf.id, this.shelfCell(shelf, agent));
-        return;
+      agent.restockCooldown -= IGM_PER_TICK;
+      if (agent.restockCooldown <= 0) {
+        agent.restockCooldown = RESTOCK_SCAN_IGM;
+        const shelf = this.restockTarget(state, agent);
+        if (shelf) {
+          agent.idleIgm = 0;
+          this.setTarget(agent, "shelf", shelf.id, this.shelfCell(shelf, agent));
+          return;
+        }
       }
     }
 
