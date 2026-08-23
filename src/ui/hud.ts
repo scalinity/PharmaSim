@@ -652,7 +652,7 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
   bus.on("day.phaseChanged", (e) => {
     setDay(e.day);
     setPhase(e.phase);
-    refreshTicker(); // the close adds the forecast; the morning turns the page
+    refreshTicker(); // the morning turns the page: season, shortage edges, storms
   });
   bus.on("speed.changed", (e) => setSpeed(e.speed));
   bus.on("cash.changed", (e) => {

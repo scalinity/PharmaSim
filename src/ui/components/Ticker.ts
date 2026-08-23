@@ -64,10 +64,11 @@ export function worldHeadlines(state: GameState): TickerItem[] {
     }
   }
 
+  // The forecast itself is the receipt's to break (§16: it prints on the
+  // previous evening's paper, where the wire is already quiet) — the ticker
+  // picks the storm up on the day it lands.
   for (const storm of events.storms) {
-    if (storm.day === state.day + 1 && state.phase === "close") {
-      items.push({ day: state.day, text: "Storm expected tomorrow — generators hold the cold" });
-    } else if (storm.day === state.day) {
+    if (storm.day === state.day) {
       items.push(
         outageActive(state)
           ? { day: state.day, text: "Power is out across Old Town — registers on the cash box" }
