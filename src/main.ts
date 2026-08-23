@@ -119,7 +119,8 @@ bus.on("rx.fillStarted", (e) => {
   if (!shelf) return;
   binBoard.show(shelf, cols, rows, e.bins);
   const [fx, fy] = FACING[shelf.rot]!;
-  rig.glideTo(binBoard.focus, fillViewHeight(), Math.atan2(fx, fy));
+  // The cabinet's smaller face needs a tighter frame to keep labels readable.
+  rig.glideTo(binBoard.focus, fillViewHeight() * binBoard.viewScale, Math.atan2(fx, fy));
 });
 bus.on("rx.fillEnded", () => {
   binBoard.hide();

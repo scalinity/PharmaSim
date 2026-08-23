@@ -24,17 +24,44 @@ import type { PlacedFurniture } from "../sim/state";
 import { BIN_COLS, BIN_ROWS } from "../sim/workflow";
 import { FLOOR_Y } from "./storeScene";
 
-// Bin face geometry from render/meshes/furniture.ts rxShelf(). The cabinet
-// keeps the same label metrics (readability first) but sits deeper, so its
-// labels hang a little further out to clear the safe's 0.66 m body.
-const BIN_X0 = -0.6;
-const BIN_DX = 0.6;
-const BIN_Y0 = 0.36;
-const BIN_DY = 0.42;
-const SHELF_LABEL_Z = 0.26; // in front of the bin boxes and their paper strips
-const CABINET_LABEL_Z = 0.38;
-const LABEL_W = 0.54;
-const LABEL_H = 0.37;
+// Per-fixture face metrics. The shelf's numbers come from its mesh's bin
+// face (render/meshes/furniture.ts rxShelf); the cabinet's are the same face
+// scaled to span exactly its 1 m cell — the 0.82 m safe plus a hand's width
+// of swung-open door rack — and centered on the body's height, in front of
+// its deeper 0.66 m carcass. `view` is how much tighter the §8 fill glide
+// frames the smaller face so a label keeps its on-screen size (main.ts).
+interface FaceLayout {
+  x0: number; // first column's center
+  dx: number; // column pitch
+  y0: number; // bottom row's center
+  dy: number; // row pitch
+  w: number; // label quad width
+  h: number; // label quad height
+  z: number; // label plane, in front of the fixture body
+  view: number; // fill-glide view-height multiplier
+}
+
+const SHELF_FACE: FaceLayout = {
+  x0: -0.6,
+  dx: 0.6,
+  y0: 0.36,
+  dy: 0.42,
+  w: 0.54,
+  h: 0.37,
+  z: 0.26,
+  view: 1,
+};
+
+const CABINET_FACE: FaceLayout = {
+  x0: -0.345,
+  dx: 0.345,
+  y0: 0.52,
+  dy: 0.242,
+  w: 0.31,
+  h: 0.213,
+  z: 0.38,
+  view: 0.575,
+};
 
 const TILE_W = 256;
 const TILE_H = 128;
@@ -109,7 +136,7 @@ export class RxBinBoard {
   private hoverIndex = -1;
   /** Current face layout — quads rebuild when a fill swaps fixtures. */
   private rows = 4;
-  private labelZ = SHELF_LABEL_Z;
+  private layout: FaceLayout = SHELF_FACE;
 
   constructor() {
     this.texture = new CanvasTexture(this.canvas);
@@ -124,10 +151,10 @@ export class RxBinBoard {
       new MeshBasicMaterial({ map: this.texture }),
     );
     this.hoverFrame = new Mesh(
-      new PlaneGeometry(LABEL_W + 0.08, LABEL_H + 0.08),
+      new PlaneGeometry(this.layout.w + 0.08, this.layout.h + 0.08),
       new MeshBasicMaterial({ color: 0xe7a03c }),
     );
-    this.hoverFrame.position.z = this.labelZ - 0.004;
+    this.hoverFrame.position.z = this.layout.z - 0.004;
     this.hoverFrame.visible = false;
     this.group.add(this.labelMesh, this.hoverFrame);
     this.group.visible = false;
@@ -139,7 +166,7 @@ export class RxBinBoard {
 
   /** One quad per bin at its face position; UVs point into the atlas tile. */
   private buildQuads(): BufferGeometry {
-    const rows = this.rows;
+    const { rows, layout } = this;
     const count = rows * BIN_COLS;
     const positions = new Float32Array(count * 6 * 3);
     const uvs = new Float32Array(count * 6 * 2);
@@ -148,12 +175,12 @@ export class RxBinBoard {
     for (let i = 0; i < count; i++) {
       const col = i % BIN_COLS;
       const visualRow = Math.floor(i / BIN_COLS); // 0 = top row
-      const cx = BIN_X0 + col * BIN_DX;
-      const cy = BIN_Y0 + (rows - 1 - visualRow) * BIN_DY;
-      const x0 = cx - LABEL_W / 2;
-      const x1 = cx + LABEL_W / 2;
-      const y0 = cy - LABEL_H / 2;
-      const y1 = cy + LABEL_H / 2;
+      const cx = layout.x0 + col * layout.dx;
+      const cy = layout.y0 + (rows - 1 - visualRow) * layout.dy;
+      const x0 = cx - layout.w / 2;
+      const x1 = cx + layout.w / 2;
+      const y0 = cy - layout.h / 2;
+      const y1 = cy + layout.h / 2;
       // CanvasTexture flips Y: v = 1 is the canvas top. The atlas is always
       // BIN_ROWS tall (see drawAtlas), whatever face is showing.
       const u0 = col / BIN_COLS;
@@ -172,7 +199,7 @@ export class RxBinBoard {
       for (const [x, y, u, v] of quad) {
         positions[p++] = x;
         positions[p++] = y;
-        positions[p++] = this.labelZ;
+        positions[p++] = layout.z;
         uvs[t++] = u;
         uvs[t++] = v;
       }
@@ -183,19 +210,26 @@ export class RxBinBoard {
     return geometry;
   }
 
+  /** How much tighter the fill glide should frame the current face (§8). */
+  get viewScale(): number {
+    return this.layout.view;
+  }
+
   /** Show the labeled bins on this fixture for the fill's drug layout — the
    *  face shape follows the bins array (12 = shelf 4×3, 9 = cabinet 3×3). */
   show(shelf: PlacedFurniture, cols: number, rows: number, bins: string[]): void {
     this.bins = bins;
 
     const binRows = bins.length / BIN_COLS;
-    const labelZ = shelf.defId === "cabinet_controlled" ? CABINET_LABEL_Z : SHELF_LABEL_Z;
-    if (binRows !== this.rows || labelZ !== this.labelZ) {
+    const layout = shelf.defId === "cabinet_controlled" ? CABINET_FACE : SHELF_FACE;
+    if (binRows !== this.rows || layout !== this.layout) {
       this.rows = binRows;
-      this.labelZ = labelZ;
+      this.layout = layout;
       this.labelMesh.geometry.dispose();
       this.labelMesh.geometry = this.buildQuads();
-      this.hoverFrame.position.z = labelZ - 0.004;
+      this.hoverFrame.geometry.dispose();
+      this.hoverFrame.geometry = new PlaneGeometry(layout.w + 0.08, layout.h + 0.08);
+      this.hoverFrame.position.z = layout.z - 0.004;
     }
     drawAtlas(this.canvas, bins);
     this.texture.needsUpdate = true;
@@ -205,7 +239,7 @@ export class RxBinBoard {
     const [wx, wz] = rectCenterWorld(cols, rows, rect);
     this.group.position.set(wx, FLOOR_Y, wz);
     this.group.rotation.y = shelf.rot * (Math.PI / 2);
-    this.focus.set(wx, FLOOR_Y + BIN_Y0 + ((binRows - 1) * BIN_DY) / 2, wz);
+    this.focus.set(wx, FLOOR_Y + layout.y0 + ((binRows - 1) * layout.dy) / 2, wz);
     this.setHover(-1);
     this.group.visible = true;
   }
@@ -237,8 +271,8 @@ export class RxBinBoard {
     }
     const col = index % BIN_COLS;
     const visualRow = Math.floor(index / BIN_COLS);
-    this.hoverFrame.position.x = BIN_X0 + col * BIN_DX;
-    this.hoverFrame.position.y = BIN_Y0 + (this.rows - 1 - visualRow) * BIN_DY;
+    this.hoverFrame.position.x = this.layout.x0 + col * this.layout.dx;
+    this.hoverFrame.position.y = this.layout.y0 + (this.rows - 1 - visualRow) * this.layout.dy;
     this.hoverFrame.visible = true;
   }
 }
