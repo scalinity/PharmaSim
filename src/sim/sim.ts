@@ -41,8 +41,8 @@ export class Sim {
     this.emit = (event) => this.bus.emit(event);
     this.workflow = new RxWorkflow();
     this.customers = new CustomerSystem(this.state, this.workflow);
+    // Binds itself back into the customer system on construction.
     this.staff = new StaffSystem(this.state, this.workflow, this.customers);
-    this.customers.bindStaff(this.staff);
     // New games and freshly migrated saves start with an undrawn pool (§9).
     refreshHiringPool(this.state);
   }

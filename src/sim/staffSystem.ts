@@ -102,6 +102,10 @@ export class StaffSystem {
     this.pathfinder = new Pathfinder(cols, rows);
     this.walk = new Uint8Array(cols * rows);
     this.doors = doorCells(cols, rows);
+    // Back-register with the customer system here, so the two can never be
+    // constructed half-wired (§9: stations manned by staff, not just the
+    // player).
+    customers.bindStaff(this);
     this.layoutChanged(state, NO_EMIT);
     this.rosterChanged(state, NO_EMIT);
     // A loaded save starts the crew already on the floor, at their spots.

@@ -292,7 +292,8 @@ export class CustomerSystem {
   }
 
   /** Staffed-era wiring (§9): lets stations be manned by staff, not just
-   *  the player, and counsel chats find a stationed pharmacist. */
+   *  the player, and counsel chats find a stationed pharmacist. Called by
+   *  StaffSystem's own constructor, so the pair can't end up half-wired. */
   bindStaff(staff: StaffSystem): void {
     this.staff = staff;
   }
