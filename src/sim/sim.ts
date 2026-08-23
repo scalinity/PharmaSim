@@ -65,7 +65,7 @@ export class Sim {
       case "furniture.move":
       case "furniture.sell":
         this.customers.layoutChanged(this.state, this.emit);
-        this.staff.layoutChanged(this.state);
+        this.staff.layoutChanged(this.state, this.emit);
         this.workflow.syncStation(this.state, this.emit);
         break;
       case "station.workHere":

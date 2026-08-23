@@ -27,6 +27,9 @@ import { FILL_IGM, VERIFY_IGM, type RxWorkflow } from "./workflow";
 
 type Emit = (event: SimEvent) => void;
 
+/** For construction-time calls, where no agent can hold a claim yet. */
+const NO_EMIT: Emit = () => {};
+
 const WALK_SPEED = 0.6; // cells per igm — a working pace, brisker than browsing
 /** A long fuse: staff hold their post through workday lulls and only drift
  *  to the break spot when it has been properly quiet — the walk back is
@@ -99,7 +102,7 @@ export class StaffSystem {
     this.pathfinder = new Pathfinder(cols, rows);
     this.walk = new Uint8Array(cols * rows);
     this.doors = doorCells(cols, rows);
-    this.layoutChanged(state);
+    this.layoutChanged(state, NO_EMIT);
     this.rosterChanged(state);
     // A loaded save starts the crew already on the floor, at their spots.
     this.agentList.forEach((agent, i) => this.placeAtBreak(agent, i));
@@ -202,7 +205,7 @@ export class StaffSystem {
   }
 
   /** Rebuild the walk map and break spots after any furniture change. */
-  layoutChanged(state: GameState): void {
+  layoutChanged(state: GameState, emit: Emit): void {
     const { cols } = this;
     this.walk.fill(1);
     for (const item of state.store.furniture) {
@@ -217,7 +220,10 @@ export class StaffSystem {
     }
     this.computeBreakCells(state);
     // Paths may now cross new furniture; everyone re-plans from scratch.
+    // A held claim goes back on the pile first — think() waits on a claim,
+    // so a break target would otherwise freeze its worker for good.
     for (const agent of this.agentList) {
+      this.releaseTask(agent, emit);
       agent.path.length = 0;
       agent.pathIdx = 0;
       agent.arrived = false;
