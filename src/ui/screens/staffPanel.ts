@@ -62,24 +62,23 @@ export interface StaffPanelHandle {
 
 export function createStaffPanel(sim: Sim, bus: EventBus<SimEvent>): StaffPanelHandle {
   let visible = false;
-  let activeTab = "roster";
 
   const payroll = h("span", { cls: "teamp__payroll" });
   const rosterView = h("div", { cls: "teamp__view" });
   const appsView = h("div", { cls: "teamp__view" });
 
+  // Tabs owns the active state; the panel only mirrors it onto the views.
   const tabs = Tabs(
     [
       { id: "roster", label: "On the clock" },
       { id: "apps", label: "Applications" },
     ],
     (id) => {
-      activeTab = id;
       rosterView.hidden = id !== "roster";
       appsView.hidden = id !== "apps";
     },
   );
-  tabs.setActive(activeTab);
+  tabs.setActive("roster");
   appsView.hidden = true;
 
   const panel = Panel({ cls: "teamp" }, [
