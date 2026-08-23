@@ -572,7 +572,14 @@ export function createOrdersPanel(sim: Sim, bus: EventBus<SimEvent>): OrdersPane
     if (e.phase !== "morning" || draftedDay === e.day) return;
     draftedDay = e.day;
     const draft = draftOrder(sim.snapshot);
-    if (Object.keys(draft).length > 0) setCart(draft);
+    if (Object.keys(draft).length === 0) return;
+    // Locks may have moved while the panel was closed (a fridge or cabinet
+    // placed mid-shift never reached refreshRow) — re-derive them so the
+    // draft doesn't skip freshly unlocked rows on stale reasons.
+    for (const row of rows.values()) {
+      row.entry.lock = skuLock(sim.snapshot, row.entry.skuId);
+    }
+    setCart(draft);
   });
 
   return {
