@@ -525,7 +525,6 @@ export class RxWorkflow {
 
   /** Reconcile the fill/verify interactions with wherever the player works. */
   syncStation(state: GameState, emit: Emit): void {
-    this.syncDispenserLanes(state, emit);
     const station = state.store.furniture.find((f) => f.id === state.workingStationId);
     if (station?.defId === "fill_bench" && !state.buildMode) {
       this.takeNext(state, emit);
@@ -602,8 +601,11 @@ export class RxWorkflow {
 
   /** Advance the player's fill animation, desk work, and the machines. */
   tick(state: GameState, emit: Emit): void {
-    // Presence re-checked each tick, so a loaded save's dispenser is live
-    // from the first spawn without waiting on a furniture command.
+    // This is the one place lanes sync, and it is deliberately a per-tick
+    // presence check rather than a furniture.placed/sold subscription: it
+    // covers a loaded save's dispenser before the first spawn, and it heals
+    // a script the customer tick routed one line above this call — at ≤30
+    // furniture and 10 Hz the scan is free (§30).
     this.syncDispenserLanes(state, emit);
     this.tickDispensers(state, emit);
     this.tickPlayerFill(state, emit);
