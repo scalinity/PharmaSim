@@ -151,9 +151,15 @@ const BASE_OTC_VISITORS = 13; // 20 × 0.65 (§26 mix)
 const BASE_RX_VISITORS = 7; // 20 × 0.35
 const OLD_TOWN = districtById(STORE_DISTRICT_ID);
 const OTC_SHARE = BASE_OTC_VISITORS / ((OLD_TOWN.population / 1000) * OLD_TOWN.otcIntent);
+// Anchored to the same predicate the generator draws with (fillableDrugs at
+// L1 = Tier 1 minus refrigerated), so a future cold-chain Tier-1 SKU can't
+// silently detune the baseline.
 const RX_SHARE_TUNE =
   BASE_RX_VISITORS /
-  TIER1_DRUGS.reduce((sum, def) => sum + drugDailyDemand(OLD_TOWN, def), 0);
+  TIER1_DRUGS.filter((def) => !def.refrigerated).reduce(
+    (sum, def) => sum + drugDailyDemand(OLD_TOWN, def),
+    0,
+  );
 
 const WALK_SPEED = 0.5; // cells per igm ≈ 1.2 m/s at 1×
 const ANGRY_SPEED = 0.68;
