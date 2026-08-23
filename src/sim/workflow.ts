@@ -7,12 +7,13 @@
 // caught errors back to the fill queue; with no verifier, verification is
 // implicit at handoff with the owner's 90% catch. Pure sim — no DOM.
 
-import { IGM_PER_TICK } from "../core/clock";
+import { IGM_PER_TICK, seasonForDay } from "../core/clock";
 import { districtById } from "../data/districts";
 import { DRUG_DEFS, drugDef, type DrugDef } from "../data/drugs";
 import { hasFridge } from "./coldchain";
 import { STORE_DISTRICT_ID } from "./economy";
 import type { SimEvent } from "./events";
+import { rxDemandMult } from "./events-world";
 import { binFixtureFor, returnShelved, takeShelved } from "./inventory";
 import { drugDailyDemand, fillableDrugs } from "./licenses";
 import { OWNER_CATCH_RATE } from "./staff";
@@ -85,9 +86,11 @@ function shuffle<T>(items: T[]): T[] {
  * stocked cabinet brings the controlled ones — never before.
  *
  * The pool is memoized on license coverage (licenses owned + a cabinet or
- * fridge on the floor), so per-spawn work is one key build instead of
- * re-deriving 49 demand slices — while a mid-shift license purchase still
- * lands on the very next spawn.
+ * fridge on the floor) plus the §16 season, whose category multipliers bend
+ * the weights — anything that shifts a weight must sit in this key, or a
+ * mid-run change would never land. Per-spawn work stays one key build
+ * instead of re-deriving 49 demand slices, while a mid-shift license
+ * purchase (or a season turn) still lands on the very next spawn.
  */
 let drawPoolKey = "";
 let drawPool: DrugDef[] = [];
@@ -97,12 +100,18 @@ let drawTotal = 0;
 function drawScriptDrug(state: GameState): DrugDef {
   const cabinet = state.store.furniture.some((f) => f.defId === "cabinet_controlled");
   const key =
-    state.licenses.join(",") + (cabinet ? "|cabinet" : "") + (hasFridge(state) ? "|fridge" : "");
+    state.licenses.join(",") +
+    (cabinet ? "|cabinet" : "") +
+    (hasFridge(state) ? "|fridge" : "") +
+    "|" +
+    seasonForDay(state.day);
   if (key !== drawPoolKey) {
     const district = districtById(STORE_DISTRICT_ID);
     drawPoolKey = key;
     drawPool = fillableDrugs(state);
-    drawWeights = drawPool.map((def) => drugDailyDemand(district, def));
+    drawWeights = drawPool.map(
+      (def) => drugDailyDemand(district, def) * rxDemandMult(state, def.category),
+    );
     drawTotal = drawWeights.reduce((sum, w) => sum + w, 0);
   }
   let u = Math.random() * drawTotal;

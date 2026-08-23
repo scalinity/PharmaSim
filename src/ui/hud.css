@@ -134,6 +134,16 @@ html.app-shell .topbar {
   background: var(--pine);
 }
 
+/* §16/§28 rush shading: the ×1.6 windows printed on the tape, so the player
+   can staff for the lunchtime and after-work crowds before they arrive. */
+.tape__rush {
+  position: absolute;
+  bottom: 0;
+  height: 10px;
+  background: rgba(231, 160, 60, 0.24);
+  border-radius: 2px 2px 0 0;
+}
+
 .tape__tick {
   position: absolute;
   bottom: 2px;
@@ -170,6 +180,75 @@ html.app-shell .topbar {
   color: var(--paper);
   background: var(--pine);
   border-radius: 3px;
+}
+
+/* ---- News ticker (§16, §28): wire-service tape under the top bar ---- */
+
+.ticker {
+  position: absolute;
+  top: 64px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 26px;
+  max-width: min(600px, 64vw);
+  padding: 0 12px;
+  background: var(--paper);
+  border: 1px solid var(--ink-25);
+  border-radius: 3px;
+  box-shadow: var(--chip-shadow);
+  overflow: hidden;
+  z-index: 19;
+  /* Informational tape: the glass behind it stays clickable. */
+  pointer-events: none;
+}
+
+/* The bureau's pine dot — the wire is live. */
+.ticker::before {
+  content: "";
+  flex: none;
+  width: 6px;
+  height: 6px;
+  background: var(--pine);
+  border-radius: 1px;
+}
+
+.ticker__line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+}
+
+.ticker__line--cycle {
+  animation: ticker-in var(--dur) var(--ease-out);
+}
+
+@keyframes ticker-in {
+  from {
+    transform: translateY(9px);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+.ticker__day {
+  flex: none;
+  font-weight: var(--w-semibold);
+  color: var(--ink-60);
+}
+
+.ticker__text {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Star rating */
@@ -1362,6 +1441,12 @@ html.app-shell .topbar {
   color: var(--rose);
 }
 
+/* §16 shortage: the squeezed margin and its reason both read rose. */
+.orow__margin--shortage,
+.orow__meta--shortage {
+  color: var(--rose);
+}
+
 .orow__hand--out {
   color: var(--rose);
 }
@@ -1512,9 +1597,10 @@ html.app-shell .topbar {
   color: var(--ink-75);
 }
 
+/* The qty column sizes to content: a §16 shortage writes "×6 of 10". */
 .stub__line {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 38px 62px;
+  grid-template-columns: minmax(0, 1fr) minmax(38px, auto) 62px;
   gap: 4px;
   padding: 2px 0;
   border-bottom: 1px dotted var(--ink-25);
@@ -1531,6 +1617,12 @@ html.app-shell .topbar {
 .stub__lcost {
   font-family: var(--font-mono);
   text-align: right;
+}
+
+/* §16 shortage: the wholesaler is only sending part of the ask. */
+.stub__lqty--capped {
+  color: var(--rose);
+  white-space: nowrap;
 }
 
 .stub__more {

@@ -12,8 +12,10 @@ import {
   orderTotal,
   post,
   round2,
+  shortageFillCap,
 } from "./economy";
 import type { SimEvent } from "./events";
+import { advanceWorld, forceShortage, forceStorm } from "./events-world";
 import {
   clampMultiplier,
   clearControlled,
@@ -77,7 +79,14 @@ export type Command =
   /** Reduced motion is the only live setting; volumes wait for milestone 17. */
   | { type: "settings.set"; reducedMotion: boolean }
   /** Dev-only spawn stress cycle ×1/×3/×9/×27 (milestone 03); handled by Sim, not here. */
-  | { type: "dev.stressToggle" };
+  | { type: "dev.stressToggle" }
+  // --- Dev event console (§16, milestone 11; keys in the README) ---
+  /** Dev: start a regional shortage today in a random open category. */
+  | { type: "dev.forceShortage" }
+  /** Dev: put a storm on tomorrow's calendar (forecast prints tonight). */
+  | { type: "dev.forceStorm" }
+  /** Dev: skip a morning straight to the next one — no shift, no costs. */
+  | { type: "dev.skipDay" };
 
 /** Stations the player can work at (§8; the desk joins in the staffed era,
  *  the vaccine station with the cold chain — §9: any role's task). */
@@ -95,9 +104,10 @@ function leaveStation(state: GameState, emit: (event: SimEvent) => void): void {
   emit({ type: "station.changed", stationId: null });
 }
 
-/** Drop lines that are empty, unknown, or behind a licence gate (§12), and
- *  cap refrigerated lines to the fridge space still free (§14: 40 a fridge,
- *  enforced at order time against held stock plus what's already inbound). */
+/** Drop lines that are empty, unknown, or behind a licence gate (§12), cap
+ *  a shorted category's fills to 60% (§16 — the same cap the Orders stub
+ *  shows), and cap refrigerated lines to the fridge space still free (§14:
+ *  40 a fridge, enforced at order time against held stock plus inbound). */
 function acceptableLines(state: GameState, lines: readonly OrderLine[]): OrderLine[] {
   const orderable = new Map(catalog(state).map((entry) => [entry.skuId, entry]));
   let coldClaimed = 0;
@@ -106,6 +116,8 @@ function acceptableLines(state: GameState, lines: readonly OrderLine[]): OrderLi
     const entry = orderable.get(l.skuId);
     let units = Math.floor(l.units);
     if (!entry || entry.lock !== null || units <= 0) continue;
+    units = shortageFillCap(state, l.skuId, units);
+    if (units <= 0) continue;
     if (entry.refrigerated) {
       units = coldClampUnits(state, units, coldClaimed);
       if (units <= 0) continue;
@@ -114,6 +126,27 @@ function acceptableLines(state: GameState, lines: readonly OrderLine[]): OrderLi
     out.push({ skuId: l.skuId, units });
   }
   return out;
+}
+
+/** Morning turnover, shared by day.advance and the dev day skip: the new
+ *  day begins, the van unloads, the crew finishes (§13), the world plans
+ *  and announces its weather (§16) — all before the phase change goes out,
+ *  so the autosave listening on it captures the completed morning. */
+function beginMorning(state: GameState, emit: (event: SimEvent) => void): void {
+  state.day += 1;
+  state.clockIgm = DAY_START_IGM;
+  state.phase = "morning";
+  state.dayStats = emptyDayStats(state.cash);
+  // Morning: yesterday's wholesale order is on the loading step (§5).
+  const delivery = receiveDeliveries(state.store);
+  // Mondays put a fresh stack of applications on the counter (§9).
+  const refreshed = refreshHiringPool(state);
+  completeRenovation(state, emit);
+  advanceWorld(state, emit);
+  emit({ type: "day.phaseChanged", phase: state.phase, day: state.day });
+  emit({ type: "clock.minute", igm: state.clockIgm });
+  if (delivery.units > 0) emit({ type: "order.delivered", ...delivery });
+  if (refreshed) emit({ type: "staff.poolRefreshed", day: state.day });
 }
 
 export function handleCommand(
@@ -130,22 +163,7 @@ export function handleCommand(
     }
     case "day.advance": {
       if (state.phase !== "close") return;
-      state.day += 1;
-      state.clockIgm = DAY_START_IGM;
-      state.phase = "morning";
-      state.dayStats = emptyDayStats(state.cash);
-      // Morning: yesterday's wholesale order is on the loading step (§5).
-      const delivery = receiveDeliveries(state.store);
-      // Mondays put a fresh stack of applications on the counter (§9).
-      const refreshed = refreshHiringPool(state);
-      // §13: the scaffolding comes down and the new era stands — before the
-      // phase change goes out, because the autosave listening on it must
-      // capture the completed morning, not the last of the crew.
-      completeRenovation(state, emit);
-      emit({ type: "day.phaseChanged", phase: state.phase, day: state.day });
-      emit({ type: "clock.minute", igm: state.clockIgm });
-      if (delivery.units > 0) emit({ type: "order.delivered", ...delivery });
-      if (refreshed) emit({ type: "staff.poolRefreshed", day: state.day });
+      beginMorning(state, emit);
       return;
     }
     case "speed.set": {
@@ -402,6 +420,25 @@ export function handleCommand(
       if (state.settings.reducedMotion === command.reducedMotion) return;
       state.settings.reducedMotion = command.reducedMotion;
       emit({ type: "settings.changed", settings: { ...state.settings } });
+      return;
+    }
+    case "dev.forceShortage": {
+      if (state.phase === "close") return;
+      emit({ type: "dev.eventForced", message: forceShortage(state, emit) });
+      return;
+    }
+    case "dev.forceStorm": {
+      // Close is too late: tonight's receipt has already printed without
+      // the forecast, and "forecast on yesterday's receipt" is the contract.
+      if (state.phase === "close") return;
+      emit({ type: "dev.eventForced", message: forceStorm(state) });
+      return;
+    }
+    case "dev.skipDay": {
+      // Morning only: skipping a live shift would strand its customers.
+      if (state.phase !== "morning") return;
+      beginMorning(state, emit);
+      emit({ type: "dev.eventForced", message: `Skipped to day ${state.day}` });
       return;
     }
     case "fill.pickBin":

@@ -8,6 +8,7 @@ import { handleCommand, type Command } from "./commands";
 import { applyRep, CustomerSystem, REP_REASONS } from "./customers";
 import { closeDay, groupTotal, operatingProfit } from "./economy";
 import type { SimEvent } from "./events";
+import { endOutageAtClose, ensurePlanned, stormToday, tickWorld } from "./events-world";
 import { hasEmptySlot, restockableUnits, rollHistory } from "./inventory";
 import { recordMoment } from "./legacy";
 import {
@@ -46,6 +47,9 @@ export class Sim {
     this.staff = new StaffSystem(this.state, this.workflow, this.customers);
     // New games and freshly migrated saves start with an undrawn pool (§9).
     refreshHiringPool(this.state);
+    // §16: a fresh run or a just-migrated save plans its current season and
+    // year here, so the first morning's world is already scheduled.
+    ensurePlanned(this.state);
   }
 
   /** Read-only view of the state for HUD rendering. Never mutate through this. */
@@ -59,6 +63,7 @@ export class Sim {
     // expansion (wrong phase, short cash, blocked doorway) changes nothing.
     const { cols: colsBefore, rows: rowsBefore } = this.state.store.grid;
     const pendingEraBefore = this.state.pendingEra;
+    const dayBefore = this.state.day;
     handleCommand(this.state, command, this.emit);
     switch (command.type) {
       case "store.open":
@@ -66,6 +71,10 @@ export class Sim {
         // scheduled, and the empty floor closes the day on the first tick.
         if (this.state.phase === "shift" && this.state.pendingEra === null) {
           this.customers.beginDay(this.state);
+        }
+        // §16 rain bed for a storm day — a hook milestone 17's audio takes.
+        if (this.state.phase === "shift" && stormToday(this.state)) {
+          this.bus.emit({ type: "ambience.rain", on: true });
         }
         break;
       case "era.renovate":
@@ -76,6 +85,11 @@ export class Sim {
         break;
       case "day.advance":
         this.staff.beginDay(this.state, this.emit);
+        break;
+      case "dev.skipDay":
+        // Only when the handler actually turned the page (morning phase) —
+        // the key is global, and a refused skip must not reset the crew.
+        if (this.state.day !== dayBefore) this.staff.beginDay(this.state, this.emit);
         break;
       case "furniture.place":
       case "furniture.move":
@@ -192,6 +206,10 @@ export class Sim {
       }
     }
 
+    // §16 storm-day outage edges: the drop (spoilage or the generator's
+    // hum) and the restored announcement, both off the persisted window.
+    tickWorld(this.state, this.emit);
+
     this.workflow.setVerifier(this.state, this.verifierOnDuty(), this.emit);
     this.staff.tick(this.state, this.emit);
     this.customers.tick(this.state, this.emit);
@@ -202,6 +220,10 @@ export class Sim {
     // empty — the crew is waiting on the last customer, not on the clock.
     const dayOver = this.state.clockIgm >= DAY_END_IGM || this.state.pendingEra !== null;
     if (dayOver && this.customers.activeCount === 0) {
+      // §16: a renovation can close the day mid-outage — the power comes
+      // back with the shift, and a storm day's rain bed stops here too.
+      endOutageAtClose(this.state, this.emit);
+      if (stormToday(this.state)) this.bus.emit({ type: "ambience.rain", on: false });
       if (this.state.workingStationId !== null) {
         this.state.workingStationId = null;
         this.bus.emit({ type: "station.changed", stationId: null });

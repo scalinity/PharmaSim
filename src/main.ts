@@ -75,6 +75,14 @@ rig.setAspect(renderer.aspect);
 renderer.onResize((width, height) => rig.setAspect(width / height));
 
 bus.on("clock.minute", (e) => lighting.setTime(e.igm));
+// §27 winter edge dimming follows the calendar; §16 outages drop the key to
+// 20% cold. The morning snap covers a day that closed mid-ease (§13).
+lighting.setSeason(seasonForDay(sim.snapshot.day) === "Winter");
+bus.on("day.phaseChanged", (e) => {
+  lighting.setSeason(seasonForDay(e.day) === "Winter");
+  if (e.phase === "morning") lighting.setOutage(false, true);
+});
+bus.on("outage.changed", (e) => lighting.setOutage(e.on));
 lighting.setTime(sim.snapshot.clockIgm);
 lighting.fitFloor(sim.snapshot.store.grid.cols, sim.snapshot.store.grid.rows);
 bus.on("expansion.bought", (e) => lighting.fitFloor(e.cols, e.rows));

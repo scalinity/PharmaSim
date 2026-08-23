@@ -20,6 +20,8 @@ import {
   COPAY,
   listWholesale,
   orderTotal,
+  shortageActive,
+  shortageFillCap,
   skuLock,
   supplierDiscount,
   unitCost,
@@ -446,8 +448,17 @@ export function createOrdersPanel(sim: Sim, bus: EventBus<SimEvent>): OrdersPane
       row.field.value = "";
       row.root.classList.remove("orow--ordered");
     }
+    // §16 shortage: the squeezed (possibly negative) margin reads rose, and
+    // the meta names the squeeze — the same words the ticker uses.
+    const short = shortageActive(state, row.entry.skuId);
+    row.margin.classList.toggle("orow__margin--shortage", short);
+    row.meta.classList.toggle("orow__meta--shortage", short && !locked);
     row.root.classList.toggle("orow--locked", locked);
-    row.meta.textContent = row.entry.lock ?? categoryLabel(row.entry.category);
+    row.meta.textContent =
+      row.entry.lock ??
+      (short
+        ? `${categoryLabel(row.entry.category)} · shortage — orders fill 60%`
+        : categoryLabel(row.entry.category));
     row.field.disabled = locked;
     if (row.tag) row.tag.set(priceMultiplier(state.store, row.entry.skuId));
 
@@ -462,7 +473,14 @@ export function createOrdersPanel(sim: Sim, bus: EventBus<SimEvent>): OrdersPane
 
   function refreshStub(): void {
     const state = sim.snapshot;
-    const lines = [...cart].map(([skuId, units]) => ({ skuId, units }));
+    // \u00a716: the duplicate shows what the wholesaler will *fill*, not what
+    // was asked \u2014 the same 60% cap the order command applies, so the stub
+    // never totals units (or charges dollars) the van won't carry.
+    const lines = [...cart].map(([skuId, units]) => ({
+      skuId,
+      asked: units,
+      units: shortageFillCap(state, skuId, units),
+    }));
     const total = orderTotal(state, lines);
     const units = lines.reduce((sum, l) => sum + l.units, 0);
 
@@ -477,10 +495,14 @@ export function createOrdersPanel(sim: Sim, bus: EventBus<SimEvent>): OrdersPane
     }
     for (const line of lines.slice(0, STUB_LINES)) {
       const entry = rows.get(line.skuId)?.entry;
+      const capped = line.units < line.asked;
       stubLines.append(
         h("div", { cls: "stub__line" }, [
           h("span", { cls: "stub__lname", text: entry?.name ?? line.skuId }),
-          h("span", { cls: "stub__lqty", text: `\u00d7${line.units}` }),
+          h("span", {
+            cls: `stub__lqty${capped ? " stub__lqty--capped" : ""}`,
+            text: capped ? `\u00d7${line.units} of ${line.asked}` : `\u00d7${line.units}`,
+          }),
           h("span", {
             cls: "stub__lcost",
             text: money(unitCost(state, line.skuId) * line.units),
@@ -499,7 +521,7 @@ export function createOrdersPanel(sim: Sim, bus: EventBus<SimEvent>): OrdersPane
     stubAfter.textContent = money(state.cash - total);
     const short = total > state.cash;
     stubAfter.classList.toggle("stub__num--short", short);
-    placeButton.disabled = lines.length === 0 || short;
+    placeButton.disabled = lines.length === 0 || units === 0 || short;
     placeButton.textContent = short ? "Not enough cash" : "Place order";
     clearButton.hidden = lines.length === 0;
   }
@@ -582,6 +604,9 @@ export function createOrdersPanel(sim: Sim, bus: EventBus<SimEvent>): OrdersPane
   bus.on("rx.pickedUp", invalidate);
   bus.on("loan.changed", invalidate);
   bus.on("reorder.unlocked", invalidate);
+  // §16: a shortage edge moves every squeezed row's cost, margin and cap.
+  bus.on("shortage.started", invalidate);
+  bus.on("shortage.ended", invalidate);
   bus.on("order.submitted", () => {
     clearCart();
     invalidate();

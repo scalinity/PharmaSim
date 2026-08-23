@@ -1,5 +1,6 @@
 // SimEvent union — everything the sim announces to render/ and ui/.
 
+import type { Season } from "../core/clock";
 import type { Archetype } from "./customers";
 import type { StaffMember } from "./staff";
 import type { DayPhase, GameSettings, GameSpeed, OrderLine, PlacedFurniture } from "./state";
@@ -77,6 +78,23 @@ export type SimEvent =
   | { type: "staff.assigned"; id: string; stationId: string | null }
   /** Monday morning: a fresh set of applications on the counter (§9). */
   | { type: "staff.poolRefreshed"; day: number }
+  // --- World events + atmosphere (§16, milestone 11) ---
+  /** A new season took the calendar this morning (§5, §16). */
+  | { type: "season.changed"; season: Season; day: number }
+  /** A regional shortage squeezed one Rx category (§16): ×1.5 wholesale,
+   *  fills capped 60% through endDay. The ticker names the category. */
+  | { type: "shortage.started"; category: string; day: number; endDay: number }
+  | { type: "shortage.ended"; category: string; day: number }
+  /** The power dropped (on) or came back (off) during a storm's outage
+   *  window; `generator` says whether a backup stood for the cold chain. */
+  | { type: "outage.changed"; on: boolean; generator: boolean }
+  /** No generator when the power dropped: the fridge's stock is gone,
+   *  posted to the ledger at wholesale value (§14). */
+  | { type: "coldchain.spoiled"; units: number; value: number }
+  /** Storm-day weather bed — a hook for milestone 17's audio, silent now. */
+  | { type: "ambience.rain"; on: boolean }
+  /** A dev console command took effect; the message is toast-ready. */
+  | { type: "dev.eventForced"; message: string }
   // --- App shell (§23, milestone 06) ---
   | { type: "settings.changed"; settings: GameSettings }
   | { type: "dev.stress"; mult: number };

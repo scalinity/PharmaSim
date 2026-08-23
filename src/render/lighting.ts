@@ -1,5 +1,7 @@
 // Hemisphere ambient + directional key light. The key follows a warm→cool→warm
 // arc across the 08:00–20:00 day, driven by sim clock events (SPEC §27).
+// Winter days sag darker at their edges, and a §16 power outage drops the key
+// to 20% with a cold cast — both are plain retints of the same two lights.
 
 import { Color, DirectionalLight, HemisphereLight, MathUtils, type Scene } from "three";
 import { dayProgress } from "../core/clock";
@@ -12,12 +14,29 @@ const BG_WARM = new Color(0xe8dac3);
 const BG_NOON = new Color(0xd7e4e4);
 const HEMI_GROUND = new Color(0x6e8a6b);
 
+// §27 outage look: the key drops to 20% with a cold tint; the sky and the
+// glass behind the store go flat and gray with it.
+const KEY_OUTAGE = new Color(0x8fa7c0);
+const SKY_OUTAGE = new Color(0x9db4c6);
+const BG_OUTAGE = new Color(0x99a6ab);
+const OUTAGE_KEY_LEVEL = 0.2;
+
+// §27 winter edges: mornings and evenings dim toward a cold dusk.
+const BG_WINTER_DUSK = new Color(0xb7c2c8);
+const WINTER_EDGE_LEVEL = 0.62;
+
 const ARC_RADIUS = 30;
 
 export class Lighting {
   private key: DirectionalLight;
   private hemi: HemisphereLight;
   private background = new Color();
+  private winter = false;
+  /** 0 = grid up, 1 = full outage; eased toward the target per clock
+   *  minute so the drop reads as a power cut, not a scene reload. */
+  private outageMix = 0;
+  private outageTarget = 0;
+  private lastIgm: number | null = null;
 
   constructor(private scene: Scene) {
     this.hemi = new HemisphereLight(SKY_WARM, HEMI_GROUND, 0.9);
@@ -49,16 +68,47 @@ export class Lighting {
     cam.updateProjectionMatrix();
   }
 
+  /** §27: winter days render darker at the edges. Set at each morning. */
+  setSeason(winter: boolean): void {
+    this.winter = winter;
+    if (this.lastIgm !== null) this.setTime(this.lastIgm);
+  }
+
+  /** §16 outage: ease toward the 20% cold look (or back). `immediate` snaps
+   *  — mornings use it, since the easing rides clock minutes that a closed
+   *  store never ticks. */
+  setOutage(on: boolean, immediate = false): void {
+    this.outageTarget = on ? 1 : 0;
+    if (immediate) this.outageMix = this.outageTarget;
+    if (this.lastIgm !== null) this.setTime(this.lastIgm);
+  }
+
   /** Position and tint the lights for an in-game minute of day. */
   setTime(igm: number): void {
+    this.lastIgm = igm;
+    // One easing step per clock minute: ~2.4 minutes/s at 1×, so the drop
+    // lands in a bit over a real second — visibly a cut, never a hitch.
+    const step = 0.34;
+    if (this.outageMix < this.outageTarget) {
+      this.outageMix = Math.min(this.outageTarget, this.outageMix + step);
+    } else if (this.outageMix > this.outageTarget) {
+      this.outageMix = Math.max(this.outageTarget, this.outageMix - step);
+    }
+    const mix = this.outageMix;
+
     const t = dayProgress(igm); // 0 at 08:00 → 1 at 20:00
     const noon = Math.sin(t * Math.PI); // 0 at the edges, 1 at 14:00
+    // §27 winter: the arc sags where it meets the doors — full at noon,
+    // dimmest at open and close.
+    const seasonDim = this.winter ? WINTER_EDGE_LEVEL + (1 - WINTER_EDGE_LEVEL) * noon : 1;
 
-    this.key.color.lerpColors(KEY_WARM, KEY_NOON, noon);
-    this.key.intensity = 1.9 + 0.45 * noon;
-    this.hemi.color.lerpColors(SKY_WARM, SKY_NOON, noon);
-    this.hemi.intensity = 1.5 + 0.35 * noon;
+    this.key.color.lerpColors(KEY_WARM, KEY_NOON, noon).lerp(KEY_OUTAGE, mix);
+    this.key.intensity = (1.9 + 0.45 * noon) * seasonDim * (1 - (1 - OUTAGE_KEY_LEVEL) * mix);
+    this.hemi.color.lerpColors(SKY_WARM, SKY_NOON, noon).lerp(SKY_OUTAGE, mix);
+    this.hemi.intensity = (1.5 + 0.35 * noon) * seasonDim * (1 - 0.55 * mix);
     this.background.lerpColors(BG_WARM, BG_NOON, noon);
+    if (this.winter) this.background.lerp(BG_WINTER_DUSK, (1 - noon) * 0.35);
+    this.background.lerp(BG_OUTAGE, mix * 0.5);
 
     // Sun slides east → west while its elevation rises and falls.
     const azimuth = MathUtils.degToRad(MathUtils.lerp(75, -75, t));

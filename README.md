@@ -25,6 +25,15 @@ npm run dev     # opens on http://localhost:1420
 The browser via `npm run dev` is the daily driver. `npm run tauri dev` builds the Rust shell
 and is only used when a milestone brief calls for it.
 
+## Dev keys
+
+Playtest helpers, active in any run:
+
+- `N` — cycle the stress spawner: ×1 → ×3 → ×9 → ×27 → off
+- `J` — force a regional drug shortage starting today (random open category, 4–8 days)
+- `M` — schedule a storm for tomorrow; the forecast pins to tonight's receipt
+- `K` — from a morning, skip straight to the next one (no shift, no costs)
+
 ## Docs
 
 - [`SPEC.md`](SPEC.md) — the game bible: vision, architecture, systems, tuning constants
@@ -42,7 +51,7 @@ and is only used when a milestone brief calls for it.
 - [x] 08 Licenses + expansion
 - [x] 09 Cold chain + vaccinations
 - [x] 10 Modernization + legacy
-- [ ] 11 Events + atmosphere
+- [x] 11 Events + atmosphere
 - [ ] 12 City map + living demand
 - [ ] 13 Competitors + market share
 - [ ] 14 Multi-branch

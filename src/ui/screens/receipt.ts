@@ -8,6 +8,7 @@ import { formatClock, seasonForDay } from "../../core/clock";
 import { legacyMomentDef } from "../../data/flavor";
 import { REP_REASONS } from "../../sim/customers";
 import { groupTotal, LEDGER_REASONS, ledgerNet, operatingProfit } from "../../sim/economy";
+import { stormTomorrow } from "../../sim/events-world";
 import type { Sim } from "../../sim/sim";
 import { PillButton } from "../components/PillButton";
 import { h } from "../dom";
@@ -136,16 +137,36 @@ export function buildReceipt(sim: Sim, onNextDay: () => void): HTMLElement {
     );
   }
 
-  // --- Pinned legacy notes (§22, §28): today's moments, in the family hand ---
-  for (const moment of state.legacy) {
-    if (moment.day !== state.day) continue;
-    const def = legacyMomentDef(moment.id);
+  // --- Pinned notes (§22, §28): the same slip of family paper carries
+  //     today's legacy moments and the §16 weather, which reads straight
+  //     from the world's event state — a storm is news, never a moment.
+  const pinNote = (title: string, text: string): void => {
     item(
       h("div", { cls: "rcpt__legacy" }, [
         h("span", { cls: "rcpt__legacypin", attrs: { "aria-hidden": "true" } }),
-        h("p", { cls: "rcpt__legacytitle", text: def.title }),
-        h("p", { cls: "rcpt__legacytext", text: def.text }),
+        h("p", { cls: "rcpt__legacytitle", text: title }),
+        h("p", { cls: "rcpt__legacytext", text }),
       ]),
+    );
+  };
+  for (const moment of state.legacy) {
+    if (moment.day !== state.day) continue;
+    const def = legacyMomentDef(moment.id);
+    pinNote(def.title, def.text);
+  }
+  if (stormTomorrow(state)) {
+    pinNote(
+      "Storm expected tomorrow",
+      "Heavy weather is crossing tomorrow and the grid may drop with it. " +
+        "Everything in the fridge rides on backup power — a generator from the Build palette holds the cold.",
+    );
+  }
+  const outage = state.events.outage;
+  if (outage !== null && outage.day === state.day && outage.hadGenerator) {
+    pinNote(
+      "The generator held",
+      "The power dropped mid-shift and the backup generator caught it without a flicker. " +
+        "The fridge never knew.",
     );
   }
 

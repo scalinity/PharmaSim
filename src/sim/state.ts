@@ -71,6 +71,61 @@ export interface LegacyEntry {
   day: number;
 }
 
+/** One §16 regional shortage: an Rx category squeezed for a run of days
+ *  (wholesale ×1.5, order fills capped — §26). Active on [startDay, endDay]. */
+export interface ShortageEvent {
+  category: string;
+  startDay: number;
+  /** Last squeezed day, inclusive. */
+  endDay: number;
+}
+
+/** One §16 storm day and its outage window within the 08:00–20:00 shift. */
+export interface StormEvent {
+  day: number;
+  outageStartIgm: number;
+  outageEndIgm: number;
+}
+
+/** Today's outage, recorded the moment the power drops (§14, §16): what the
+ *  cold chain lost — or that the generator held — for the receipt to read. */
+export interface OutageRecord {
+  day: number;
+  hadGenerator: boolean;
+  spoiledUnits: number;
+  /** Ledger loss at wholesale value, 0 with a generator (§14). */
+  spoiledValue: number;
+  /** The power-restored edge has been announced. */
+  ended: boolean;
+}
+
+/** §16 world-event state: the seeded schedule and what is active today.
+ *  sim/events-world.ts owns the planning; seasons themselves derive from
+ *  `day` (§5) and are never stored. */
+export interface WorldEventsState {
+  /** Per-save seed; every event roll derives from it, so a reloaded
+   *  morning plans the same year. */
+  seed: number;
+  /** Absolute season index shortages are planned through (−1 = none yet). */
+  plannedSeason: number;
+  /** Absolute year index storms are planned through (−1 = none yet). */
+  plannedYear: number;
+  shortages: ShortageEvent[];
+  storms: StormEvent[];
+  outage: OutageRecord | null;
+}
+
+export function freshWorldEvents(): WorldEventsState {
+  return {
+    seed: Math.floor(Math.random() * 0x7fffffff),
+    plannedSeason: -1,
+    plannedYear: -1,
+    shortages: [],
+    storms: [],
+    outage: null,
+  };
+}
+
 /** One §15 reputation reason tallied for the receipt. */
 export interface RepReason {
   count: number;
@@ -143,6 +198,8 @@ export interface GameState {
   pendingEra: 2 | 3 | 4 | null;
   /** Achieved §22 moments, in the order they were lived. Each fires once. */
   legacy: LegacyEntry[];
+  /** §16 world events: the seeded schedule and today's active effects. */
+  events: WorldEventsState;
   /** Lifetime counters and milestone days (§24) — `license.L3` → day bought,
    *  `era.2` → day the renovation was signed. */
   stats: Record<string, number>;
@@ -258,6 +315,7 @@ export function createGameState(): GameState {
     era: 1,
     pendingEra: null,
     legacy: [],
+    events: freshWorldEvents(),
     stats: { "license.L1": 1 },
     store: {
       grid: { cols: 10, rows: 7, expansions: 0 },

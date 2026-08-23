@@ -25,6 +25,7 @@ import {
 } from "./coldchain";
 import { COPAY, post, STORE_DISTRICT_ID } from "./economy";
 import type { SimEvent } from "./events";
+import { otcDemandMult, rxDemandMult, vaccineWalkinMult, visitorMult } from "./events-world";
 import { drugDailyDemand, fillableDrugs } from "./licenses";
 import {
   balksAt,
@@ -141,7 +142,9 @@ type Emit = (event: SimEvent) => void;
 
 const NPC_CAP = 40;
 const SPAWN_END_IGM = 1170; // 19:30 (§5)
-const RUSH_WINDOWS: readonly [number, number][] = [
+/** §16/§26 rush windows — exported so the clock strip's shading (§28) and
+ *  the arrival sampler can never drift apart. */
+export const RUSH_WINDOWS: readonly [number, number][] = [
   [720, 840], // 12:00–14:00
   [1020, 1140], // 17:00–19:00
 ];
@@ -385,25 +388,33 @@ export class CustomerSystem {
   beginDay(state: GameState): void {
     // Two §17 streams share the day: OTC intent, and the Rx scripts the
     // store's licenses and equipment can actually capture (§12, milestone 08).
+    // §16 seasons lean on the Rx side per category — flu season's ×1.8 on
+    // respiratory and antibiotics genuinely brings more patients through
+    // the door, the same way a new license does.
     const otcVisitors = (OLD_TOWN.population / 1000) * OLD_TOWN.otcIntent * OTC_SHARE;
     let rxVisitors = 0;
     for (const def of fillableDrugs(state)) {
-      rxVisitors += drugDailyDemand(OLD_TOWN, def);
+      rxVisitors += drugDailyDemand(OLD_TOWN, def) * rxDemandMult(state, def.category);
     }
     rxVisitors *= RX_SHARE_TUNE;
     this.rxShare = rxVisitors / (otcVisitors + rxVisitors);
 
     const repMult = 0.4 + 0.24 * state.repStars;
     const dayNoise = randRange(0.85, 1.15);
-    let n = Math.round((otcVisitors + rxVisitors) * repMult * dayNoise);
+    // §16/§26 on the whole door: the summer lull, the winter crowd, and a
+    // storm day's ×0.6 all scale today's schedule.
+    let n = Math.round((otcVisitors + rxVisitors) * repMult * dayNoise * visitorMult(state));
     n *= 3 ** this.stressLevel;
     this.arrivals = this.sampleArrivals(n, DAY_START_IGM);
     this.arrivalIdx = 0;
 
     // §14/§26: 3–6 vaccine walk-ins a day once L4, fridge and station stand,
-    // on the same rush curve as everyone else.
+    // on the same rush curve as everyone else — and ×4 through flu season.
     this.vaccineArrivals = vaccinationUnlocked(state)
-      ? this.sampleArrivals(randInt(VACCINE_WALKINS_MIN, VACCINE_WALKINS_MAX), DAY_START_IGM)
+      ? this.sampleArrivals(
+          Math.round(randInt(VACCINE_WALKINS_MIN, VACCINE_WALKINS_MAX) * vaccineWalkinMult(state)),
+          DAY_START_IGM,
+        )
       : [];
     this.vaccineIdx = 0;
   }
@@ -1450,11 +1461,17 @@ export class CustomerSystem {
     if (!slots || slots.length === 0) return;
     if (c.basket.length > 0 && Math.random() > EXTRA_ITEM_CHANCE) return;
 
-    const total = slots.reduce((sum, skuId) => sum + otcDef(skuId).demandWeight, 0);
+    // §16 seasons lean on the shelf pick: spring's ×2.5 pull toward the
+    // allergy labels, winter's ×3 toward cold & flu.
+    const weightOf = (skuId: string): number => {
+      const def = otcDef(skuId);
+      return def.demandWeight * otcDemandMult(state, def.category);
+    };
+    const total = slots.reduce((sum, skuId) => sum + weightOf(skuId), 0);
     let u = Math.random() * total;
     let wanted: string | null = null;
     for (const skuId of slots) {
-      u -= otcDef(skuId).demandWeight;
+      u -= weightOf(skuId);
       if (u <= 0) {
         wanted = skuId;
         break;

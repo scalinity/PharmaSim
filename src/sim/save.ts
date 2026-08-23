@@ -53,27 +53,34 @@
 //    `era` itself has round-tripped since v1, and the robotic dispenser is
 //    ordinary store.furniture — the step seeds the empty album and no crew.
 //
+//  Version 6 (milestone 11) adds the world's weather:
+//    · events (§16/§24: the per-save event seed, planning watermarks,
+//      scheduled shortages and storms, and today's outage record)      (M11)
+//    Season itself is still derived from `day` (§5), never stored — only
+//    the scheduled events and their seed persist.
+//
 //  §24's fuller schema (worldSeed, stores[], competitors, patientPools, dc,
 //  aitech, stats) is not here because those systems do not exist yet.
 //  They arrive field-by-field with the milestones that own them —
 //  08 licenses/expansion, 09 cold chain, 10 legacy, 12 city, 13 competitors,
 //  14 branches, 15 logistics, 16 AI tech — each with its own migrate step.
-//  Season is derived from `day` (§5), never stored.
 // ===========================================================================
 
 import { isLegacyMoment } from "../data/flavor";
 import type { HiringPool, StaffMember } from "./staff";
 import {
   defaultSettings,
+  freshWorldEvents,
   type DayPhase,
   type DayStats,
   type GameSettings,
   type GameState,
   type LegacyEntry,
   type StoreState,
+  type WorldEventsState,
 } from "./state";
 
-export const SAVE_VERSION = 5;
+export const SAVE_VERSION = 6;
 
 export interface SaveFile {
   version: number;
@@ -87,6 +94,7 @@ export interface SaveFile {
   era: 1 | 2 | 3 | 4;
   pendingEra: 2 | 3 | 4 | null;
   legacy: LegacyEntry[];
+  events: WorldEventsState;
   stats: Record<string, number>;
   store: StoreState;
   hiring: HiringPool;
@@ -151,6 +159,13 @@ const MIGRATIONS: readonly ((file: RawSave) => RawSave)[] = [
     file.pendingEra = null;
     return file;
   },
+  // 5 → 6 (milestone 11): the world gets weather. A pre-events save has no
+  // schedule; a fresh seed plans from the season the store wakes up in, and
+  // events the save "slept through" are simply never planned.
+  (file) => {
+    file.events = freshWorldEvents();
+    return file;
+  },
 ];
 
 // --- Deep copies: a save must never alias live state, and a hydrated state
@@ -201,6 +216,17 @@ function copyHiring(hiring: HiringPool): HiringPool {
   };
 }
 
+function copyEvents(events: WorldEventsState): WorldEventsState {
+  return {
+    seed: events.seed,
+    plannedSeason: events.plannedSeason,
+    plannedYear: events.plannedYear,
+    shortages: events.shortages.map((s) => ({ ...s })),
+    storms: events.storms.map((s) => ({ ...s })),
+    outage: events.outage === null ? null : { ...events.outage },
+  };
+}
+
 function copyDayStats(stats: DayStats): DayStats {
   return {
     cashOpen: stats.cashOpen,
@@ -243,6 +269,7 @@ export function serialize(state: GameState): SaveFile {
     era: state.era,
     pendingEra: state.pendingEra,
     legacy: state.legacy.map((moment) => ({ ...moment })),
+    events: copyEvents(state.events),
     stats: { ...state.stats },
     store: copyStore(state.store),
     hiring: copyHiring(state.hiring),
@@ -266,6 +293,7 @@ export function hydrate(file: SaveFile): GameState {
     era: file.era,
     pendingEra: file.pendingEra,
     legacy: file.legacy.map((moment) => ({ ...moment })),
+    events: copyEvents(file.events),
     stats: { ...file.stats },
     store: copyStore(file.store),
     hiring: copyHiring(file.hiring),
@@ -324,6 +352,61 @@ function validate(file: RawSave): SaveFile {
       reject("readable legacy moments");
     }
   }
+  // §16 world events: the schedule drives daily pricing, fill caps and the
+  // outage clock, so a hand-edited NaN or inverted window must be refused
+  // here — hydrated, it would make a shortage that never ends or an outage
+  // that never fires, silently and forever.
+  const events = requireObject(file.events, "world events");
+  for (const key of ["seed", "plannedSeason", "plannedYear"]) {
+    if (typeof events[key] !== "number" || !Number.isFinite(events[key] as number)) {
+      reject(`event ${key}`);
+    }
+  }
+  requireArray(events.shortages, "shortages");
+  for (const entry of events.shortages as unknown[]) {
+    const s = entry as RawSave;
+    if (
+      typeof entry !== "object" ||
+      entry === null ||
+      typeof s.category !== "string" ||
+      typeof s.startDay !== "number" ||
+      typeof s.endDay !== "number" ||
+      !Number.isFinite(s.startDay) ||
+      !Number.isFinite(s.endDay) ||
+      (s.endDay as number) < (s.startDay as number)
+    ) {
+      reject("readable shortages");
+    }
+  }
+  requireArray(events.storms, "storms");
+  for (const entry of events.storms as unknown[]) {
+    const s = entry as RawSave;
+    if (
+      typeof entry !== "object" ||
+      entry === null ||
+      typeof s.day !== "number" ||
+      typeof s.outageStartIgm !== "number" ||
+      typeof s.outageEndIgm !== "number" ||
+      !Number.isFinite(s.day) ||
+      !Number.isFinite(s.outageStartIgm) ||
+      !Number.isFinite(s.outageEndIgm) ||
+      (s.outageEndIgm as number) <= (s.outageStartIgm as number)
+    ) {
+      reject("readable storms");
+    }
+  }
+  if (events.outage !== null) {
+    const outage = requireObject(events.outage, "outage record");
+    for (const key of ["day", "spoiledUnits", "spoiledValue"]) {
+      if (typeof outage[key] !== "number" || !Number.isFinite(outage[key] as number)) {
+        reject(`outage ${key}`);
+      }
+    }
+    if (typeof outage.hadGenerator !== "boolean" || typeof outage.ended !== "boolean") {
+      reject("outage flags");
+    }
+  }
+
   const lifetime = requireObject(file.stats, "stats");
   // stats is the one free-form Record a hand editor is likely to touch;
   // a non-number value would render as "Issued · day yesterday".

@@ -40,6 +40,7 @@ export const LEDGER_REASONS = [
   { id: "wages", group: "cost", label: "Wages" },
   { id: "rent", group: "cost", label: "Rent" },
   { id: "utilities", group: "cost", label: "Utilities" },
+  { id: "spoilage", group: "cost", label: "Spoilage — refrigerated stock" },
   { id: "loan.interest", group: "cost", label: "Loan interest" },
   { id: "fixtures", group: "cost", label: "Fixtures" },
   { id: "license", group: "cost", label: "Licenses" },
@@ -117,9 +118,36 @@ export function listWholesale(skuId: string): number {
   return round2(otcDef(skuId).msrp * 0.55);
 }
 
-/** What the store actually pays per unit today, after the supplier tier. */
+// --- §16 regional shortage: one Rx category squeezed at a time (§26) ---
+
+export const SHORTAGE_WHOLESALE_MULT = 1.5;
+export const SHORTAGE_FILL_RATE = 0.6;
+
+/** Is this SKU's category squeezed by a shortage today? Shortages are an Rx
+ *  affair — OTC SKUs always come back false. */
+export function shortageActive(state: GameState, skuId: string): boolean {
+  const drug = DRUG_BY_ID.get(skuId);
+  if (!drug) return false;
+  for (const s of state.events.shortages) {
+    if (s.category === drug.category && state.day >= s.startDay && state.day <= s.endDay) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Units the wholesaler will actually send (§16: fills capped at 60% while
+ *  the SKU's category is short). The Orders panel's stub and the order
+ *  command both read this, so the paper never promises more than the van. */
+export function shortageFillCap(state: GameState, skuId: string, units: number): number {
+  return shortageActive(state, skuId) ? Math.floor(units * SHORTAGE_FILL_RATE) : units;
+}
+
+/** What the store actually pays per unit today: the supplier tier's shave,
+ *  and a shortage's ×1.5 on the squeezed category (§16, §26). */
 export function unitCost(state: GameState, skuId: string): number {
-  return round2(listWholesale(skuId) * (1 - supplierDiscount(state.repStars)));
+  const shortage = shortageActive(state, skuId) ? SHORTAGE_WHOLESALE_MULT : 1;
+  return round2(listWholesale(skuId) * shortage * (1 - supplierDiscount(state.repStars)));
 }
 
 export function orderTotal(state: GameState, lines: readonly OrderLine[]): number {

@@ -15,6 +15,7 @@ import {
   refrigeratedHeld,
   refrigeratedInbound,
 } from "../sim/coldchain";
+import { RUSH_WINDOWS } from "../sim/customers";
 import type { SimEvent } from "../sim/events";
 import { binFixtureFor, SHELF_SLOT_UNITS, shelvedUnits, stockOf } from "../sim/inventory";
 import { eraDef } from "../sim/renovation";
@@ -27,6 +28,7 @@ import { Panel } from "./components/Panel";
 import { PillButton } from "./components/PillButton";
 import { PriceTag } from "./components/PriceTag";
 import { createRxCard } from "./components/RxCard";
+import { createTicker, worldHeadlines } from "./components/Ticker";
 import { createToastHost, type ToastTone } from "./components/Toast";
 import { h } from "./dom";
 import { money } from "./format";
@@ -112,10 +114,19 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
   const tapeFill = h("span", { cls: "tape__fill" });
   const tapeFlag = h("span", { cls: "tape__flag" });
   const tapeMarker = h("span", { cls: "tape__marker" }, [tapeFlag]);
+  // §16/§28 rush shading: the two ×1.6 windows printed on the tape itself,
+  // read straight off the arrival sampler's own constants.
+  const rushBands = RUSH_WINDOWS.map(([start, end]) => {
+    const band = h("span", { cls: "tape__rush", attrs: { "aria-hidden": "true" } });
+    band.style.left = `${dayProgress(start) * 100}%`;
+    band.style.width = `${(dayProgress(end) - dayProgress(start)) * 100}%`;
+    return band;
+  });
   const tape = h("div", { cls: "chip tape", attrs: { "aria-label": "Shift clock" } }, [
     h("span", { cls: "tape__label", text: "08:00" }),
     h("div", { cls: "tape__track" }, [
       h("span", { cls: "tape__line" }),
+      ...rushBands,
       tapeFill,
       ...ticks,
       tapeMarker,
@@ -169,6 +180,13 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
   }
 
   const topbar = h("div", { cls: "topbar" }, [dayChip, tape, cashChip, starsChip, speedGroup]);
+
+  // §16/§28 news ticker: the world's active headlines on a strip of wire
+  // tape under the top bar, derived from state so a reload reads the same.
+  const ticker = createTicker();
+  function refreshTicker(): void {
+    ticker.set(worldHeadlines(sim.snapshot));
+  }
 
   // --- Bottom dock ---
 
@@ -513,6 +531,7 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
 
   root.append(
     topbar,
+    ticker.root,
     palette.root,
     orders.root,
     team.root,
@@ -545,6 +564,8 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
   }
 
   function setPhase(phase: DayPhase): void {
+    // The receipt owns the close (§28) — the wire goes quiet under it.
+    ticker.setVisible(phase !== "close");
     morningStage.hidden = phase !== "morning";
     if (phase !== "morning") revealEra = null; // the reveal card shows once
     if (phase === "morning") refreshMorning();
@@ -631,6 +652,7 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
   bus.on("day.phaseChanged", (e) => {
     setDay(e.day);
     setPhase(e.phase);
+    refreshTicker(); // the close adds the forecast; the morning turns the page
   });
   bus.on("speed.changed", (e) => setSpeed(e.speed));
   bus.on("cash.changed", (e) => {
@@ -706,6 +728,34 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
   });
   bus.on("reorder.unlocked", () => {
     toast("An empty shelf cost you a sale. Orders now takes min/target levels.", "error");
+  });
+
+  // --- World events + atmosphere (§16, milestone 11) ---
+
+  bus.on("season.changed", refreshTicker);
+  bus.on("shortage.started", refreshTicker);
+  bus.on("shortage.ended", refreshTicker);
+  bus.on("legacy.moment", refreshTicker);
+  bus.on("outage.changed", (e) => {
+    if (e.on) {
+      toast(
+        e.generator
+          ? "Power's out — the backup generator hums on"
+          : "Power's out — registers on the cash box",
+        e.generator ? undefined : "error",
+      );
+    } else {
+      toast("Power's back");
+    }
+    refreshTicker();
+  });
+  bus.on("coldchain.spoiled", (e) => {
+    toast(`Refrigerated stock spoiled in the outage — ${money(e.value)} lost`, "error");
+    if (fridgeCardId !== null) buildFridgeCard();
+  });
+  bus.on("dev.eventForced", (e) => {
+    toast(e.message);
+    refreshTicker();
   });
 
   // --- Vaccination service (§14) ---
@@ -805,12 +855,19 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
       togglePanel("legacy");
     } else if (e.code === "KeyN" && !e.repeat) {
       sim.dispatch({ type: "dev.stressToggle" });
+    } else if (e.code === "KeyJ" && !e.repeat) {
+      sim.dispatch({ type: "dev.forceShortage" });
+    } else if (e.code === "KeyM" && !e.repeat) {
+      sim.dispatch({ type: "dev.forceStorm" });
+    } else if (e.code === "KeyK" && !e.repeat) {
+      sim.dispatch({ type: "dev.skipDay" });
     }
   });
 
   // --- Initial paint ---
 
   setDay(state.day);
+  refreshTicker();
   setPhase(state.phase);
   setClock(state.clockIgm);
   setSpeed(state.speed);
