@@ -267,8 +267,12 @@ export function bankStatus(state: GameState): BankStatus {
   const average = gross.length === 0 ? 0 : gross.reduce((sum, g) => sum + g, 0) / gross.length;
   const limit = Math.min(BANK_CAP, Math.floor(average * BANK_GROSS_MULTIPLE));
   const balance = state.loans.bank;
+  // repStars accumulates float deltas, so compare at the tenth that is
+  // displayed \u2014 the card must never read "you're at 3.0\u2605" while still
+  // locked (same rule as the license gates).
+  const shownStars = Math.round(state.repStars * 10) / 10;
   const lock =
-    state.repStars < BANK_UNLOCK_STARS
+    shownStars < BANK_UNLOCK_STARS
       ? `Opens at ${BANK_UNLOCK_STARS.toFixed(1)}\u2605 \u00b7 you're at ${state.repStars.toFixed(1)}\u2605`
       : null;
   return { lock, limit, balance, available: Math.max(0, round2(limit - balance)) };
