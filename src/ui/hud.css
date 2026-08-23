@@ -2611,6 +2611,9 @@ html.app-shell .topbar {
 
 /* The wall board ends where the frames end — it is a hanging board, not a
    floor-to-ceiling scrim; it only scrolls when a short window forces it. */
+/* The walnut and brass on this screen are the store's own world palette —
+   #6b4a32 is WALNUT and #c9a86a is BRASS from render/storeScene.ts and
+   render/meshes/furniture.ts. Repainting the store means repainting here. */
 .lic__wall {
   flex: 1;
   max-height: 100%;
