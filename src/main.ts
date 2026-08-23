@@ -215,6 +215,10 @@ function updateOverlays(): void {
     hud.updateStageStack(key, sx, sy, count, label);
   };
 
+  // One read per frame each — the depth getters walk the script map.
+  const fillDepth = sim.workflow.fillDepth;
+  const verifyDepth = sim.workflow.verifyDepth;
+
   for (const item of state.store.furniture) {
     if (item.defId === "counter_register") {
       const count = sim.queueLength(item.id);
@@ -236,15 +240,13 @@ function updateOverlays(): void {
       stack(`${item.id}#drop`, dx, dz, dropCount, "drop-off");
       stack(`${item.id}#pick`, px, pz, pickCount, "pickup");
     } else if (item.defId === "fill_bench") {
-      const depth = sim.workflow.fillDepth;
-      consider(item.id, depth);
+      consider(item.id, fillDepth);
       const [wx, wz] = cellToWorld(cols, rows, item.cellX, item.cellY);
-      stack(item.id, wx, wz, depth, "fill");
+      stack(item.id, wx, wz, fillDepth, "fill");
     } else if (item.defId === "verify_desk") {
-      const depth = sim.workflow.verifyDepth;
-      consider(item.id, depth);
+      consider(item.id, verifyDepth);
       const [wx, wz] = cellToWorld(cols, rows, item.cellX, item.cellY);
-      stack(item.id, wx, wz, depth, "verify");
+      stack(item.id, wx, wz, verifyDepth, "verify");
     }
   }
   for (const key of liveStackKeys) {
