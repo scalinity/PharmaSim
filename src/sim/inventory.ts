@@ -118,8 +118,9 @@ export function refreshPriceIndex(store: StoreState): void {
 
 /** The shelf a SKU is labelled on, or null. */
 function shelfOf(store: StoreState, skuId: string): string | null {
-  for (const [shelfId, slots] of Object.entries(store.shelfSlots)) {
-    if (slots.includes(skuId)) return shelfId;
+  // for-in, not Object.entries — restockableUnits asks every frame (§30).
+  for (const shelfId in store.shelfSlots) {
+    if (store.shelfSlots[shelfId]!.includes(skuId)) return shelfId;
   }
   return null;
 }
@@ -153,15 +154,24 @@ export function restockableUnits(state: GameState, furnitureId: string): number 
   const item = store.furniture.find((f) => f.id === furnitureId);
   if (!item) return 0;
   if (item.defId === "otc_shelf") {
-    const slots = store.shelfSlots[furnitureId] ?? [];
+    const slots = store.shelfSlots[furnitureId];
     let units = 0;
-    for (const skuId of slots) {
-      units += Math.min(SHELF_SLOT_UNITS - shelvedUnits(store, skuId), stockOf(store, skuId).backroom);
+    if (slots) {
+      for (const skuId of slots) {
+        units += Math.min(SHELF_SLOT_UNITS - shelvedUnits(store, skuId), stockOf(store, skuId).backroom);
+      }
     }
-    let free = SHELF_SLOTS - slots.length;
-    for (const skuId of unlabelled(store)) {
-      if (free-- <= 0) break;
-      units += Math.min(SHELF_SLOT_UNITS, stockOf(store, skuId).backroom);
+    // Inlined unlabelled() scan: restock() keeps the list-building helper
+    // (it mutates slots as it labels), but this path runs every frame for
+    // the overlay chips and must not allocate (§30).
+    let free = SHELF_SLOTS - (slots ? slots.length : 0);
+    if (free > 0) {
+      for (const def of OTC_DEFS) {
+        const backroom = stockOf(store, def.id).backroom;
+        if (backroom <= 0 || shelfOf(store, def.id) !== null) continue;
+        units += Math.min(SHELF_SLOT_UNITS, backroom);
+        if (--free <= 0) break;
+      }
     }
     return units;
   }
@@ -184,7 +194,8 @@ export function hasEmptySlot(state: GameState, furnitureId: string): boolean {
   const store = state.store;
   const item = store.furniture.find((f) => f.id === furnitureId);
   if (item?.defId === "otc_shelf") {
-    const slots = store.shelfSlots[furnitureId] ?? [];
+    const slots = store.shelfSlots[furnitureId];
+    if (!slots) return false;
     return slots.some((skuId) => shelvedUnits(store, skuId) === 0);
   }
   if (item?.defId === "rx_shelf" || item?.defId === "cabinet_controlled") {
