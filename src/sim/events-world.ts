@@ -143,7 +143,11 @@ function planYearStorms(state: GameState, yearIdx: number): void {
   const count = rng() < 0.5 ? 1 : 2;
   const first = yearIdx * DAYS_PER_YEAR + 1;
   const days = new Set<number>();
-  while (days.size < count) {
+  // Bounded sampling: 55 candidate days dwarf a count of 2, so a few draws
+  // always land distinct — the cap only exists so no state, however corrupt
+  // (a day large enough that every draw collapses onto one float), can turn
+  // planning into a hang. Normal runs consume the same draws either way.
+  for (let tries = 0; days.size < count && tries < count * 8; tries++) {
     days.add(first + 1 + Math.floor(rng() * (DAYS_PER_YEAR - 1)));
   }
   for (const day of [...days].sort((a, b) => a - b)) {

@@ -66,6 +66,7 @@
 //  14 branches, 15 logistics, 16 AI tech — each with its own migrate step.
 // ===========================================================================
 
+import { DAY_END_IGM, DAY_START_IGM } from "../core/clock";
 import { isLegacyMoment } from "../data/flavor";
 import type { HiringPool, StaffMember } from "./staff";
 import {
@@ -322,9 +323,15 @@ function requireArray(value: unknown, name: string): void {
 const PHASES: readonly string[] = ["morning", "shift", "close"];
 
 function validate(file: RawSave): SaveFile {
+  // Finiteness matters as much as the type: JSON.parse happily yields
+  // Infinity from "1e999", and NaN survives every typeof check.
   for (const key of ["day", "clockIgm", "cash", "repStars", "era"]) {
-    if (typeof file[key] !== "number") reject(key);
+    if (typeof file[key] !== "number" || !Number.isFinite(file[key] as number)) reject(key);
   }
+  // `day` drives seasonForDay, which indexes the §16 multiplier tables, and
+  // the event planner's season/year math — a zero, negative or fractional
+  // day would throw at the first Open store instead of being refused here.
+  if (!Number.isInteger(file.day) || (file.day as number) < 1) reject("readable day number");
   if (typeof file.phase !== "string" || !PHASES.includes(file.phase)) reject("day phase");
   requireArray(file.licenses, "licenses");
   requireObject(file.loans, "loan balances");
@@ -363,33 +370,39 @@ function validate(file: RawSave): SaveFile {
     }
   }
   requireArray(events.shortages, "shortages");
+  // A schedule larger than the planner could ever write is a corrupt file —
+  // and the Orders panel walks these arrays per row, so refuse, don't crawl.
+  if ((events.shortages as unknown[]).length > 16) reject("a sane shortage schedule");
   for (const entry of events.shortages as unknown[]) {
     const s = entry as RawSave;
     if (
       typeof entry !== "object" ||
       entry === null ||
       typeof s.category !== "string" ||
-      typeof s.startDay !== "number" ||
-      typeof s.endDay !== "number" ||
-      !Number.isFinite(s.startDay) ||
-      !Number.isFinite(s.endDay) ||
+      !Number.isInteger(s.startDay) ||
+      !Number.isInteger(s.endDay) ||
       (s.endDay as number) < (s.startDay as number)
     ) {
       reject("readable shortages");
     }
   }
   requireArray(events.storms, "storms");
+  if ((events.storms as unknown[]).length > 16) reject("a sane storm schedule");
   for (const entry of events.storms as unknown[]) {
     const s = entry as RawSave;
     if (
       typeof entry !== "object" ||
       entry === null ||
-      typeof s.day !== "number" ||
-      typeof s.outageStartIgm !== "number" ||
-      typeof s.outageEndIgm !== "number" ||
-      !Number.isFinite(s.day) ||
+      !Number.isInteger(s.day) ||
+      // NaN slides through range comparisons (every one is false), so the
+      // finiteness check is what actually guards the window bounds below.
       !Number.isFinite(s.outageStartIgm) ||
       !Number.isFinite(s.outageEndIgm) ||
+      // The window must sit inside the 08:00–20:00 shift the outage clock
+      // reads against — outside it, the power would drop at open or the
+      // restored edge would never fire until the close's failsafe.
+      (s.outageStartIgm as number) < DAY_START_IGM ||
+      (s.outageEndIgm as number) > DAY_END_IGM ||
       (s.outageEndIgm as number) <= (s.outageStartIgm as number)
     ) {
       reject("readable storms");
