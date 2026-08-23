@@ -1276,10 +1276,13 @@ html.app-shell .topbar {
   color: var(--ink-75);
 }
 
-/* One pip per cold unit, wrapped ten to a row like a blister card. */
-.meter__pips--fridge {
+/* One pip per cold unit, wrapped ten to a row like a blister card. The
+   doubled class outweighs the base rule's pill radius, which sits later in
+   the file at equal single-class specificity. */
+.meter__pips.meter__pips--fridge {
   flex-wrap: wrap;
-  max-width: 122px;
+  /* 10 pips × 8px + 9 gaps × 3px = 107px content, +12px padding/border. */
+  max-width: 119px;
   border-radius: 6px;
 }
 
