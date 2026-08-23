@@ -53,6 +53,10 @@ export class Sim {
   }
 
   dispatch(command: Command): void {
+    // Captured before the handler runs: rebuilds below must key on what the
+    // command actually *did*, not on it having been dispatched — a refused
+    // expansion (wrong phase, short cash, blocked doorway) changes nothing.
+    const { cols: colsBefore, rows: rowsBefore } = this.state.store.grid;
     handleCommand(this.state, command, this.emit);
     switch (command.type) {
       case "store.open":
@@ -68,12 +72,17 @@ export class Sim {
         this.staff.layoutChanged(this.state, this.emit);
         this.workflow.syncStation(this.state, this.emit);
         break;
-      case "expansion.buy":
+      case "expansion.buy": {
         // §6: the grid itself grew (morning-only, nobody on the floor) —
-        // both agent systems rebuild their cell-indexed world.
-        this.customers.gridChanged(this.state);
-        this.staff.gridChanged(this.state, this.emit);
+        // both agent systems rebuild their cell-indexed world, matching the
+        // render layer's expansion.bought listeners.
+        const grid = this.state.store.grid;
+        if (grid.cols !== colsBefore || grid.rows !== rowsBefore) {
+          this.customers.gridChanged(this.state);
+          this.staff.gridChanged(this.state, this.emit);
+        }
         break;
+      }
       case "station.workHere":
       case "station.leave":
       case "build.enter":
