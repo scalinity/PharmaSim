@@ -129,7 +129,7 @@ export function buildReceipt(sim: Sim, onNextDay: () => void): HTMLElement {
   const sheet = h(
     "div",
     { cls: "rcpt", attrs: { role: "status", "aria-label": "End of day receipt" } },
-    items,
+    [h("div", { cls: "rcpt__body" }, items)],
   );
   const nextButton = PillButton("Next day", onNextDay);
   const nextWrap = h("div", { cls: "rcpt__next rcpt__item" }, [nextButton]);

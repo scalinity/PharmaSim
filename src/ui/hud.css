@@ -851,19 +851,29 @@ html.app-shell .topbar {
 
 .rcpt {
   position: relative;
+  display: flex;
+  flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
   width: 324px;
-  padding: 20px 24px 16px;
+  padding: 7px 0;
   background: var(--paper);
   color: var(--ink);
   font-family: var(--font-mono);
   font-size: 13px;
   line-height: 1.5;
   filter: var(--panel-shadow);
-  overflow-y: auto;
+  overflow: hidden;
   pointer-events: auto;
   cursor: pointer;
+}
+
+/* Lines scroll inside the paper so the tear edges stay on the strip, not the copy. */
+.rcpt__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 13px 24px 9px;
 }
 
 /* Perforated tear edges, top and bottom */
@@ -874,6 +884,7 @@ html.app-shell .topbar {
   left: 0;
   right: 0;
   height: 7px;
+  pointer-events: none;
 }
 
 .rcpt::before {
