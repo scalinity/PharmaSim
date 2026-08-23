@@ -461,6 +461,13 @@ export class RxWorkflow {
    */
   private syncDispenserLanes(state: GameState, emit: Emit): void {
     this.autoLaneOpen = state.store.furniture.some((f) => f.defId === "dispenser_robotic");
+    // A closing lane drains before any held task is released, so the fill a
+    // sold machine was mid-way through lands back on *top* of the pile it
+    // was already ahead of, not behind its own queue.
+    if (!this.autoLaneOpen && this.autoQueue.length > 0) {
+      this.fillQueue.unshift(...this.autoQueue);
+      this.autoQueue.length = 0;
+    }
     for (const [dispenserId, task] of this.dispenserTasks) {
       if (state.store.furniture.some((f) => f.id === dispenserId)) continue;
       this.dispenserTasks.delete(dispenserId);
@@ -471,13 +478,7 @@ export class RxWorkflow {
         emit({ type: "rx.stageChanged", scriptId: script.id, stage: script.stage });
       }
     }
-    if (!this.autoLaneOpen) {
-      if (this.autoQueue.length > 0) {
-        this.fillQueue.unshift(...this.autoQueue);
-        this.autoQueue.length = 0;
-      }
-      return;
-    }
+    if (!this.autoLaneOpen) return;
     // A machine just arrived (or was always here): its share of the benches'
     // pile walks over. Order within each lane is preserved.
     let kept = 0;
