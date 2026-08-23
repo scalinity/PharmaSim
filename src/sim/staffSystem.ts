@@ -262,6 +262,7 @@ export class StaffSystem {
       agent.arrived = false;
       agent.targetKind = "break";
       agent.targetId = null;
+      agent.targetCell = -1; // force setTarget to re-path, not match stale cells
     }
   }
 
@@ -274,6 +275,7 @@ export class StaffSystem {
         this.releaseTask(agent, emit);
         agent.targetKind = "break";
         agent.targetId = null;
+        agent.targetCell = -1; // force setTarget to re-path, not match stale cells
         agent.arrived = false;
         agent.path.length = 0;
       }
