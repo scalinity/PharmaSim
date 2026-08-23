@@ -58,6 +58,9 @@ function buildStaffMesh(memberId: string, material: MeshLambertMaterial): Mesh {
 
 export class StaffView {
   private meshes = new Map<string, Mesh>();
+  /** Shared by every staff mesh and deliberately never disposed: the view
+   *  lives as long as the scene. Per-hire geometry is what churns, and that
+   *  is disposed on removal below. */
   private material = new MeshLambertMaterial({ vertexColors: true, flatShading: true });
   private seen = new Set<string>();
 
