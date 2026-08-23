@@ -8,6 +8,7 @@
 import type { EventBus } from "../../core/bus";
 import { furnitureDef } from "../../data/furniture";
 import type { SimEvent } from "../../sim/events";
+import type { Sim } from "../../sim/sim";
 import {
   HIREABLE_ROLES,
   mondayOf,
@@ -20,7 +21,6 @@ import {
   type StaffMember,
   type StaffRole,
 } from "../../sim/staff";
-import type { Sim } from "../../sim/sim";
 import { Meter } from "../components/Meter";
 import { Panel } from "../components/Panel";
 import { PillButton } from "../components/PillButton";
