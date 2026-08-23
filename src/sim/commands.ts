@@ -28,7 +28,13 @@ import {
 import { canBuyLicense, licenseDef, ownsLicense } from "./licenses";
 import { doorwayBlocked, validatePlacement } from "./placement";
 import { refreshHiringPool, ROLE_STATIONS, type StaffMember } from "./staff";
-import { emptyDayStats, type GameState, type GameSpeed, type OrderLine } from "./state";
+import {
+  emptyDayStats,
+  type GameSpeed,
+  type GameState,
+  type OrderLine,
+  type PlacedFurniture,
+} from "./state";
 
 export type Command =
   | { type: "store.open" }
@@ -332,7 +338,7 @@ export function handleCommand(
       const taken = new Set(
         state.store.staff.map((m) => m.assignment?.stationId).filter(Boolean),
       );
-      let station;
+      let station: PlacedFurniture | undefined;
       for (const defId of ROLE_STATIONS[member.role]) {
         station = state.store.furniture.find((f) => f.defId === defId && !taken.has(f.id));
         if (station) break;
