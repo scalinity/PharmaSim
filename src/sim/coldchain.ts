@@ -5,19 +5,22 @@
 // this module owns the capacity math both the Orders panel and the order
 // command enforce. Pure sim — no DOM, no three.js.
 
-import { DRUG_DEFS } from "../data/drugs";
+import { DRUG_DEFS, drugDef } from "../data/drugs";
 import type { GameState, StoreState } from "./state";
 
 /** §26: refrigerated units one fridge holds; a second fridge doubles it. */
 export const FRIDGE_CAPACITY = 40;
 
-/** §26 vaccination service: 15 igm a shot, $30 reimbursed (net +$22 over the
- *  $8 dose), 3–6 walk-ins a day once the service exists. */
+/** §26 vaccination service: 15 igm a shot, the dose's §25 reimbursement
+ *  credited per shot (net +$22 over its wholesale), 3–6 walk-ins a day once
+ *  the service exists. */
 export const VACCINE_IGM = 15;
-export const VACCINE_REIMBURSEMENT = 30;
 export const VACCINE_WALKINS_MIN = 3;
 export const VACCINE_WALKINS_MAX = 6;
 export const VACCINE_DOSE_ID = "fluVaxDose";
+/** Derived from the catalog so the Orders panel's "insurer, fixed" column
+ *  and the ledger can never quote two different numbers. */
+export const VACCINE_REIMBURSEMENT = drugDef(VACCINE_DOSE_ID).reimbursement;
 
 const REFRIGERATED_IDS: ReadonlySet<string> = new Set(
   DRUG_DEFS.filter((def) => def.refrigerated).map((def) => def.id),
