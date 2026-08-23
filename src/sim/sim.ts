@@ -59,7 +59,7 @@ export class Sim {
         if (this.state.phase === "shift") this.customers.beginDay(this.state);
         break;
       case "day.advance":
-        this.staff.beginDay(this.state);
+        this.staff.beginDay(this.state, this.emit);
         break;
       case "furniture.place":
       case "furniture.move":

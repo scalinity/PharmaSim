@@ -103,9 +103,9 @@ export class StaffSystem {
     this.walk = new Uint8Array(cols * rows);
     this.doors = doorCells(cols, rows);
     this.layoutChanged(state, NO_EMIT);
-    this.rosterChanged(state);
+    this.rosterChanged(state, NO_EMIT);
     // A loaded save starts the crew already on the floor, at their spots.
-    this.agentList.forEach((agent, i) => this.placeAtBreak(agent, i));
+    this.agentList.forEach((agent, i) => this.placeAtBreak(agent, i, NO_EMIT));
   }
 
   /** Live agents for the render layer (positions interpolate on stride). */
@@ -248,12 +248,15 @@ export class StaffSystem {
   }
 
   /** New morning: the crew is back at their break spots, ready for open. */
-  beginDay(state: GameState): void {
-    this.rosterChanged(state);
-    this.agentList.forEach((agent, i) => this.placeAtBreak(agent, i));
+  beginDay(state: GameState, emit: Emit): void {
+    this.rosterChanged(state, emit);
+    this.agentList.forEach((agent, i) => this.placeAtBreak(agent, i, emit));
   }
 
-  private placeAtBreak(agent: StaffAgent, index: number): void {
+  private placeAtBreak(agent: StaffAgent, index: number, emit: Emit): void {
+    // No script survives a day boundary today, but a claim must never be
+    // zeroed without going back on its queue — release, don't drop.
+    this.releaseTask(agent, emit);
     const cell = this.breakCells[index % Math.max(1, this.breakCells.length)];
     if (cell === undefined) return;
     const cx = cell % this.cols;
@@ -266,8 +269,6 @@ export class StaffSystem {
     agent.targetId = null;
     agent.targetCell = cell;
     agent.arrived = true;
-    agent.taskScriptId = 0;
-    agent.taskKind = null;
     agent.counselLeft = 0;
     agent.restockLeft = 0;
     agent.idleIgm = 0;
