@@ -266,11 +266,22 @@ const FACTORIES: Record<string, (p: EraPalette) => BufferGeometry> = {
 
 const cache = new Map<string, BufferGeometry>();
 
+/** Defs whose factories take no palette — one cached geometry serves every
+ *  era. KEEP IN STEP with the factory signatures above: giving one of these
+ *  a palette role without removing it here would silently serve the first
+ *  build to every other era. */
+const ERA_INVARIANT: ReadonlySet<string> = new Set([
+  "generator_backup",
+  "dispenser_robotic",
+  "decor_plant",
+  "decor_rug",
+]);
+
 /** Merged, vertex-colored geometry for a def in an era's materials; built
  *  once per (era, def) and shared — the era-change rebuild is a cache fill,
  *  never a per-frame cost (§30). */
 export function furnitureGeometry(defId: string, era: number): BufferGeometry {
-  const key = `${era}:${defId}`;
+  const key = ERA_INVARIANT.has(defId) ? defId : `${era}:${defId}`;
   let geometry = cache.get(key);
   if (!geometry) {
     const factory = FACTORIES[defId];
