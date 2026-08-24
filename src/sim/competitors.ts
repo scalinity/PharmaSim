@@ -332,7 +332,10 @@ function evaluatePools(state: GameState, emit: Emit): void {
 
   // §22: the first completed week that nets transfers *in* is a moment.
   // The window reaches back over the played week and includes this
-  // morning's pulls, so the note pins to tonight's receipt.
+  // morning's pulls, so the note pins to tonight's receipt. Consecutive
+  // Mondays tile the calendar exactly; day 1 alone sits outside every
+  // window — deliberate, since counting it would overlap the windows,
+  // and no transfer can fire before the first shift anyway.
   let net = 0;
   for (const record of state.market.transfers) {
     if (state.day - record.day >= 7) continue;
