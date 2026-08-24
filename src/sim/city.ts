@@ -27,7 +27,7 @@ const RX_CATEGORIES = Object.keys(CATEGORY_WEIGHT) as RxCategory[];
 /** §17: the nursing home's chronic refills route as one weekly batch — the
  *  week's worth lands on Monday (day 1 is a Monday, §5) instead of
  *  trickling in daily like every other facility's bonus. */
-export function nursingBatchDay(day: number): boolean {
+function nursingBatchDay(day: number): boolean {
   return (day - 1) % 7 === 0;
 }
 
@@ -70,7 +70,7 @@ function priceScore(priceIndex: number): number {
 
 /** §17 availability: the trailing 7-day fill rate. A store with no record
  *  yet gets the benefit of the doubt. */
-export function storeAvailability(state: GameState): number {
+function storeAvailability(state: GameState): number {
   const rates = state.store.fillRate7d;
   if (rates.length === 0) return 1;
   let sum = 0;
@@ -79,7 +79,7 @@ export function storeAvailability(state: GameState): number {
 }
 
 /** The store's §17 attractiveness in one district's eyes. */
-export function storeAttractiveness(state: GameState, districtId: string): number {
+function storeAttractiveness(state: GameState, districtId: string): number {
   return (
     W_PROXIMITY * proximity(districtId, STORE_DISTRICT_ID) +
     W_REP * (state.repStars / 5) +
