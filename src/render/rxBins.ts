@@ -278,7 +278,7 @@ export class RxBinBoard {
   pick(raycaster: Raycaster): number {
     if (!this.bins) return -1;
     const hit = raycaster.intersectObject(this.labelMesh, false)[0];
-    if (!hit || hit.faceIndex === undefined) return -1;
+    if (!hit || hit.faceIndex === undefined || hit.faceIndex === null) return -1;
     return Math.floor(hit.faceIndex / 2);
   }
 

@@ -492,7 +492,7 @@ export class RxWorkflow {
     if (station?.defId === "fill_bench" && !state.buildMode) {
       this.takeNext(state, emit);
     } else if (this.fillingId !== null) {
-      this.abortFilling(state, emit);
+      this.abortFilling(emit);
     }
     if (!(station?.defId === "verify_desk" && !state.buildMode) && this.playerVerifyId !== null) {
       this.releaseVerify(this.playerVerifyId, emit);
@@ -540,7 +540,7 @@ export class RxWorkflow {
   }
 
   /** Stepping away mid-fill puts the script back on top of the queue. */
-  private abortFilling(state: GameState, emit: Emit): void {
+  private abortFilling(emit: Emit): void {
     const id = this.fillingId;
     if (id === null) return;
     const script = this.scripts.get(id)!;

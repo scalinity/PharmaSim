@@ -75,7 +75,7 @@ export function createLicensesPanel(sim: Sim, bus: EventBus<SimEvent>): Licenses
   /** The application form: the same wall spot while requirements are open. */
   function buildForm(card: Card): void {
     const def = card.def;
-    const children = [
+    const children: HTMLElement[] = [
       h("p", { cls: "cert__eyebrow", text: `Application · form PB-${def.id.slice(1)}` }),
       h("h3", { cls: "cert__name", text: def.name }),
       h("p", { cls: "cert__grant", text: `${def.unlocks}.` }),

@@ -48,7 +48,6 @@ export class Picking {
   private ghostDefId: string | null = null;
   private movingId: string | null = null;
   private ghostRot: Rot = 0;
-  private moveOrigin: { cellX: number; cellY: number; rot: Rot } | null = null;
   private selection: BuildSelection | null = null;
 
   private hoverCellX = -1;
@@ -105,7 +104,6 @@ export class Picking {
     bus.on("furniture.moved", (e) => {
       if (this.movingId === e.item.id) {
         this.movingId = null;
-        this.moveOrigin = null;
         this.ghostDefId = null;
         this.scene.setHidden(null);
         this.scene.hideGhost();
@@ -155,7 +153,6 @@ export class Picking {
     this.movingId = item.id;
     this.ghostDefId = item.defId;
     this.ghostRot = item.rot;
-    this.moveOrigin = { cellX: item.cellX, cellY: item.cellY, rot: item.rot };
     this.scene.setHidden(item.id);
     this.scene.setHover(null);
     this.setSelection(null);
@@ -368,7 +365,6 @@ export class Picking {
     if (this.movingId) {
       this.scene.setHidden(null);
       this.movingId = null;
-      this.moveOrigin = null;
     }
     if (this.ghostDefId) {
       this.ghostDefId = null;
