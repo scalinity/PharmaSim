@@ -613,7 +613,13 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
             msrp: def.msrp,
             multiplier: store.otcPricing[skuId] ?? 1,
             name: def.name,
-            onChange: (multiplier) => sim.dispatch({ type: "otc.setPrice", skuId, multiplier }),
+            onChange: (multiplier) =>
+              sim.dispatch({
+                type: "otc.setPrice",
+                skuId,
+                multiplier,
+                storeId: sim.snapshot.activeStoreId,
+              }),
           }).root,
         ]),
       );

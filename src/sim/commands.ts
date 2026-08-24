@@ -61,15 +61,16 @@ export type Command =
   | { type: "station.leave" }
   /** Player picked a bin during the fill interaction; handled by Sim (workflow). */
   | { type: "fill.pickBin"; drugId: string }
-  // --- Inventory + economy (§10, §11; `storeId` scopes a branch, §19 —
-  //     omitted, the active store) ---
+  // --- Inventory + economy (§10, §11; `storeId` names the branch, §19 —
+  //     required, so a dispatch that forgets it is a compile error rather
+  //     than a silent write to whichever store happens to be active) ---
   /** Buy wholesale: cash out now, goods land in that store's backroom next
    *  morning (§19: deliveries arrive wherever ordered). */
-  | { type: "order.submit"; lines: OrderLine[]; storeId?: string }
-  | { type: "otc.setPrice"; skuId: string; multiplier: number; storeId?: string }
+  | { type: "order.submit"; lines: OrderLine[]; storeId: string }
+  | { type: "otc.setPrice"; skuId: string; multiplier: number; storeId: string }
   /** Move backroom stock onto a shelf's labels or into the Rx bins. */
   | { type: "stock.restock"; furnitureId: string }
-  | { type: "reorder.setRule"; skuId: string; min: number; target: number; storeId?: string }
+  | { type: "reorder.setRule"; skuId: string; min: number; target: number; storeId: string }
   | { type: "loan.draw"; amount: number }
   | { type: "loan.repay"; amount: number }
   // --- Licenses + expansion (§6, §12) ---
@@ -82,9 +83,9 @@ export type Command =
    *  today; the new generation stands at tomorrow's open. */
   | { type: "era.renovate" }
   // --- Staff (§9; the pool is shared, rosters are per branch — §19) ---
-  | { type: "staff.hire"; candidateId: string; storeId?: string }
-  | { type: "staff.fire"; staffId: string; storeId?: string }
-  | { type: "staff.assign"; staffId: string; stationId: string | null; storeId?: string }
+  | { type: "staff.hire"; candidateId: string; storeId: string }
+  | { type: "staff.fire"; staffId: string; storeId: string }
+  | { type: "staff.assign"; staffId: string; stationId: string | null; storeId: string }
   // --- Multi-branch (§19) ---
   /** Buy a district's empty lot: site 300× rent + $15k fit-out (§26). */
   | { type: "branch.buy"; districtId: string }
@@ -124,10 +125,11 @@ function leaveStation(state: GameState, emit: (event: SimEvent) => void): void {
   emit({ type: "station.changed", stationId: null });
 }
 
-/** Resolve a command's branch scope (§19): the named store, or the active
- *  one when unscoped. Null refuses an id no store answers to. */
-function scopedStore(state: GameState, storeId: string | undefined): StoreState | null {
-  if (storeId === undefined) return activeStore(state);
+/** Resolve a command's branch scope (§19). Null refuses an id no store
+ *  answers to. storeId is required on scoped commands — the active-floor
+ *  call sites say activeStoreId out loud, so "this one really means the
+ *  floor I'm standing on" is visible at the dispatch. */
+function scopedStore(state: GameState, storeId: string): StoreState | null {
   return storeById(state, storeId);
 }
 
