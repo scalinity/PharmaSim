@@ -4,11 +4,13 @@
 
 import { DAY_START_IGM } from "../core/clock";
 import type { Rot } from "../core/grid";
+import { DISTRICTS } from "../data/districts";
 import { EXPANSIONS, furnitureDef } from "../data/furniture";
 import { coldClampUnits, hasFridge } from "./coldchain";
 import { advanceMarket } from "./competitors";
 import {
   bankStatus,
+  branchPrice,
   catalog,
   orderTotal,
   post,
@@ -34,11 +36,15 @@ import { doorwayBlocked, validatePlacement } from "./placement";
 import { beginRenovation, completeRenovation } from "./renovation";
 import { refreshHiringPool, ROLE_STATIONS, type StaffMember } from "./staff";
 import {
+  activeStore,
   emptyDayStats,
+  freshStore,
+  storeById,
   type GameSpeed,
   type GameState,
   type OrderLine,
   type PlacedFurniture,
+  type StoreState,
 } from "./state";
 
 export type Command =
@@ -54,13 +60,15 @@ export type Command =
   | { type: "station.leave" }
   /** Player picked a bin during the fill interaction; handled by Sim (workflow). */
   | { type: "fill.pickBin"; drugId: string }
-  // --- Inventory + economy (§10, §11) ---
-  /** Buy wholesale: cash out now, goods land in the backroom next morning. */
-  | { type: "order.submit"; lines: OrderLine[] }
-  | { type: "otc.setPrice"; skuId: string; multiplier: number }
+  // --- Inventory + economy (§10, §11; `storeId` scopes a branch, §19 —
+  //     omitted, the active store) ---
+  /** Buy wholesale: cash out now, goods land in that store's backroom next
+   *  morning (§19: deliveries arrive wherever ordered). */
+  | { type: "order.submit"; lines: OrderLine[]; storeId?: string }
+  | { type: "otc.setPrice"; skuId: string; multiplier: number; storeId?: string }
   /** Move backroom stock onto a shelf's labels or into the Rx bins. */
   | { type: "stock.restock"; furnitureId: string }
-  | { type: "reorder.setRule"; skuId: string; min: number; target: number }
+  | { type: "reorder.setRule"; skuId: string; min: number; target: number; storeId?: string }
   | { type: "loan.draw"; amount: number }
   | { type: "loan.repay"; amount: number }
   // --- Licenses + expansion (§6, §12) ---
@@ -72,10 +80,15 @@ export type Command =
   /** Buy the next §13 era renovation: closes the store for the rest of
    *  today; the new generation stands at tomorrow's open. */
   | { type: "era.renovate" }
-  // --- Staff (§9) ---
-  | { type: "staff.hire"; candidateId: string }
-  | { type: "staff.fire"; staffId: string }
-  | { type: "staff.assign"; staffId: string; stationId: string | null }
+  // --- Staff (§9; the pool is shared, rosters are per branch — §19) ---
+  | { type: "staff.hire"; candidateId: string; storeId?: string }
+  | { type: "staff.fire"; staffId: string; storeId?: string }
+  | { type: "staff.assign"; staffId: string; stationId: string | null; storeId?: string }
+  // --- Multi-branch (§19) ---
+  /** Buy a district's empty lot: site 300× rent + $15k fit-out (§26). */
+  | { type: "branch.buy"; districtId: string }
+  /** Morning only: choose the store the day's 3D sim loads into. */
+  | { type: "branch.setActive"; storeId: string }
   // --- App shell (§23, §24) ---
   /** Reduced motion is the only live setting; volumes wait for milestone 17. */
   | { type: "settings.set"; reducedMotion: boolean }
@@ -99,18 +112,35 @@ const WORKABLE = new Set([
   "vaccine_station",
 ]);
 
+/** Every district has one §19 branch lot (data/districts.ts DISTRICT_MAPS).
+ *  The set guards branch.buy from an invented district id — districtById
+ *  throws, and a command must refuse, never crash. */
+const DISTRICT_LOT_IDS: ReadonlySet<string> = new Set(DISTRICTS.map((d) => d.id));
+
 function leaveStation(state: GameState, emit: (event: SimEvent) => void): void {
   if (state.workingStationId === null) return;
   state.workingStationId = null;
   emit({ type: "station.changed", stationId: null });
 }
 
+/** Resolve a command's branch scope (§19): the named store, or the active
+ *  one when unscoped. Null refuses an id no store answers to. */
+function scopedStore(state: GameState, storeId: string | undefined): StoreState | null {
+  if (storeId === undefined) return activeStore(state);
+  return storeById(state, storeId);
+}
+
 /** Drop lines that are empty, unknown, or behind a licence gate (§12), cap
  *  a shorted category's fills to 60% (§16 — the same cap the Orders stub
  *  shows), and cap refrigerated lines to the fridge space still free (§14:
- *  40 a fridge, enforced at order time against held stock plus inbound). */
-function acceptableLines(state: GameState, lines: readonly OrderLine[]): OrderLine[] {
-  const orderable = new Map(catalog(state).map((entry) => [entry.skuId, entry]));
+ *  40 a fridge, enforced at order time against held stock plus inbound).
+ *  All against the ordering store's own walls (§19). */
+function acceptableLines(
+  state: GameState,
+  store: StoreState,
+  lines: readonly OrderLine[],
+): OrderLine[] {
+  const orderable = new Map(catalog(state, store).map((entry) => [entry.skuId, entry]));
   let coldClaimed = 0;
   const out: OrderLine[] = [];
   for (const l of lines) {
@@ -120,7 +150,7 @@ function acceptableLines(state: GameState, lines: readonly OrderLine[]): OrderLi
     units = shortageFillCap(state, l.skuId, units);
     if (units <= 0) continue;
     if (entry.refrigerated) {
-      units = coldClampUnits(state, units, coldClaimed);
+      units = coldClampUnits(store, units, coldClaimed);
       if (units <= 0) continue;
       coldClaimed += units;
     }
@@ -130,16 +160,20 @@ function acceptableLines(state: GameState, lines: readonly OrderLine[]): OrderLi
 }
 
 /** Morning turnover, shared by day.advance and the dev day skip: the new
- *  day begins, the van unloads, the crew finishes (§13), the world plans
- *  and announces its weather (§16) — all before the phase change goes out,
- *  so the autosave listening on it captures the completed morning. */
+ *  day begins, every store's van unloads (§19: deliveries arrive wherever
+ *  ordered), the crews finish (§13), the world plans and announces its
+ *  weather (§16) — all before the phase change goes out, so the autosave
+ *  listening on it captures the completed morning. */
 function beginMorning(state: GameState, emit: (event: SimEvent) => void): void {
   state.day += 1;
   state.clockIgm = DAY_START_IGM;
   state.phase = "morning";
   state.dayStats = emptyDayStats(state.cash);
-  // Morning: yesterday's wholesale order is on the loading step (§5).
-  const delivery = receiveDeliveries(state.store);
+  // Morning: yesterday's wholesale orders are on the loading steps (§5).
+  const deliveries = state.stores.map((store) => ({
+    storeId: store.id,
+    ...receiveDeliveries(store),
+  }));
   // Mondays put a fresh stack of applications on the counter (§9).
   const refreshed = refreshHiringPool(state);
   completeRenovation(state, emit);
@@ -149,7 +183,9 @@ function beginMorning(state: GameState, emit: (event: SimEvent) => void): void {
   advanceMarket(state, emit);
   emit({ type: "day.phaseChanged", phase: state.phase, day: state.day });
   emit({ type: "clock.minute", igm: state.clockIgm });
-  if (delivery.units > 0) emit({ type: "order.delivered", ...delivery });
+  for (const delivery of deliveries) {
+    if (delivery.units > 0) emit({ type: "order.delivered", ...delivery });
+  }
   if (refreshed) emit({ type: "staff.poolRefreshed", day: state.day });
 }
 
@@ -190,18 +226,19 @@ export function handleCommand(
       return;
     }
     case "furniture.place": {
+      const store = activeStore(state);
       const { defId, cellX, cellY, rot } = command;
       if (!validatePlacement(state, defId, cellX, cellY, rot).ok) return;
       const def = furnitureDef(defId);
-      const item = { id: `f${state.store.nextFurnitureId++}`, defId, cellX, cellY, rot };
-      state.store.furniture.push(item);
-      if (defId === "otc_shelf") state.store.shelfSlots[item.id] = []; // labels come with stock
+      const item = { id: `f${store.nextFurnitureId++}`, defId, cellX, cellY, rot };
+      store.furniture.push(item);
+      if (defId === "otc_shelf") store.shelfSlots[item.id] = []; // labels come with stock
       post(state, "fixtures", -def.cost, emit);
       emit({ type: "furniture.placed", item: { ...item } });
       return;
     }
     case "furniture.move": {
-      const item = state.store.furniture.find((f) => f.id === command.id);
+      const item = activeStore(state).furniture.find((f) => f.id === command.id);
       if (!item) return;
       const { cellX, cellY, rot } = command;
       if (!validatePlacement(state, item.defId, cellX, cellY, rot, item.id).ok) return;
@@ -212,30 +249,31 @@ export function handleCommand(
       return;
     }
     case "furniture.sell": {
-      const index = state.store.furniture.findIndex((f) => f.id === command.id);
+      const store = activeStore(state);
+      const index = store.furniture.findIndex((f) => f.id === command.id);
       if (index === -1) return;
-      const item = state.store.furniture[index]!;
+      const item = store.furniture[index]!;
       const refund = Math.round(furnitureDef(item.defId).cost / 2);
-      state.store.furniture.splice(index, 1);
+      store.furniture.splice(index, 1);
       // Stock on a sold shelf goes back in a box, not in the bin. Controlled
       // and cold stock are boxed only when the *last* cabinet or fridge goes —
       // units pool across the surviving fixtures (§14, §25).
-      if (item.defId === "otc_shelf") clearShelf(state.store, item.id);
+      if (item.defId === "otc_shelf") clearShelf(store, item.id);
       if (
         item.defId === "cabinet_controlled" &&
-        !state.store.furniture.some((f) => f.defId === "cabinet_controlled")
+        !store.furniture.some((f) => f.defId === "cabinet_controlled")
       ) {
-        clearControlled(state.store);
+        clearControlled(store);
       }
-      if (item.defId === "fridge_medical" && !hasFridge(state)) {
-        clearRefrigerated(state.store);
+      if (item.defId === "fridge_medical" && !hasFridge(store)) {
+        clearRefrigerated(store);
       }
       if (state.workingStationId === item.id) leaveStation(state, emit);
       // Anyone stationed at a sold fixture is off duty until reassigned.
-      for (const member of state.store.staff) {
+      for (const member of store.staff) {
         if (member.assignment?.stationId === item.id) {
           delete member.assignment;
-          emit({ type: "staff.assigned", id: member.id, stationId: null });
+          emit({ type: "staff.assigned", storeId: store.id, id: member.id, stationId: null });
         }
       }
       post(state, "fixtures", refund, emit);
@@ -244,7 +282,7 @@ export function handleCommand(
     }
     case "station.workHere": {
       if (state.phase !== "shift" || state.buildMode) return;
-      const item = state.store.furniture.find((f) => f.id === command.stationId);
+      const item = activeStore(state).furniture.find((f) => f.id === command.stationId);
       if (!item || !WORKABLE.has(item.defId)) return;
       if (state.workingStationId === item.id) return;
       state.workingStationId = item.id;
@@ -257,22 +295,26 @@ export function handleCommand(
     }
     case "order.submit": {
       if (state.phase === "close") return;
-      const lines = acceptableLines(state, command.lines);
+      const store = scopedStore(state, command.storeId);
+      if (!store) return;
+      const lines = acceptableLines(state, store, command.lines);
       if (lines.length === 0) return;
-      const total = orderTotal(state, lines);
+      const total = orderTotal(state, store, lines);
       if (total > state.cash) return;
-      queueDelivery(state.store, lines);
+      queueDelivery(store, lines);
       post(state, "order", -total, emit);
       const units = lines.reduce((sum, l) => sum + l.units, 0);
-      emit({ type: "order.submitted", lines, units, total });
+      emit({ type: "order.submitted", storeId: store.id, lines, units, total });
       return;
     }
     case "otc.setPrice": {
       if (!isOtc(command.skuId)) return;
+      const store = scopedStore(state, command.storeId);
+      if (!store) return;
       const multiplier = clampMultiplier(command.multiplier);
-      if (state.store.otcPricing[command.skuId] === multiplier) return;
-      state.store.otcPricing[command.skuId] = multiplier;
-      refreshPriceIndex(state.store);
+      if (store.otcPricing[command.skuId] === multiplier) return;
+      store.otcPricing[command.skuId] = multiplier;
+      refreshPriceIndex(store);
       emit({ type: "otc.priceChanged", skuId: command.skuId, multiplier });
       return;
     }
@@ -284,11 +326,12 @@ export function handleCommand(
       return;
     }
     case "reorder.setRule": {
-      if (!state.store.reorderUnlocked) return;
+      const store = scopedStore(state, command.storeId);
+      if (!store || !store.reorderUnlocked) return;
       const min = Math.max(0, Math.floor(command.min));
       const target = Math.max(min, Math.floor(command.target));
-      if (min === 0 && target === 0) delete state.store.reorderRules[command.skuId];
-      else state.store.reorderRules[command.skuId] = { min, target };
+      if (min === 0 && target === 0) delete store.reorderRules[command.skuId];
+      else store.reorderRules[command.skuId] = { min, target };
       return;
     }
     case "loan.draw": {
@@ -323,18 +366,19 @@ export function handleCommand(
     }
     case "expansion.buy": {
       if (state.phase !== "morning") return;
-      const level = state.store.grid.expansions;
+      const store = activeStore(state);
+      const level = store.grid.expansions;
       const next = EXPANSIONS[level];
       if (!next || state.cash < next.cost) return;
       // A hand-edited save can carry an expansions count that lags its
       // cols/rows; growing is the only direction this command ever moves.
-      if (next.cols < state.store.grid.cols || next.rows < state.store.grid.rows) return;
+      if (next.cols < store.grid.cols || next.rows < store.grid.rows) return;
       // The door rides the south wall's center, so it moves when cols does —
       // furniture legal on the old floor must not end up in the new gap.
       if (doorwayBlocked(state, next.cols, next.rows)) return;
-      state.store.grid.cols = next.cols;
-      state.store.grid.rows = next.rows;
-      state.store.grid.expansions = level + 1;
+      store.grid.cols = next.cols;
+      store.grid.rows = next.rows;
+      store.grid.expansions = level + 1;
       state.stats[`expansion.E${level + 1}`] = state.day;
       post(state, "expansion", -next.cost, emit);
       emit({
@@ -353,6 +397,8 @@ export function handleCommand(
     }
     case "staff.hire": {
       if (state.phase === "close") return;
+      const store = scopedStore(state, command.storeId);
+      if (!store) return;
       const index = state.hiring.candidates.findIndex((c) => c.id === command.candidateId);
       if (index === -1) return;
       const candidate = state.hiring.candidates[index]!;
@@ -371,53 +417,98 @@ export function handleCommand(
       // Straight to the first open station their role can hold, in the
       // role's own priority order (§9) — a pharmacist takes an open verify
       // desk before a vaccine station (§14: scripts before shots).
-      const taken = new Set(
-        state.store.staff.map((m) => m.assignment?.stationId).filter(Boolean),
-      );
+      const taken = new Set(store.staff.map((m) => m.assignment?.stationId).filter(Boolean));
       let station: PlacedFurniture | undefined;
       for (const defId of ROLE_STATIONS[member.role]) {
-        station = state.store.furniture.find((f) => f.defId === defId && !taken.has(f.id));
+        station = store.furniture.find((f) => f.defId === defId && !taken.has(f.id));
         if (station) break;
       }
       if (station) member.assignment = { stationId: station.id };
-      state.store.staff.push(member);
-      // The first name that isn't yours on the roster is a §22 moment.
+      store.staff.push(member);
+      // The first name that isn't yours on any roster is a §22 moment.
       recordMoment(state, "first_hire", emit);
       // Events carry copies, never live roster state (furniture.placed style).
       const hired: StaffMember = { ...member };
       if (member.assignment) hired.assignment = { ...member.assignment };
-      emit({ type: "staff.hired", member: hired });
+      emit({ type: "staff.hired", storeId: store.id, member: hired });
       return;
     }
     case "staff.fire": {
       if (state.phase === "close") return;
-      const index = state.store.staff.findIndex((m) => m.id === command.staffId);
+      const store = scopedStore(state, command.storeId);
+      if (!store) return;
+      const index = store.staff.findIndex((m) => m.id === command.staffId);
       if (index === -1) return;
-      const member = state.store.staff[index]!;
-      state.store.staff.splice(index, 1);
+      const member = store.staff[index]!;
+      store.staff.splice(index, 1);
       // Fired mid-shift, paid for the day on the spot — no severance (§9,
       // cozy not cruel), and wages stop from tomorrow's receipt.
       if (state.phase === "shift") post(state, "wages", -member.dailyWage, emit);
-      emit({ type: "staff.fired", id: member.id, name: member.name });
+      emit({ type: "staff.fired", storeId: store.id, id: member.id, name: member.name });
       return;
     }
     case "staff.assign": {
-      const member = state.store.staff.find((m) => m.id === command.staffId);
+      const store = scopedStore(state, command.storeId);
+      if (!store) return;
+      const member = store.staff.find((m) => m.id === command.staffId);
       if (!member) return;
       if (command.stationId === null) {
         if (!member.assignment) return;
         delete member.assignment;
-        emit({ type: "staff.assigned", id: member.id, stationId: null });
+        emit({ type: "staff.assigned", storeId: store.id, id: member.id, stationId: null });
         return;
       }
-      const station = state.store.furniture.find((f) => f.id === command.stationId);
+      const station = store.furniture.find((f) => f.id === command.stationId);
       if (!station || !ROLE_STATIONS[member.role].includes(station.defId)) return;
-      const held = state.store.staff.some(
+      const held = store.staff.some(
         (m) => m.id !== member.id && m.assignment?.stationId === station.id,
       );
       if (held) return;
       member.assignment = { stationId: station.id };
-      emit({ type: "staff.assigned", id: member.id, stationId: station.id });
+      emit({ type: "staff.assigned", storeId: store.id, id: member.id, stationId: station.id });
+      return;
+    }
+    case "branch.buy": {
+      // §19: L5 opens the lots. Buying is fine any time the register is
+      // open — the new branch has no staff or stock, so it simply exists
+      // until the player gives it a morning.
+      if (state.phase === "close" || !ownsLicense(state, "L5")) return;
+      const districtId = command.districtId;
+      if (!DISTRICT_LOT_IDS.has(districtId)) return;
+      // One branch per district lot; the founding store (stores[0]) stands
+      // on its own site, so its district's lot is still for sale.
+      const lotTaken = state.stores.some((s, i) => i > 0 && s.districtId === districtId);
+      if (lotTaken) return;
+      const price = branchPrice(districtId);
+      if (state.cash < price.total) return;
+      const store = freshStore(`s${state.stores.length + 1}`, districtId);
+      state.stores.push(store);
+      state.stats[`branch.${districtId}`] = state.day;
+      post(state, "branch.purchase", -price.total, emit);
+      // §22: the second door is a moment — the note pins to tonight's receipt.
+      recordMoment(state, "first_branch", emit);
+      emit({
+        type: "branch.bought",
+        storeId: store.id,
+        districtId,
+        cost: price.total,
+        day: state.day,
+      });
+      return;
+    }
+    case "branch.setActive": {
+      // Morning only (§19): the swap is a full scene rebuild, and the
+      // morning is the one phase with nobody on the floor.
+      if (state.phase !== "morning") return;
+      if (command.storeId === state.activeStoreId) return;
+      if (storeById(state, command.storeId) === null) return;
+      // A held build ghost belongs to the old floor; put it down first.
+      if (state.buildMode) {
+        state.buildMode = false;
+        emit({ type: "build.changed", active: false });
+      }
+      state.activeStoreId = command.storeId;
+      emit({ type: "branch.activeChanged", storeId: command.storeId });
       return;
     }
     case "settings.set": {

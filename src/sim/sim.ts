@@ -4,6 +4,7 @@
 import type { EventBus } from "../core/bus";
 import { DAY_END_IGM, IGM_PER_TICK } from "../core/clock";
 import type { Rot } from "../core/grid";
+import { resolveUnvisitedBranches } from "./branches";
 import { rollCityDay } from "./city";
 import { handleCommand, type Command } from "./commands";
 import { ensurePatientPools } from "./competitors";
@@ -21,7 +22,7 @@ import {
 } from "./placement";
 import { refreshHiringPool } from "./staff";
 import { StaffSystem } from "./staffSystem";
-import { createGameState, type GameState } from "./state";
+import { activeStore, createGameState, type GameState } from "./state";
 import { RxWorkflow } from "./workflow";
 
 /** §15 family-loan reputation cost — "word gets around". */
@@ -70,10 +71,11 @@ export class Sim {
     // Captured before the handler runs: rebuilds below must key on what the
     // command actually *did*, not on it having been dispatched — a refused
     // expansion (wrong phase, short cash, blocked doorway) changes nothing.
-    const { cols: colsBefore, rows: rowsBefore } = this.state.store.grid;
-    const pendingEraBefore = this.state.pendingEra;
+    const { cols: colsBefore, rows: rowsBefore } = activeStore(this.state).grid;
+    const pendingEraBefore = activeStore(this.state).pendingEra;
     const dayBefore = this.state.day;
     const phaseBefore = this.state.phase;
+    const activeBefore = this.state.activeStoreId;
     handleCommand(this.state, command, this.emit);
     switch (command.type) {
       case "store.open":
@@ -84,7 +86,7 @@ export class Sim {
         // shift: nobody is scheduled, and the empty floor closes the day
         // on the first tick.
         if (phaseBefore === "morning" && this.state.phase === "shift") {
-          if (this.state.pendingEra === null) {
+          if (activeStore(this.state).pendingEra === null) {
             this.customers.beginDay(this.state);
             this.dayPlanned = true;
           }
@@ -98,7 +100,19 @@ export class Sim {
         // Only when the handler actually took the purchase (§13): whoever is
         // inside finishes their business; the schedule for the rest of the
         // day is torn up.
-        if (this.state.pendingEra !== pendingEraBefore) this.customers.cancelArrivals();
+        if (activeStore(this.state).pendingEra !== pendingEraBefore) {
+          this.customers.cancelArrivals();
+        }
+        break;
+      case "branch.setActive":
+        // Only when the pointer actually moved (§19, morning only): both
+        // agent systems rebuild their cell-indexed world onto the new
+        // branch — the same tear-down the render layer runs off the
+        // branch.activeChanged event the handler emitted.
+        if (this.state.activeStoreId !== activeBefore) {
+          this.customers.storeChanged(this.state);
+          this.staff.storeChanged(this.state, this.emit);
+        }
         break;
       case "day.advance":
         this.staff.beginDay(this.state, this.emit);
@@ -119,7 +133,7 @@ export class Sim {
         // §6: the grid itself grew (morning-only, nobody on the floor) —
         // both agent systems rebuild their cell-indexed world, matching the
         // render layer's expansion.bought listeners.
-        const grid = this.state.store.grid;
+        const grid = activeStore(this.state).grid;
         if (grid.cols !== colsBefore || grid.rows !== rowsBefore) {
           this.customers.gridChanged(this.state);
           this.staff.gridChanged(this.state, this.emit);
@@ -195,10 +209,11 @@ export class Sim {
   /** A verifier is on duty when the player works a desk or a pharmacist is
    *  stationed at one (§8: scripts queue for them, even mid-walk). */
   private verifierOnDuty(): boolean {
-    const desks = this.state.store.furniture.filter((f) => f.defId === "verify_desk");
+    const store = activeStore(this.state);
+    const desks = store.furniture.filter((f) => f.defId === "verify_desk");
     if (desks.length === 0) return false;
     if (desks.some((d) => d.id === this.state.workingStationId)) return true;
-    return this.state.store.staff.some(
+    return store.staff.some(
       (m) =>
         m.role === "pharmacist" &&
         m.assignment &&
@@ -235,7 +250,8 @@ export class Sim {
     // 20:00: the clock freezes while remaining customers finish (§5), then
     // the day closes. A renovation day (§13) closes the moment the floor is
     // empty — the crew is waiting on the last customer, not on the clock.
-    const dayOver = this.state.clockIgm >= DAY_END_IGM || this.state.pendingEra !== null;
+    const dayOver =
+      this.state.clockIgm >= DAY_END_IGM || activeStore(this.state).pendingEra !== null;
     if (dayOver && this.customers.activeCount === 0) {
       // §16: a renovation can close the day mid-outage — the power comes
       // back with the shift, and a storm day's rain bed stops here too.
@@ -245,10 +261,19 @@ export class Sim {
         this.state.workingStationId = null;
         this.bus.emit({ type: "station.changed", stationId: null });
       }
-      // §15 daily drift: 1% toward 2.5 (neglect decays, grudges fade).
-      applyRep(this.state, (2.5 - this.state.repStars) * 0.01, this.emit, REP_REASONS.drift);
-      // §10 books: fixed costs, loan servicing, then Aunt Rosa's soft floor.
+      // §15 daily drift on the visited store: 1% toward 2.5 (neglect
+      // decays, grudges fade). Unvisited branches carry their own §19
+      // served-ratio band instead — one drift per store per day.
+      const drift = (2.5 - activeStore(this.state).repStars) * 0.01;
+      applyRep(this.state, drift, this.emit, REP_REASONS.drift);
+      // The visited floor's own takings, captured before the branches post
+      // theirs — its gross7d must never carry another store's till.
       const gross = groupTotal(this.state.dayStats, "revenue");
+      // §19: every unvisited branch resolves — demand, stock, money, rep —
+      // ahead of closeDay so the network's costs settle over its takings,
+      // and ahead of the phase change so the autosave captures it all.
+      const branchesResolved = resolveUnvisitedBranches(this.state, this.emit);
+      // §10 books: fixed costs, loan servicing, then Aunt Rosa's soft floor.
       const summary = closeDay(this.state, this.emit);
       if (summary.familyLoan > 0) {
         applyRep(this.state, REP_FAMILY_LOAN, this.emit, REP_REASONS.familyLoan);
@@ -259,9 +284,10 @@ export class Sim {
       }
       rollHistory(this.state, gross);
       // §17: a played day's observed demand joins the 28-day window. An
-      // unplanned day (renovation scaffolding) saw nothing and stays out,
-      // matching the share log's one-entry-per-played-day rule.
-      if (this.dayPlanned) rollCityDay(this.state);
+      // unplanned day (renovation scaffolding) saw nothing on the active
+      // floor — but resolved branches still saw their neighborhoods, so a
+      // network's renovation day rolls all the same.
+      if (this.dayPlanned || branchesResolved > 0) rollCityDay(this.state);
       this.dayPlanned = false;
       this.state.phase = "close";
       this.bus.emit({ type: "day.phaseChanged", phase: this.state.phase, day: this.state.day });

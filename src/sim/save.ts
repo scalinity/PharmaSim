@@ -79,10 +79,20 @@
 //    old sink-era share and a five-pharmacy market share are different
 //    scales, and a trend must never straddle the two.
 //
-//  §24's fuller schema (worldSeed, stores[], dc, aitech) is not here
-//  because those systems do not exist yet. They arrive field-by-field with
-//  the milestones that own them — 14 branches, 15 logistics, 16 AI tech —
-//  each with its own migrate step.
+//  Version 9 (milestone 14) turns the store into a network:
+//    · stores[] + activeStoreId (§19/§24: the single `store` becomes the
+//      first entry of an array, and every store carries what used to be
+//      account-wide — districtId, era, pendingEra, its §19 local repStars,
+//      and the §19 daySummary an unvisited close writes)               (M14)
+//    The step wraps the old store as stores[0] in Old Town at the save's
+//    top-level era/rep, and points activeStoreId at it. Nothing else moves:
+//    cash, licenses, the city memory and the market were account-wide all
+//    along and stay so.
+//
+//  §24's fuller schema (worldSeed, dc, aitech) is not here because those
+//  systems do not exist yet. They arrive field-by-field with the milestones
+//  that own them — 15 logistics, 16 AI tech — each with its own migrate
+//  step.
 // ===========================================================================
 
 import { DAY_END_IGM, DAY_START_IGM } from "../core/clock";
@@ -117,7 +127,7 @@ import {
   type WorldEventsState,
 } from "./state";
 
-export const SAVE_VERSION = 8;
+export const SAVE_VERSION = 9;
 
 export interface SaveFile {
   version: number;
@@ -126,10 +136,7 @@ export interface SaveFile {
   phase: DayPhase;
   cash: number;
   loans: { bank: number; family: number };
-  repStars: number;
   licenses: string[];
-  era: 1 | 2 | 3 | 4;
-  pendingEra: 2 | 3 | 4 | null;
   legacy: LegacyEntry[];
   events: WorldEventsState;
   city: CityState;
@@ -137,7 +144,8 @@ export interface SaveFile {
   patientPools: Record<string, PatientPool>;
   market: MarketState;
   stats: Record<string, number>;
-  store: StoreState;
+  stores: StoreState[];
+  activeStoreId: string;
   hiring: HiringPool;
   dayStats: DayStats;
   settings: GameSettings;
@@ -234,6 +242,33 @@ const MIGRATIONS: readonly ((file: RawSave) => RawSave)[] = [
     }
     return file;
   },
+  // 8 → 9 (milestone 14): the single store becomes stores[0] of a network.
+  // What used to sit at the top level — era, pendingEra, repStars — moves
+  // onto the store, which also gains its identity (id, Old Town) and an
+  // empty §19 day summary; the active pointer names it. A file whose store
+  // isn't even an object passes through untouched so validate() can refuse
+  // it with its own sentence.
+  (file) => {
+    const store = file.store;
+    if (typeof store === "object" && store !== null && !Array.isArray(store)) {
+      const s = store as RawSave;
+      s.id = "s1";
+      s.districtId = "oldTown";
+      s.era = file.era;
+      s.pendingEra = file.pendingEra;
+      s.repStars = file.repStars;
+      s.daySummary = null;
+      file.stores = [store];
+    } else {
+      file.stores = store;
+    }
+    file.activeStoreId = "s1";
+    delete file.store;
+    delete file.era;
+    delete file.pendingEra;
+    delete file.repStars;
+    return file;
+  },
 ];
 
 // --- Deep copies: a save must never alias live state, and a hydrated state
@@ -252,6 +287,12 @@ function copyMap<T>(source: Record<string, T>, copy: (value: T) => T): Record<st
 
 function copyStore(store: StoreState): StoreState {
   return {
+    id: store.id,
+    districtId: store.districtId,
+    era: store.era,
+    pendingEra: store.pendingEra,
+    repStars: store.repStars,
+    daySummary: store.daySummary === null ? null : { ...store.daySummary },
     grid: { ...store.grid },
     furniture: store.furniture.map((item) => ({ ...item })),
     nextFurnitureId: store.nextFurnitureId,
@@ -360,10 +401,7 @@ export function serialize(state: GameState): SaveFile {
     phase: state.phase,
     cash: state.cash,
     loans: { ...state.loans },
-    repStars: state.repStars,
     licenses: [...state.licenses],
-    era: state.era,
-    pendingEra: state.pendingEra,
     legacy: state.legacy.map((moment) => ({ ...moment })),
     events: copyEvents(state.events),
     city: copyCity(state.city),
@@ -371,7 +409,8 @@ export function serialize(state: GameState): SaveFile {
     patientPools: copyPools(state.patientPools),
     market: copyMarket(state.market),
     stats: { ...state.stats },
-    store: copyStore(state.store),
+    stores: state.stores.map(copyStore),
+    activeStoreId: state.activeStoreId,
     hiring: copyHiring(state.hiring),
     dayStats: copyDayStats(state.dayStats),
     settings: { ...state.settings },
@@ -386,12 +425,9 @@ export function hydrate(file: SaveFile): GameState {
     phase: file.phase,
     cash: file.cash,
     loans: { ...file.loans },
-    repStars: file.repStars,
     speed: 1,
     buildMode: false,
     licenses: [...file.licenses],
-    era: file.era,
-    pendingEra: file.pendingEra,
     legacy: file.legacy.map((moment) => ({ ...moment })),
     events: copyEvents(file.events),
     city: copyCity(file.city),
@@ -399,7 +435,8 @@ export function hydrate(file: SaveFile): GameState {
     patientPools: copyPools(file.patientPools),
     market: copyMarket(file.market),
     stats: { ...file.stats },
-    store: copyStore(file.store),
+    stores: file.stores.map(copyStore),
+    activeStoreId: file.activeStoreId,
     hiring: copyHiring(file.hiring),
     workingStationId: null,
     dayStats: copyDayStats(file.dayStats),
@@ -444,7 +481,7 @@ function isPoolId(id: string): boolean {
 function validate(file: RawSave): SaveFile {
   // Finiteness matters as much as the type: JSON.parse happily yields
   // Infinity from "1e999", and NaN survives every typeof check.
-  for (const key of ["day", "clockIgm", "cash", "repStars", "era"]) {
+  for (const key of ["day", "clockIgm", "cash"]) {
     if (typeof file[key] !== "number" || !Number.isFinite(file[key] as number)) reject(key);
   }
   // `day` drives seasonForDay, which indexes the §16 multiplier tables, and
@@ -455,15 +492,6 @@ function validate(file: RawSave): SaveFile {
   requireArray(file.licenses, "licenses");
   requireObject(file.loans, "loan balances");
   requireObject(file.settings, "settings");
-  // era indexes the render layer's palette table and §13's tier table, and
-  // both throw on a miss — a hand-edited generation outside 1–4 would crash
-  // the boot before the title screen could offer a way out.
-  if (![1, 2, 3, 4].includes(file.era as number)) reject("store generation");
-  // §13 only ever renovates one tier up: any other pending value would
-  // reskin nothing, or downgrade the store at the next morning.
-  if (file.pendingEra !== null && file.pendingEra !== (file.era as number) + 1) {
-    reject("renovation state");
-  }
   requireArray(file.legacy, "legacy moments");
   for (const moment of file.legacy as unknown[]) {
     if (
@@ -717,23 +745,86 @@ function validate(file: RawSave): SaveFile {
     if (typeof value !== "number") reject("readable stats");
   }
 
-  const store = requireObject(file.store, "store");
-  requireObject(store.grid, "store grid");
-  for (const key of ["stock", "shelfSlots", "otcPricing", "salesToday", "reorderRules"]) {
-    requireObject(store[key], `store ${key}`);
+  // §19/§24 stores: at most one branch on each district's lot plus the
+  // founding store — eight is comfortably past any file the game can write.
+  requireArray(file.stores, "stores");
+  const storeList = file.stores as unknown[];
+  if (storeList.length < 1 || storeList.length > 8) reject("a sane store list");
+  const storeIds = new Set<string>();
+  for (const entry of storeList) {
+    const store = requireObject(entry, "a store");
+    if (typeof store.id !== "string" || store.id.length === 0 || storeIds.has(store.id)) {
+      reject("readable store ids");
+    }
+    storeIds.add(store.id);
+    // The receipt header, rent and §17 proximity all resolve the district
+    // through districtById, which throws — refuse a stranger here.
+    if (typeof store.districtId !== "string" || !DISTRICT_IDS.has(store.districtId)) {
+      reject("a store's district");
+    }
+    // era indexes the render layer's palette table and §13's tier table, and
+    // both throw on a miss — a hand-edited generation outside 1–4 would
+    // crash the boot before the title screen could offer a way out.
+    if (![1, 2, 3, 4].includes(store.era as number)) reject("a store generation");
+    // §13 only ever renovates one tier up: any other pending value would
+    // reskin nothing, or downgrade the store at the next morning.
+    if (store.pendingEra !== null && store.pendingEra !== (store.era as number) + 1) {
+      reject("a renovation state");
+    }
+    // §19 local reputation: finiteness before bounds, like every §17 input.
+    if (
+      typeof store.repStars !== "number" ||
+      !Number.isFinite(store.repStars) ||
+      (store.repStars as number) < 0 ||
+      (store.repStars as number) > 5
+    ) {
+      reject("a store rating");
+    }
+    requireObject(store.grid, "store grid");
+    for (const key of ["stock", "shelfSlots", "otcPricing", "salesToday", "reorderRules"]) {
+      requireObject(store[key], `store ${key}`);
+    }
+    for (const key of ["furniture", "inbound", "salesLog", "fillRate7d", "gross7d", "staff"]) {
+      requireArray(store[key], `store ${key}`);
+    }
+    // Both feed §17 routing (M12): a NaN here would flow through the share
+    // math into the validated share history — the *next* save would then be
+    // refused for a corruption written two boots earlier. Refuse it at the
+    // door instead, while the message can still name the real culprit.
+    if (typeof store.priceIndex !== "number" || !Number.isFinite(store.priceIndex)) {
+      reject("a readable price index");
+    }
+    for (const value of store.fillRate7d as unknown[]) {
+      if (typeof value !== "number" || !Number.isFinite(value)) reject("a readable fill rate");
+    }
+    // The §19 day summary renders straight onto the receipt's branch page.
+    if (store.daySummary !== null) {
+      const summary = requireObject(store.daySummary, "a branch day summary");
+      for (const key of [
+        "day",
+        "demand",
+        "served",
+        "capacity",
+        "rxFills",
+        "otcUnits",
+        "revenue",
+        "incidents",
+        "stockOuts",
+        "repDelta",
+      ]) {
+        if (typeof summary[key] !== "number" || !Number.isFinite(summary[key] as number)) {
+          reject(`a branch ${key}`);
+        }
+      }
+      for (const key of ["hadManager", "hadPharmacist", "otcOnly", "underRenovation"]) {
+        if (typeof summary[key] !== "boolean") reject("branch summary flags");
+      }
+    }
   }
-  for (const key of ["furniture", "inbound", "salesLog", "fillRate7d", "gross7d", "staff"]) {
-    requireArray(store[key], `store ${key}`);
-  }
-  // Both feed §17 routing (M12): a NaN here would flow through the share
-  // math into the validated share history — the *next* save would then be
-  // refused for a corruption written two boots earlier. Refuse it at the
-  // door instead, while the message can still name the real culprit.
-  if (typeof store.priceIndex !== "number" || !Number.isFinite(store.priceIndex)) {
-    reject("a readable price index");
-  }
-  for (const value of store.fillRate7d as unknown[]) {
-    if (typeof value !== "number" || !Number.isFinite(value)) reject("a readable fill rate");
+  // The pointer must land on a real store, or the boot's scene build and
+  // every activeStore read would fall back somewhere the file never meant.
+  if (typeof file.activeStoreId !== "string" || !storeIds.has(file.activeStoreId)) {
+    reject("an active store");
   }
 
   const hiring = requireObject(file.hiring, "hiring pool");

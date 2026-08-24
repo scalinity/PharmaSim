@@ -31,21 +31,22 @@ export function isRefrigerated(skuId: string): boolean {
 }
 
 /** The one fridge gate every §14 consumer shares — ordering locks, demand
- *  generation, the vaccination service, and the sell-clearing rule. */
-export function hasFridge(state: GameState): boolean {
-  return state.store.furniture.some((f) => f.defId === "fridge_medical");
+ *  generation, the vaccination service, and the sell-clearing rule. Takes
+ *  the store, not the state: fridges are per-branch equipment (§12/§19). */
+export function hasFridge(store: StoreState): boolean {
+  return store.furniture.some((f) => f.defId === "fridge_medical");
 }
 
-export function fridgeCount(state: GameState): number {
+export function fridgeCount(store: StoreState): number {
   let fridges = 0;
-  for (const item of state.store.furniture) {
+  for (const item of store.furniture) {
     if (item.defId === "fridge_medical") fridges++;
   }
   return fridges;
 }
 
-export function fridgeCapacity(state: GameState): number {
-  return fridgeCount(state) * FRIDGE_CAPACITY;
+export function fridgeCapacity(store: StoreState): number {
+  return fridgeCount(store) * FRIDGE_CAPACITY;
 }
 
 /** Refrigerated units the store holds — in the fridge bins or still boxed in
@@ -70,10 +71,10 @@ export function refrigeratedInbound(store: StoreState): number {
 
 /** Cold units an order could still claim (§14: capacity enforced at order
  *  time — held stock plus what's inbound, against 40 per fridge). */
-export function fridgeFree(state: GameState): number {
+export function fridgeFree(store: StoreState): number {
   return Math.max(
     0,
-    fridgeCapacity(state) - refrigeratedHeld(state.store) - refrigeratedInbound(state.store),
+    fridgeCapacity(store) - refrigeratedHeld(store) - refrigeratedInbound(store),
   );
 }
 
@@ -82,21 +83,21 @@ export function fridgeFree(state: GameState): number {
  *  command accepts: units this line may claim, after the cold space the
  *  rest of the cart has already spoken for. */
 export function coldClampUnits(
-  state: GameState,
+  store: StoreState,
   wanted: number,
   claimedElsewhere: number,
 ): number {
-  return Math.max(0, Math.min(wanted, fridgeFree(state) - claimedElsewhere));
+  return Math.max(0, Math.min(wanted, fridgeFree(store) - claimedElsewhere));
 }
 
-/** §14: walk-ins come once L4, a fridge and a station are all in place; a
- *  pharmacist (or the player) still has to work the shots. The license check
- *  is inlined (not licenses.ts's ownsLicense) so this module stays a leaf
- *  that licenses.ts itself can import without a cycle. */
-export function vaccinationUnlocked(state: GameState): boolean {
+/** §14: walk-ins come once L4, a fridge and a station are all in place at
+ *  this store; a pharmacist (or the player) still has to work the shots.
+ *  The license check is inlined (not licenses.ts's ownsLicense) so this
+ *  module stays a leaf that licenses.ts itself can import without a cycle. */
+export function vaccinationUnlocked(state: GameState, store: StoreState): boolean {
   return (
     state.licenses.includes("L4") &&
-    hasFridge(state) &&
-    state.store.furniture.some((f) => f.defId === "vaccine_station")
+    hasFridge(store) &&
+    store.furniture.some((f) => f.defId === "vaccine_station")
   );
 }

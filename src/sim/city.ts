@@ -8,10 +8,9 @@
 import { DISTRICTS, districtById, type District, type RxCategory } from "../data/districts";
 import { DRUG_DEFS, type DrugDef } from "../data/drugs";
 import { hasFridge } from "./coldchain";
-import { STORE_DISTRICT_ID } from "./economy";
 import { anyShortageActive, rxDemandMult } from "./events-world";
 import { canFillDrug } from "./licenses";
-import type { CityState, CompetitorState, GameState } from "./state";
+import { activeStore, type CityState, type CompetitorState, type GameState, type StoreState } from "./state";
 
 // --- §17 generation ---
 
@@ -75,10 +74,10 @@ function priceScore(priceIndex: number): number {
   return Math.min(1, Math.max(0, 2 - priceIndex));
 }
 
-/** §17 availability: the trailing 7-day fill rate. A store with no record
- *  yet gets the benefit of the doubt. */
-export function storeAvailability(state: GameState): number {
-  const rates = state.store.fillRate7d;
+/** §17 availability: a store's trailing 7-day fill rate. A store with no
+ *  record yet gets the benefit of the doubt. */
+export function storeAvailability(store: StoreState): number {
+  const rates = store.fillRate7d;
   if (rates.length === 0) return 1;
   let sum = 0;
   for (const rate of rates) sum += rate;
@@ -110,40 +109,41 @@ function attractiveness(
 }
 
 export interface PharmacyShare {
-  /** PLAYER_PHARMACY_ID or a §18 rival id. */
+  /** A player store id (§19) or a §18 rival id. */
   pharmacyId: string;
   attractiveness: number;
-  /** A² / ΣA² — the district's shares sum to 1 across the five. */
+  /** A² / ΣA² — the district's shares sum to 1 across the whole field. */
   share: number;
 }
 
 export interface DistrictShares {
-  player: PharmacyShare;
+  /** Every player store, in state.stores order — §17 says each one scores
+   *  per district; consumers read the structure, never a position (M13). */
+  stores: PharmacyShare[];
   /** The §18 rivals, in state order. */
   rivals: PharmacyShare[];
 }
 
 /**
  * §17 share in one district's eyes: every pharmacy's attractiveness, squared
- * against the field (squaring sharpens competition). The player's entry is
- * its own field — the routing engine reads it, and no consumer has to lean
- * on a position in a list. Reads live stats, so a rep move, a price cut or
- * a shortage's reliability hit shifts tomorrow's routing — this is also
- * what the district cards' share bars and the §18 pool transfers score
- * against.
+ * against the field (squaring sharpens competition). Every player store is
+ * its own entrant — a branch competes on its own district, rep, prices and
+ * fill rate (§19). Reads live stats, so a rep move, a price cut or a
+ * shortage's reliability hit shifts tomorrow's routing — this is also what
+ * the district cards' share bars and the §18 pool transfers score against.
  */
 export function districtShares(state: GameState, districtId: string): DistrictShares {
-  const player: PharmacyShare = {
-    pharmacyId: PLAYER_PHARMACY_ID,
+  const stores: PharmacyShare[] = state.stores.map((store) => ({
+    pharmacyId: store.id,
     attractiveness: attractiveness(
       districtId,
-      STORE_DISTRICT_ID,
-      state.repStars,
-      state.store.priceIndex,
-      storeAvailability(state),
+      store.districtId,
+      store.repStars,
+      store.priceIndex,
+      storeAvailability(store),
     ),
     share: 0,
-  };
+  }));
   const rivals: PharmacyShare[] = state.competitors.map((rival) => ({
     pharmacyId: rival.id,
     attractiveness: attractiveness(
@@ -155,15 +155,18 @@ export function districtShares(state: GameState, districtId: string): DistrictSh
     ),
     share: 0,
   }));
-  let total = player.attractiveness * player.attractiveness;
+  let total = 0;
+  for (const entry of stores) total += entry.attractiveness * entry.attractiveness;
   for (const entry of rivals) total += entry.attractiveness * entry.attractiveness;
   if (total > 0) {
-    player.share = (player.attractiveness * player.attractiveness) / total;
+    for (const entry of stores) {
+      entry.share = (entry.attractiveness * entry.attractiveness) / total;
+    }
     for (const entry of rivals) {
       entry.share = (entry.attractiveness * entry.attractiveness) / total;
     }
   }
-  return { player, rivals };
+  return { stores, rivals };
 }
 
 /**
@@ -212,63 +215,81 @@ function genNoise(): number {
   return 0.9 + Math.random() * 0.2;
 }
 
+/** The slice of each category's §25 demand weight one store could fill
+ *  today: licenses are account-wide, but the cabinet and fridge behind a
+ *  Tier-3 or cold script are this store's own walls (§12 × §19). */
+function fillableWeightOf(state: GameState, store: StoreState): Partial<Record<RxCategory, number>> {
+  const weight: Partial<Record<RxCategory, number>> = {};
+  for (const def of DRUG_DEFS) {
+    if (!canFillDrug(state, store, def)) continue;
+    weight[def.category] = (weight[def.category] ?? 0) + def.demandWeight;
+  }
+  return weight;
+}
+
 /**
- * Route today's city demand to the store (§17): every district generates Rx
- * scripts per category (pop × prevalence × seasonMult × noise, plus facility
- * bonuses) and OTC visit intent; the store takes its squared-attractiveness
- * share of each against the four §18 rivals, converted to visits by the
- * per-stream capture. Only categories the store could actually fill are
- * routed — unlicensed demand goes elsewhere, which is what makes a new
- * license grow the day (§12 × §17, milestone 08).
+ * Route today's city demand to the active store (§17): every district
+ * generates Rx scripts per category (pop × prevalence × seasonMult × noise,
+ * plus facility bonuses) and OTC visit intent; each player store takes its
+ * squared-attractiveness share of each district against the whole field,
+ * converted to visits by the per-stream capture. Only categories a store
+ * could actually fill are routed — unlicensed demand goes elsewhere, which
+ * is what makes a new license grow the day (§12 × §17, milestone 08).
  *
  * Also writes today's shares onto the logs (noise-free, so the trend arrow
  * moves on rep, price and availability — not on a lucky Tuesday): the
- * city-wide routed share, and the per-district share the receipt's market
- * note compares against yesterday's (M13). One entry per *played* day: a
- * skipped or renovation morning never plans, so it records nothing.
+ * network's city-wide routed share, and the per-district network share the
+ * receipt's market note compares against yesterday's (M13). One entry per
+ * *played* day: a skipped or renovation morning never plans, so it records
+ * nothing.
  */
 export function planCityDay(state: GameState): CityDayPlan {
-  // The slice of each category's demand weight this store could fill today.
-  const fillableWeight = {} as Record<RxCategory, number>;
-  for (const def of DRUG_DEFS) {
-    if (!canFillDrug(state, def)) continue;
-    fillableWeight[def.category] = (fillableWeight[def.category] ?? 0) + def.demandWeight;
-  }
+  const active = activeStore(state);
+  const weights = state.stores.map((store) => fillableWeightOf(state, store));
 
   const otc: OtcDemandSlice[] = [];
   const rx: RxDemandSlice[] = [];
   let otcTotal = 0;
   let rxTotal = 0;
-  // Share-log accounting: what the store captures of the *whole* city's
+  // Share-log accounting: what the *network* captures of the whole city's
   // demand, licensed or not — a new license honestly raises the share.
   let captured = 0;
   let cityDemand = 0;
   const sharesToday: Record<string, number> = {};
 
   for (const district of DISTRICTS) {
-    const playerShare = districtShares(state, district.id).player.share;
-    sharesToday[district.id] = playerShare;
+    const { stores } = districtShares(state, district.id);
+    let networkShare = 0;
+    let activeShare = 0;
+    for (const entry of stores) {
+      networkShare += entry.share;
+      if (entry.pharmacyId === active.id) activeShare = entry.share;
+    }
+    sharesToday[district.id] = networkShare;
 
     const intent = (district.population / 1000) * district.otcIntent;
-    const otcCount = intent * playerShare * CAPTURE_OTC * genNoise();
+    const otcCount = intent * activeShare * CAPTURE_OTC * genNoise();
     if (otcCount > 0) {
       otc.push({ districtId: district.id, count: otcCount });
       otcTotal += otcCount;
     }
-    captured += intent * playerShare;
+    captured += intent * networkShare;
     cityDemand += intent;
 
     for (const category of RX_CATEGORIES) {
       const generated = categoryScripts(district, category, state.day) * rxDemandMult(state, category);
       if (generated <= 0) continue;
       cityDemand += generated;
-      const weight = fillableWeight[category] ?? 0;
-      if (weight <= 0) continue;
-      const routed = generated * (weight / CATEGORY_WEIGHT[category]) * playerShare;
-      captured += routed;
-      const count = routed * CAPTURE_RX * genNoise();
-      rx.push({ districtId: district.id, category, count });
-      rxTotal += count;
+      for (let i = 0; i < stores.length; i++) {
+        const weight = weights[i]![category] ?? 0;
+        if (weight <= 0) continue;
+        const routed = generated * (weight / CATEGORY_WEIGHT[category]) * stores[i]!.share;
+        captured += routed;
+        if (stores[i]!.pharmacyId !== active.id) continue;
+        const count = routed * CAPTURE_RX * genNoise();
+        rx.push({ districtId: district.id, category, count });
+        rxTotal += count;
+      }
     }
   }
 
@@ -283,31 +304,93 @@ export function planCityDay(state: GameState): CityDayPlan {
   return { otc, rx, otcTotal, rxTotal };
 }
 
+// --- §19 branch demand (consumed by sim/branches.ts at close) ---
+
+export interface BranchDemand {
+  /** Expected OTC visits per district (fractional). */
+  otc: OtcDemandSlice[];
+  otcTotal: number;
+  /** Expected scripts per district × category (fractional). */
+  rx: RxDemandSlice[];
+  rxTotal: number;
+}
+
+/**
+ * One unvisited branch's routed day (§17 × §19): the same generation,
+ * share and capture math the active store's plan runs on, kept per
+ * district so the off-screen resolver can file what it saw and served
+ * into the same observed memory a visited day writes. Reads live shares,
+ * so the rep a branch bled yesterday is the routing it gets today.
+ */
+export function routedBranchDay(state: GameState, store: StoreState): BranchDemand {
+  const weight = fillableWeightOf(state, store);
+  const otc: OtcDemandSlice[] = [];
+  const rx: RxDemandSlice[] = [];
+  let otcTotal = 0;
+  let rxTotal = 0;
+
+  for (const district of DISTRICTS) {
+    const { stores } = districtShares(state, district.id);
+    let share = 0;
+    for (const entry of stores) {
+      if (entry.pharmacyId === store.id) share = entry.share;
+    }
+    if (share <= 0) continue;
+
+    const intent = (district.population / 1000) * district.otcIntent;
+    const otcCount = intent * share * CAPTURE_OTC * genNoise();
+    if (otcCount > 0) {
+      otc.push({ districtId: district.id, count: otcCount });
+      otcTotal += otcCount;
+    }
+
+    for (const category of RX_CATEGORIES) {
+      const w = weight[category] ?? 0;
+      if (w <= 0) continue;
+      const generated = categoryScripts(district, category, state.day) * rxDemandMult(state, category);
+      if (generated <= 0) continue;
+      const count = generated * (w / CATEGORY_WEIGHT[category]) * share * CAPTURE_RX * genNoise();
+      if (count <= 0) continue;
+      rx.push({ districtId: district.id, category, count });
+      rxTotal += count;
+    }
+  }
+  return { otc, otcTotal, rx, rxTotal };
+}
+
 // --- Drug draw within a routed category (§17 × §25) ---
 
 /**
- * Weighted draw of one drug inside a routed category: each fillable SKU
- * pulls with its §25 demand weight. Draw tables are memoized on license
- * coverage (licenses owned + a cabinet or fridge on the floor) — the only
- * inputs that move a within-category weight; season and district scale
- * whole categories and cancel here. A mid-shift coverage change (cabinet
- * sold, license bought) still lands on the very next spawn. Null when the
- * category has nothing fillable left — the caller degrades gracefully.
+ * Weighted draw of one drug inside a routed category, for the visited
+ * floor's spawns: each fillable SKU pulls with its §25 demand weight. Draw
+ * tables are memoized on license coverage (licenses owned + the active
+ * store's cabinet or fridge — per-store equipment, so the store id keys the
+ * memo too) — the only inputs that move a within-category weight; season
+ * and district scale whole categories and cancel here. A mid-shift coverage
+ * change (cabinet sold, license bought) still lands on the very next spawn.
+ * Null when the category has nothing fillable left — the caller degrades
+ * gracefully.
  */
 let drawKey = "";
 const categoryDraws = new Map<string, { drugs: DrugDef[]; total: number }>();
 
 export function drawScriptDrugIn(state: GameState, category: RxCategory): DrugDef | null {
-  const cabinet = state.store.furniture.some((f) => f.defId === "cabinet_controlled");
+  const store = activeStore(state);
+  const cabinet = store.furniture.some((f) => f.defId === "cabinet_controlled");
   const key =
-    state.licenses.join(",") + (cabinet ? "|cabinet" : "") + (hasFridge(state) ? "|fridge" : "");
+    state.licenses.join(",") +
+    `|${store.id}` +
+    (cabinet ? "|cabinet" : "") +
+    (hasFridge(store) ? "|fridge" : "");
   if (key !== drawKey) {
     drawKey = key;
     categoryDraws.clear();
   }
   let draw = categoryDraws.get(category);
   if (!draw) {
-    const drugs = DRUG_DEFS.filter((def) => def.category === category && canFillDrug(state, def));
+    const drugs = DRUG_DEFS.filter(
+      (def) => def.category === category && canFillDrug(state, store, def),
+    );
     draw = { drugs, total: drugs.reduce((sum, def) => sum + def.demandWeight, 0) };
     categoryDraws.set(category, draw);
   }

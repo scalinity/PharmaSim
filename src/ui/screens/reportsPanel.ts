@@ -6,11 +6,13 @@
 
 import type { EventBus } from "../../core/bus";
 import { competitorDef } from "../../data/competitors";
-import { DISTRICT_MAPS, DISTRICTS } from "../../data/districts";
+import { DISTRICT_MAPS, DISTRICTS, districtById } from "../../data/districts";
 import {
+  districtShares,
   observedWindow,
   OTC_TALLY_KEY,
   shareTrend,
+  storeAvailability,
   type ObservedLine,
   type ObservedWindowDays,
 } from "../../sim/city";
@@ -18,9 +20,11 @@ import { poolPatientName, transfersThisWeek } from "../../sim/competitors";
 import { categoryLabel } from "../../sim/economy";
 import type { SimEvent } from "../../sim/events";
 import type { Sim } from "../../sim/sim";
+import { storeName } from "../../sim/state";
 import { Panel } from "../components/Panel";
 import { Tabs } from "../components/Tabs";
 import { h } from "../dom";
+import { money } from "../format";
 
 export interface ReportsPanelHandle {
   root: HTMLElement;
@@ -63,6 +67,88 @@ export function createReportsPanel(sim: Sim, bus: EventBus<SimEvent>): ReportsPa
     text: "Played days only — the counter can't count demand it never saw. “Short” is demand that walked in and left unfilled.",
   });
 
+  // §19 network rollup: one ledger row per branch — take, fill rate, local
+  // rep, home-district share — so "which branch needs me tomorrow" reads in
+  // one glance. Hidden until a second store exists.
+  const netList = h("div", { cls: "reports__net" });
+  const netSection = h("div", { cls: "reports__netwrap" }, [
+    h("p", { cls: "reports__txhead" }, [h("span", { text: "The network" })]),
+    h("div", { cls: "reports__nethead", attrs: { "aria-hidden": "true" } }, [
+      h("span", { cls: "reports__netcol reports__netcol--name", text: "branch" }),
+      h("span", { cls: "reports__netcol", text: "take" }),
+      h("span", { cls: "reports__netcol", text: "fill 7d" }),
+      h("span", { cls: "reports__netcol", text: "local rep" }),
+      h("span", { cls: "reports__netcol", text: "home share" }),
+    ]),
+    netList,
+  ]);
+  netSection.hidden = true;
+
+  interface NetRowRefs {
+    root: HTMLElement;
+    where: HTMLElement;
+    take: HTMLElement;
+    fill: HTMLElement;
+    rep: HTMLElement;
+    share: HTMLElement;
+  }
+  const netRows = new Map<string, NetRowRefs>();
+
+  function refreshNetwork(): void {
+    const state = sim.snapshot;
+    netSection.hidden = state.stores.length < 2;
+    if (netSection.hidden) return;
+    for (const store of state.stores) {
+      let refs = netRows.get(store.id);
+      if (!refs) {
+        const where = h("span", { cls: "reports__netwhere" });
+        const take = h("span", { cls: "reports__num" });
+        const fill = h("span", { cls: "reports__num" });
+        const rep = h("span", { cls: "reports__num" });
+        const share = h("span", { cls: "reports__num" });
+        refs = {
+          root: h("div", { cls: "reports__netrow" }, [
+            h("span", { cls: "reports__netname" }, [
+              h("span", { text: storeName(store) }),
+              where,
+            ]),
+            take,
+            fill,
+            rep,
+            share,
+          ]),
+          where,
+          take,
+          fill,
+          rep,
+          share,
+        };
+        netRows.set(store.id, refs);
+        netList.append(refs.root);
+      }
+      const here = store.id === state.activeStoreId;
+      refs.where.textContent = here ? "you're here today" : "";
+      const take = store.gross7d[0];
+      refs.take.textContent = take === undefined ? "—" : money(take);
+      const rate = storeAvailability(store);
+      refs.fill.textContent = store.fillRate7d.length === 0 ? "—" : `${Math.round(rate * 100)}%`;
+      refs.fill.className =
+        store.fillRate7d.length > 0 && rate < 0.9
+          ? "reports__num reports__num--short"
+          : "reports__num";
+      refs.rep.textContent = `${store.repStars.toFixed(1)}★`;
+      const shares = districtShares(state, store.districtId);
+      const own = shares.stores.find((entry) => entry.pharmacyId === store.id);
+      refs.share.textContent = own ? `${(own.share * 100).toFixed(0)}% of ${districtById(store.districtId).name}` : "—";
+      // The row that needs you reads rose: yesterday bled rep or shelves.
+      const summary = store.daySummary;
+      const hurting =
+        (store.fillRate7d.length > 0 && rate < 0.9) ||
+        (summary !== null && (summary.repDelta < 0 || summary.stockOuts > 0));
+      refs.root.classList.toggle("reports__netrow--hurting", hurting);
+    }
+  }
+
   // §18 "transfers in/out this week": named chronic regulars and the reason
   // their refills moved — the market's wins and losses, legible by name.
   const txCount = h("span", { cls: "reports__txcount" });
@@ -85,6 +171,7 @@ export function createReportsPanel(sim: Sim, bus: EventBus<SimEvent>): ReportsPa
       ]),
       shareChip,
     ]),
+    netSection,
     txSection,
     tabs.root,
     head,
@@ -224,6 +311,7 @@ export function createReportsPanel(sim: Sim, bus: EventBus<SimEvent>): ReportsPa
         ? "No routed days yet"
         : `City share ≈${(trend.current * 100).toFixed(1)}%`;
 
+    refreshNetwork();
     refreshTransfers();
 
     for (const district of DISTRICTS) {
@@ -280,6 +368,10 @@ export function createReportsPanel(sim: Sim, bus: EventBus<SimEvent>): ReportsPa
   bus.on("customer.walkout", invalidate);
   bus.on("day.phaseChanged", invalidate);
   bus.on("market.transfer", invalidate);
+  // §19: a new branch joins the rollup; a resolved day moves its numbers.
+  bus.on("branch.bought", invalidate);
+  bus.on("branch.daySummary", invalidate);
+  bus.on("branch.activeChanged", invalidate);
 
   return {
     root,

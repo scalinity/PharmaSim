@@ -15,7 +15,7 @@ import {
 } from "../core/grid";
 import { floodFill } from "../core/pathfind";
 import { furnitureDef, LICENSE_NAMES, type FurnitureDef } from "../data/furniture";
-import type { GameState, PlacedFurniture } from "./state";
+import { activeStore, type GameState, type PlacedFurniture } from "./state";
 
 export type PlacementCheck = { ok: true } | { ok: false; reason: string };
 
@@ -25,11 +25,11 @@ function itemRect(item: PlacedFurniture): CellRect {
 
 /** Backroom zone derived from the service counter's line, or null. */
 export function backroomZone(state: GameState, ignoreId?: string): CellRect | null {
-  const counter = state.store.furniture.find(
+  const counter = activeStore(state).furniture.find(
     (f) => f.defId === "counter_service" && f.id !== ignoreId,
   );
   if (!counter) return null;
-  const { cols, rows } = state.store.grid;
+  const { cols, rows } = activeStore(state).grid;
   return deriveBackroom(itemRect(counter), counter.rot, cols, rows);
 }
 
@@ -41,7 +41,7 @@ export function backroomZone(state: GameState, ignoreId?: string): CellRect | nu
  */
 export function doorwayBlocked(state: GameState, cols: number, rows: number): boolean {
   const doors = doorCells(cols, rows);
-  return state.store.furniture.some((item) => {
+  return activeStore(state).furniture.some((item) => {
     if (furnitureDef(item.defId).walkable) return false;
     const rect = itemRect(item);
     return doors.some(([x, y]) => rectContains(rect, x, y));
@@ -55,10 +55,10 @@ export function gateReason(state: GameState, def: FurnitureDef): string | null {
   if (license && !state.licenses.includes(license)) {
     return `Needs the ${LICENSE_NAMES[license] ?? license} license`;
   }
-  if (era && state.era < era) return `Needs the Gen ${era} renovation`;
+  if (era && activeStore(state).era < era) return `Needs the Gen ${era} renovation`;
   if (furniture) {
     for (const requiredId of furniture) {
-      if (!state.store.furniture.some((f) => f.defId === requiredId)) {
+      if (!activeStore(state).furniture.some((f) => f.defId === requiredId)) {
         return `Needs a ${furnitureDef(requiredId).name.toLowerCase()}`;
       }
     }
@@ -71,7 +71,7 @@ export function itemAvailability(state: GameState, defId: string): PlacementChec
   const def = furnitureDef(defId);
   const gate = gateReason(state, def);
   if (gate) return { ok: false, reason: gate };
-  if (def.unique && state.store.furniture.some((f) => f.defId === def.id)) {
+  if (def.unique && activeStore(state).furniture.some((f) => f.defId === def.id)) {
     return { ok: false, reason: "One per store" };
   }
   if (state.cash < def.cost) {
@@ -88,10 +88,10 @@ interface CellMaps {
 }
 
 function buildCellMaps(state: GameState, ignoreId: string | undefined): CellMaps {
-  const { cols, rows } = state.store.grid;
+  const { cols, rows } = activeStore(state).grid;
   const occupied = new Uint8Array(cols * rows);
   const walkable = new Uint8Array(cols * rows).fill(1);
-  for (const item of state.store.furniture) {
+  for (const item of activeStore(state).furniture) {
     if (item.id === ignoreId) continue;
     const def = furnitureDef(item.defId);
     const rect = itemRect(item);
@@ -143,7 +143,7 @@ export function validatePlacement(
   ignoreId?: string,
 ): PlacementCheck {
   const def = furnitureDef(defId);
-  const { cols, rows } = state.store.grid;
+  const { cols, rows } = activeStore(state).grid;
 
   if (!ignoreId) {
     const availability = itemAvailability(state, defId);
@@ -207,7 +207,7 @@ export function validatePlacement(
   if (def.needsAccess && !hasReachableNeighbor(rect, reached, cols, rows)) {
     return { ok: false, reason: "No path from the door" };
   }
-  for (const item of state.store.furniture) {
+  for (const item of activeStore(state).furniture) {
     if (item.id === ignoreId) continue;
     const itemDef = furnitureDef(item.defId);
     if (!itemDef.needsAccess) continue;

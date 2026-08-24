@@ -5,7 +5,7 @@
 // lives in staffSystem.ts. Pure sim — no DOM, no three.js.
 
 import { FIRST_NAMES, LAST_NAMES } from "../data/names";
-import type { GameState } from "./state";
+import { networkStars, type GameState } from "./state";
 
 export type StaffRole = "cashier" | "tech" | "pharmacist" | "manager";
 export type StaffTrait = "meticulous" | "swift" | "charming" | "stockhawk" | "pennywise";
@@ -72,8 +72,8 @@ export const OWNER_CATCH_RATE = 0.9;
 export const PENNYWISE_WAGE_MULT = 0.85;
 const SWIFT_ERROR_BONUS_PCT = 2;
 
-/** Stations each role can be assigned to (§9 roles). Managers hold no station
- *  — the role exists in data for the unvisited branches of §19. */
+/** Stations each role can be assigned to (§9 roles). Managers hold no
+ *  station — they run the whole branch while it's unvisited (§19/§26). */
 export const ROLE_STATIONS: Record<StaffRole, readonly string[]> = {
   cashier: ["counter_register", "counter_service"],
   tech: ["fill_bench"],
@@ -81,8 +81,13 @@ export const ROLE_STATIONS: Record<StaffRole, readonly string[]> = {
   manager: [],
 };
 
-/** Roles the pool actually draws in the single-store era. */
-export const HIREABLE_ROLES: readonly StaffRole[] = ["cashier", "tech", "pharmacist"];
+/** Every §9 role applies, managers included (M14: the role is live). */
+export const HIREABLE_ROLES: readonly StaffRole[] = [
+  "cashier",
+  "tech",
+  "pharmacist",
+  "manager",
+];
 
 export const POOL_PER_ROLE = 3;
 
@@ -167,14 +172,16 @@ export function refreshHiringPool(state: GameState): boolean {
   const monday = mondayOf(state.day);
   if (state.hiring.refreshedOnDay >= monday) return false;
 
+  // Candidates apply to the name, so quality follows the network's
+  // best-known store (§9/§19 networkStars).
+  const stars = networkStars(state);
   const seed =
-    (state.hiring.seed ^ Math.imul(monday, 2654435761) ^ Math.round(state.repStars * 10) * 40503) >>>
-    0;
+    (state.hiring.seed ^ Math.imul(monday, 2654435761) ^ Math.round(stars * 10) * 40503) >>> 0;
   const rng = mulberry32(seed);
   const candidates: StaffCandidate[] = [];
   for (const role of HIREABLE_ROLES) {
     for (let i = 0; i < POOL_PER_ROLE; i++) {
-      candidates.push(rollCandidate(rng, role, state.repStars, `a${monday}-${role}-${i + 1}`));
+      candidates.push(rollCandidate(rng, role, stars, `a${monday}-${role}-${i + 1}`));
     }
   }
   state.hiring.refreshedOnDay = monday;

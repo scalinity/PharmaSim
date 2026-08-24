@@ -13,6 +13,7 @@ import {
   type Scene,
 } from "three";
 import type { Sim } from "../sim/sim";
+import { activeStore } from "../sim/state";
 import { PartsBuilder } from "./meshes/parts";
 import { FLOOR_Y } from "./storeScene";
 
@@ -71,7 +72,7 @@ export class StaffView {
 
   /** Sync meshes to the roster and pose them for the frame. */
   update(alpha: number): void {
-    const { cols, rows } = this.sim.snapshot.store.grid;
+    const { cols, rows } = activeStore(this.sim.snapshot).grid;
     this.seen.clear();
 
     for (const agent of this.sim.staff.agents) {

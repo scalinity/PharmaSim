@@ -24,7 +24,7 @@ import { cellToWorld, footprintRect, rectCenterWorld, type Rot } from "../core/g
 import { furnitureDef } from "../data/furniture";
 import type { SimEvent } from "../sim/events";
 import type { Sim } from "../sim/sim";
-import type { PlacedFurniture } from "../sim/state";
+import { activeStore, type PlacedFurniture } from "../sim/state";
 import { eraPalette } from "../data/eras";
 import { furnitureGeometry } from "./meshes/furniture";
 import { PartsBuilder } from "./meshes/parts";
@@ -128,10 +128,11 @@ export class StoreScene {
     private sim: Sim,
     bus: EventBus<SimEvent>,
   ) {
-    const { cols, rows } = sim.snapshot.store.grid;
+    const store = activeStore(sim.snapshot);
+    const { cols, rows } = store.grid;
     this.cols = cols;
     this.rows = rows;
-    this.era = sim.snapshot.era;
+    this.era = store.era;
 
     this.scene.add(this.store);
     this.buildGround();
@@ -176,9 +177,9 @@ export class StoreScene {
     this.pathMesh.renderOrder = 3;
     this.store.add(this.pathMesh);
 
-    for (const item of sim.snapshot.store.furniture) this.addItem(item);
+    for (const item of store.furniture) this.addItem(item);
     // A save taken at the close of a renovation day boots mid-drama (§13).
-    if (sim.snapshot.pendingEra !== null) this.showScaffold();
+    if (store.pendingEra !== null) this.showScaffold();
 
     bus.on("furniture.placed", (e) => this.addItem(e.item));
     bus.on("furniture.moved", (e) => this.moveItem(e.item));
@@ -187,6 +188,32 @@ export class StoreScene {
     bus.on("expansion.bought", (e) => this.gridChanged(e.cols, e.rows));
     bus.on("era.renovationStarted", () => this.showScaffold());
     bus.on("era.changed", (e) => this.eraChanged(e.era));
+    // §19 morning switch: the whole dollhouse rebuilds onto the new branch.
+    bus.on("branch.activeChanged", () => this.branchChanged());
+  }
+
+  /**
+   * §19: the active store changed. Tear the shell down and raise it at the
+   * new branch's size and era, and re-seat the furniture layer from its
+   * floor — mesh geometry comes from the per-(era, def) cache, so repeated
+   * morning swaps are cache fills, not allocations (§30).
+   */
+  private branchChanged(): void {
+    const store = activeStore(this.sim.snapshot);
+    this.cols = store.grid.cols;
+    this.rows = store.grid.rows;
+    this.era = store.era;
+    this.hideScaffold();
+    this.rebuildShell();
+    for (const mesh of this.meshes.values()) this.furnitureLayer.remove(mesh);
+    this.meshes.clear();
+    this.hoveredId = null;
+    this.hiddenId = null;
+    for (const item of store.furniture) this.addItem(item);
+    if (store.pendingEra !== null) this.showScaffold();
+    this.setBottleneck(null);
+    this.hideGhost();
+    this.refreshZone();
   }
 
   /** Tear the shell down and raise it fresh at the current size and era. */
@@ -220,7 +247,7 @@ export class StoreScene {
     }
 
     const state = this.sim.snapshot;
-    for (const item of state.store.furniture) {
+    for (const item of activeStore(state).furniture) {
       const mesh = this.meshes.get(item.id);
       if (mesh) this.placeMesh(mesh, item);
     }
@@ -235,7 +262,7 @@ export class StoreScene {
     this.era = era;
     this.hideScaffold();
     this.rebuildShell();
-    for (const item of this.sim.snapshot.store.furniture) {
+    for (const item of activeStore(this.sim.snapshot).furniture) {
       const mesh = this.meshes.get(item.id);
       if (mesh) mesh.geometry = furnitureGeometry(item.defId, era);
     }
@@ -332,7 +359,7 @@ export class StoreScene {
       this.bottleneckRing.visible = false;
       return;
     }
-    const item = this.sim.snapshot.store.furniture.find((f) => f.id === id);
+    const item = activeStore(this.sim.snapshot).furniture.find((f) => f.id === id);
     if (!item) {
       this.bottleneckRing.visible = false;
       return;

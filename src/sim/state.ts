@@ -1,9 +1,9 @@
-// GameState root type + factory (SPEC §5, §6, §10, §11, §18, §24, §26).
+// GameState root type + factory (SPEC §5, §6, §10, §11, §18, §19, §24, §26).
 
 import { DAY_START_IGM } from "../core/clock";
 import type { Rot } from "../core/grid";
 import { COMPETITOR_DEFS, type CounselLevel, type DriftMove } from "../data/competitors";
-import type { RxCategory } from "../data/districts";
+import { districtById, type RxCategory } from "../data/districts";
 import type { HiringPool, StaffMember } from "./staff";
 
 export type DayPhase = "morning" | "shift" | "close";
@@ -37,7 +37,46 @@ export interface ReorderRule {
   target: number;
 }
 
+/** One unvisited branch's resolved day (§19/§26), written at close so the
+ *  receipt's branch page — and a reload at the close phase — can read it.
+ *  The visited store's entry is null: its day is the itemized receipt. */
+export interface BranchDaySummary {
+  day: number;
+  /** Routed §17 visits (OTC + Rx) the branch was asked for today. */
+  demand: number;
+  served: number;
+  /** min(fills, verifies, checkouts) × managerFactor — what the crew could do. */
+  capacity: number;
+  rxFills: number;
+  otcUnits: number;
+  /** Net takings posted to the ledger (gross minus incident refunds). */
+  revenue: number;
+  /** Dispensing errors that reached a bag — refunded, §8 voice. */
+  incidents: number;
+  /** Demand lost to empty shelves and bins. */
+  stockOuts: number;
+  repDelta: number;
+  hadManager: boolean;
+  hadPharmacist: boolean;
+  /** No pharmacist on staff: the branch sold OTC only (§19). */
+  otcOnly: boolean;
+  /** §13: the crew had the floor — nothing resolved today. */
+  underRenovation: boolean;
+}
+
 export interface StoreState {
+  /** "s1" is the founding store; branches count up from there (§19). */
+  id: string;
+  /** Where the store stands (§17 rent, proximity, the receipt header). */
+  districtId: string;
+  /** §13 era and any renovation crew in — per store since M14. */
+  era: 1 | 2 | 3 | 4;
+  pendingEra: 2 | 3 | 4 | null;
+  /** §19 local reputation, 0–5, starting 2.5 — every §15 delta lands on
+   *  the store that earned it. */
+  repStars: number;
+  /** Last unvisited-day resolution (§19), or null for the visited store. */
+  daySummary: BranchDaySummary | null;
   grid: { cols: number; rows: number; expansions: number };
   furniture: PlacedFurniture[];
   nextFurnitureId: number;
@@ -190,7 +229,14 @@ export type PoolStrike = "walkout" | "stockout" | "error";
  *  by whichever pharmacy currently earns them. Keyed `district:category`
  *  (sim/competitors.ts owns the key). Beyond §24's minimum, the pool
  *  carries the §18 bad-experience tracking — strikes must survive a save,
- *  or a reload would quietly forgive the first one. */
+ *  or a reload would quietly forgive the first one.
+ *
+ *  Multi-branch (M14): player-held pools belong to the *network*, not to a
+ *  branch — pharmacyId stays PLAYER_PHARMACY_ID. The §17 scoring that wins
+ *  or loses a pool uses the network's best branch in that district (the
+ *  champion the district actually compares against the rivals), while the
+ *  regular's weekly visit walks into whichever store the player is running
+ *  that day — strikes and clean pickups only ever happen on a real floor. */
 export interface PatientPool {
   districtId: string;
   category: RxCategory;
@@ -294,15 +340,10 @@ export interface GameState {
   cash: number;
   /** Outstanding loan balances (§10): bank credit line and Aunt Rosa. */
   loans: { bank: number; family: number };
-  repStars: number;
   speed: GameSpeed;
   /** Build mode freezes sim ticks without touching speed (SPEC §5). */
   buildMode: boolean;
   licenses: string[];
-  era: 1 | 2 | 3 | 4;
-  /** A renovation bought today (§13): the store is closed under scaffolding;
-   *  the new era stands next morning. Null when no crew is in. */
-  pendingEra: 2 | 3 | 4 | null;
   /** Achieved §22 moments, in the order they were lived. Each fires once. */
   legacy: LegacyEntry[];
   /** §16 world events: the seeded schedule and today's active effects. */
@@ -319,7 +360,10 @@ export interface GameState {
   /** Lifetime counters and milestone days (§24) — `license.L3` → day bought,
    *  `era.2` → day the renovation was signed. */
   stats: Record<string, number>;
-  store: StoreState;
+  /** Every store the network runs (§19/§24) — the founding store first. */
+  stores: StoreState[];
+  /** The store the 3D sim is loaded into; the rest resolve at close (§19). */
+  activeStoreId: string;
   /** This week's job applications, redrawn Monday mornings (§9). */
   hiring: HiringPool;
   /** Register the player is personally working, or null (§8: workHere). */
@@ -397,7 +441,12 @@ export function emptyDayStats(cashOpen: number): DayStats {
   };
 }
 
-export function createGameState(): GameState {
+/**
+ * A store at its founding shape (§6/§19): the starting layout, Gen 1, a
+ * 2.5★ local name, and nothing on the shelves. The founding store seeds its
+ * §26 starter stock on top; a bought branch starts exactly this bare.
+ */
+export function freshStore(id: string, districtId: string): StoreState {
   const furniture = STARTING_LAYOUT.map(([defId, cellX, cellY, rot], i) => ({
     id: `f${i + 1}`,
     defId,
@@ -405,17 +454,45 @@ export function createGameState(): GameState {
     cellY,
     rot,
   }));
-
-  const stock: Record<string, StockLine> = {};
   const shelfSlots: Record<string, string[]> = {};
-  let shelfIndex = 0;
   for (const item of furniture) {
+    if (item.defId === "otc_shelf") shelfSlots[item.id] = [];
+  }
+  return {
+    id,
+    districtId,
+    era: 1,
+    pendingEra: null,
+    repStars: 2.5,
+    daySummary: null,
+    grid: { cols: 10, rows: 7, expansions: 0 },
+    furniture,
+    nextFurnitureId: STARTING_LAYOUT.length + 1,
+    stock: {},
+    shelfSlots,
+    otcPricing: {},
+    priceIndex: 1,
+    inbound: [],
+    salesToday: {},
+    salesLog: [],
+    fillRate7d: [],
+    gross7d: [],
+    reorderUnlocked: false,
+    reorderRules: {},
+    staff: [],
+  };
+}
+
+export function createGameState(): GameState {
+  const store = freshStore("s1", "oldTown");
+  let shelfIndex = 0;
+  for (const item of store.furniture) {
     if (item.defId !== "otc_shelf") continue;
     const skus = [...(STARTER_SHELVES[shelfIndex++] ?? [])];
-    shelfSlots[item.id] = skus;
-    for (const skuId of skus) stock[skuId] = { backroom: 0, shelved: STARTER_OTC_UNITS };
+    store.shelfSlots[item.id] = skus;
+    for (const skuId of skus) store.stock[skuId] = { backroom: 0, shelved: STARTER_OTC_UNITS };
   }
-  for (const [skuId, units] of STARTER_RX) stock[skuId] = { backroom: 0, shelved: units };
+  for (const [skuId, units] of STARTER_RX) store.stock[skuId] = { backroom: 0, shelved: units };
 
   const cash = 12_000;
   return {
@@ -424,12 +501,9 @@ export function createGameState(): GameState {
     phase: "morning",
     cash,
     loans: { bank: 0, family: 0 },
-    repStars: 2.5,
     speed: 1,
     buildMode: false,
     licenses: ["L1"],
-    era: 1,
-    pendingEra: null,
     legacy: [],
     events: freshWorldEvents(),
     city: freshCityState(),
@@ -438,23 +512,8 @@ export function createGameState(): GameState {
     patientPools: {},
     market: freshMarketState(),
     stats: { "license.L1": 1 },
-    store: {
-      grid: { cols: 10, rows: 7, expansions: 0 },
-      furniture,
-      nextFurnitureId: STARTING_LAYOUT.length + 1,
-      stock,
-      shelfSlots,
-      otcPricing: {},
-      priceIndex: 1,
-      inbound: [],
-      salesToday: {},
-      salesLog: [],
-      fillRate7d: [],
-      gross7d: [],
-      reorderUnlocked: false,
-      reorderRules: {},
-      staff: [],
-    },
+    stores: [store],
+    activeStoreId: store.id,
     hiring: {
       seed: Math.floor(Math.random() * 0x7fffffff),
       refreshedOnDay: 0,
@@ -464,4 +523,34 @@ export function createGameState(): GameState {
     dayStats: emptyDayStats(cash),
     settings: defaultSettings(),
   };
+}
+
+// --- Store accessors (M14): every consumer of "the store" says which ---
+
+/** The store the 3D sim is loaded into. The pointer is validated on load,
+ *  so the fallback only guards a mid-session dangling id — stores are never
+ *  removed today, but the accessor must not be the thing that crashes. */
+export function activeStore(state: GameState): StoreState {
+  return state.stores.find((s) => s.id === state.activeStoreId) ?? state.stores[0]!;
+}
+
+export function storeById(state: GameState, storeId: string): StoreState | null {
+  return state.stores.find((s) => s.id === storeId) ?? null;
+}
+
+/** The name on the glass — and on the receipt header (§19/§28). */
+export function storeName(store: StoreState): string {
+  return `${districtById(store.districtId).name} Pharmacy`;
+}
+
+/**
+ * The network's public standing: its best-known store. Account-wide gates
+ * that predate branches — license stars (§12), the bank's unlock (§10), the
+ * hiring pool's quality (§9) — read this; anything §17 reads a specific
+ * store's own local repStars.
+ */
+export function networkStars(state: GameState): number {
+  let best = 0;
+  for (const store of state.stores) best = Math.max(best, store.repStars);
+  return best;
 }

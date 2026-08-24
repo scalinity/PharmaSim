@@ -9,6 +9,7 @@
 import { rotatedSize } from "../../core/grid";
 import { EXPANSIONS, FURNITURE_DEFS, type FurnitureDef } from "../../data/furniture";
 import { doorwayBlocked } from "../../sim/placement";
+import { activeStore } from "../../sim/state";
 import type { Sim } from "../../sim/sim";
 import { Panel } from "../components/Panel";
 import { h } from "../dom";
@@ -113,7 +114,7 @@ export function createBuildPalette(
   /** Why the next expansion can't be bought right now, or null. */
   function floorLock(): string | null {
     const state = sim.snapshot;
-    const next = EXPANSIONS[state.store.grid.expansions];
+    const next = EXPANSIONS[activeStore(state).grid.expansions];
     if (!next) return null;
     if (state.phase !== "morning") return "Morning work only";
     // The door moves with the wall — anything standing in the new gap first.
@@ -131,7 +132,7 @@ export function createBuildPalette(
 
   function refreshFloorRow(): void {
     const state = sim.snapshot;
-    const { cols, rows: gridRows, expansions } = state.store.grid;
+    const { cols, rows: gridRows, expansions } = activeStore(state).grid;
     const next = EXPANSIONS[expansions];
     if (!next) {
       setFloorPrint(cellPrint(2, 2, "any"));

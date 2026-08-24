@@ -4054,6 +4054,303 @@ html.app-shell .topbar {
   color: var(--ink-75);
 }
 
+/* ---- Multi-branch (§19, M14): branch tabs, scope chips, the deed, the
+        per-branch receipt pages and the network rollup ---- */
+
+/* HUD branch tabs: one file-folder tab per store, hanging under the top
+   bar's left edge once the network has a second door. */
+.bstrip {
+  position: absolute;
+  top: 88px;
+  left: 12px;
+  display: flex;
+  gap: 5px;
+  pointer-events: auto;
+}
+
+.bstrip__tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px 7px;
+  background: rgba(251, 248, 240, 0.85);
+  border: 1.5px solid var(--ink-25);
+  border-top-width: 3px;
+  clip-path: polygon(6px 0, calc(100% - 6px) 0, 100% 100%, 0 100%);
+  font-family: var(--font-ui);
+  font-size: var(--fs-12);
+  font-weight: var(--w-semibold);
+  color: var(--ink-75);
+  white-space: nowrap;
+  transition: background-color var(--dur-fast) var(--ease-out);
+}
+
+.bstrip__tab:hover {
+  background: var(--paper);
+}
+
+.bstrip__tab--on {
+  background: var(--paper);
+  border-color: var(--ink);
+  border-top-color: var(--pine);
+  color: var(--ink);
+  box-shadow: var(--chip-shadow);
+}
+
+.bstrip__cross {
+  color: var(--pine);
+  font-size: 10px;
+  line-height: 1;
+}
+
+.bstrip__stars {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink-60);
+}
+
+.bstrip__tab--on .bstrip__stars {
+  color: var(--amber);
+}
+
+/* Panel branch scope: small chips under a sheet's title row (Team, Orders). */
+.bscope {
+  display: flex;
+  gap: 6px;
+  padding: 0 20px 8px;
+}
+
+.bscope__chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 12px 4px;
+  border: 1.5px solid var(--ink-25);
+  border-radius: 999px;
+  font-family: var(--font-ui);
+  font-size: var(--fs-12);
+  font-weight: var(--w-semibold);
+  color: var(--ink-75);
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+
+.bscope__chip:hover {
+  border-color: var(--ink-60);
+}
+
+.bscope__chip--on {
+  background: var(--pine);
+  border-color: var(--pine);
+  color: var(--paper);
+}
+
+.bscope__cross {
+  font-size: 10px;
+  line-height: 1;
+}
+
+/* The morning card names the store the day belongs to (§19). */
+.panel__where {
+  margin: 0 0 6px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--ink-75);
+}
+
+/* Receipt page tabs: paper on the spike — one tab per store, joined to
+   whichever sheet is up (§28 "tabbed paper sheets"). */
+.rcpt-tabs {
+  display: flex;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.rcpt-tabs__tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 16px 8px;
+  background: rgba(251, 248, 240, 0.62);
+  clip-path: polygon(7px 0, calc(100% - 7px) 0, 100% 100%, 0 100%);
+  font-family: var(--font-ui);
+  font-size: var(--fs-12);
+  font-weight: var(--w-semibold);
+  color: var(--ink-75);
+  pointer-events: auto;
+}
+
+.rcpt-tabs__tab--active {
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: inset 0 2.5px 0 var(--pine);
+}
+
+/* A branch page with something wrong on it flags its tab. */
+.rcpt-tabs__flag {
+  font-size: 8px;
+  line-height: 1;
+  color: var(--rose);
+}
+
+.rcpt__note--rose {
+  color: var(--rose);
+}
+
+/* Reports network rollup: one ledger row per branch (§19). */
+.reports__netwrap {
+  border-bottom: 1.5px solid var(--ink-25);
+  padding-bottom: 8px;
+}
+
+.reports__nethead {
+  display: grid;
+  grid-template-columns: 1fr 72px 64px 72px 130px;
+  gap: 8px;
+  padding: 2px 20px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-60);
+}
+
+.reports__netrow {
+  display: grid;
+  grid-template-columns: 1fr 72px 64px 72px 130px;
+  gap: 8px;
+  align-items: baseline;
+  padding: 3px 20px;
+  font-size: var(--fs-12);
+}
+
+.reports__netrow:nth-child(even) {
+  background: rgba(47, 107, 79, 0.05);
+}
+
+.reports__netrow--hurting .reports__netname {
+  color: var(--rose);
+}
+
+.reports__netname {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  font-weight: var(--w-semibold);
+}
+
+.reports__netwhere {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: var(--w-regular);
+  letter-spacing: 0.06em;
+  color: var(--ink-60);
+}
+
+/* The district card grows hands (§19): the deed's buy pill and the morning
+   hand-off live on it now. */
+.cityui__card {
+  pointer-events: auto;
+}
+
+.cityui__tag--mine {
+  border-color: var(--pine);
+}
+
+.cityui__act {
+  margin: 6px 16px 4px;
+  align-self: flex-start;
+}
+
+/* The deed: a dashed for-sale slip in the license application's voice. */
+.cityui__deed {
+  margin: 10px 16px 0;
+  padding: 10px 12px 12px;
+  border: 1.5px dashed var(--ink-60);
+  display: flex;
+  flex-direction: column;
+}
+
+.cityui__deed .cityui__act {
+  margin: 8px 0 0;
+}
+
+.cityui__deedeyebrow {
+  margin: 0 0 6px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-75);
+}
+
+.cityui__deedrow {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+}
+
+.cityui__deedrow--total {
+  margin-top: 3px;
+  padding-top: 3px;
+  border-top: 1.5px solid var(--ink);
+  font-weight: var(--w-bold);
+}
+
+.cityui__deedrow--total .cityui__deednum {
+  color: var(--amber);
+}
+
+.cityui__deeddots {
+  flex: 1;
+  border-bottom: 1.5px dotted var(--ink-25);
+}
+
+.cityui__deednum {
+  white-space: nowrap;
+}
+
+.cityui__gate {
+  display: flex;
+  gap: 6px;
+  margin: 6px 0 0;
+  font-size: 11px;
+  color: var(--ink-75);
+}
+
+.cityui__gate--met {
+  color: var(--ink);
+}
+
+.cityui__gateglyph {
+  color: var(--pine);
+}
+
+.cityui__deednote {
+  margin: 8px 0 0;
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--ink-75);
+}
+
+/* The §19 no-transfers note on the order form. */
+.oform__transfernote {
+  margin: 0;
+  padding: 0 20px 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-75);
+}
+
+/* The manager's roster cell: no station select — the branch is the post. */
+.srow__assign--manager {
+  font-size: var(--fs-12);
+  color: var(--ink-75);
+  font-style: italic;
+}
+
 /* ---- Reduced motion ---- */
 
 @media (prefers-reduced-motion: reduce) {

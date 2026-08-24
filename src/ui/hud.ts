@@ -7,6 +7,7 @@
 import type { EventBus } from "../core/bus";
 import { DAYS_PER_SEASON, dayProgress, formatClock, seasonForDay, type Season } from "../core/clock";
 import { competitorDef, driftHeadline } from "../data/competitors";
+import { districtById } from "../data/districts";
 import { drugDef } from "../data/drugs";
 import { legacyMomentDef } from "../data/flavor";
 import { furnitureDef, STATION_NAMES } from "../data/furniture";
@@ -22,11 +23,18 @@ import { RUSH_WINDOWS } from "../sim/customers";
 import { categoryLabel } from "../sim/economy";
 import type { SimEvent } from "../sim/events";
 import { outageActive } from "../sim/events-world";
-import { binFixtureFor, SHELF_SLOT_UNITS, shelvedUnits, stockOf } from "../sim/inventory";
+import { binFixtureFor, SHELF_SLOT_UNITS, stockOf } from "../sim/inventory";
 import { eraDef } from "../sim/renovation";
 import type { Sim } from "../sim/sim";
 import { ROLE_LABELS } from "../sim/staff";
-import type { DayPhase, GameSpeed, GameState } from "../sim/state";
+import {
+  activeStore,
+  storeById,
+  storeName,
+  type DayPhase,
+  type GameSpeed,
+  type GameState,
+} from "../sim/state";
 import { ChipStrip } from "./components/ChipStrip";
 import { fridgePips } from "./components/Meter";
 import { Panel } from "./components/Panel";
@@ -146,12 +154,13 @@ function worldHeadlines(state: Readonly<GameState>): TickerItem[] {
     }
   }
 
+  const homeDistrict = districtById(activeStore(state).districtId).name;
   for (const storm of events.storms) {
     if (storm.day === state.day) {
       items.push(
         outageActive(state)
-          ? { day: state.day, text: "Power is out across Old Town — registers on the cash box" }
-          : { day: state.day, text: "Storm over Old Town — a thin crowd and a fragile grid" },
+          ? { day: state.day, text: `Power is out across ${homeDistrict} — registers on the cash box` }
+          : { day: state.day, text: `Storm over ${homeDistrict} — a thin crowd and a fragile grid` },
       );
     }
   }
@@ -237,12 +246,15 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     attrs: { "aria-label": `Cash ${formatCash(state.cash)}` },
   });
 
+  // §19: the chip is the *active store's* local standing — switching
+  // branches re-reads it, and rep.changed events name whose stars moved.
+  const startStars = activeStore(state).repStars;
   const starsFill = h("span", { cls: "stars__fill", text: STAR_GLYPHS });
-  starsFill.style.width = `${(state.repStars / 5) * 100}%`;
-  const starsNum = h("span", { cls: "stars__num", text: state.repStars.toFixed(1) });
+  starsFill.style.width = `${(startStars / 5) * 100}%`;
+  const starsNum = h("span", { cls: "stars__num", text: startStars.toFixed(1) });
   const starsChip = h(
     "div",
-    { cls: "chip stars", attrs: { "aria-label": `Reputation ${state.repStars} of 5 stars` } },
+    { cls: "chip stars", attrs: { "aria-label": `Reputation ${startStars} of 5 stars` } },
     [
       h("span", { cls: "stars__glyphs", attrs: { "aria-hidden": "true" } }, [
         h("span", { text: STAR_GLYPHS }),
@@ -283,6 +295,45 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
   const ticker = createTicker();
   function refreshTicker(): void {
     ticker.set(worldHeadlines(sim.snapshot));
+  }
+
+  // --- §19/§28 branch tabs: one file-folder tab per store, pinned under
+  //     the top bar once the network has a second door. Mornings switch;
+  //     any other time the tabs just say where you are.
+
+  const branchStrip = h("div", { cls: "bstrip", attrs: { role: "group", "aria-label": "Branches" } });
+  branchStrip.hidden = true;
+
+  function refreshBranchStrip(): void {
+    const snap = sim.snapshot;
+    branchStrip.hidden = snap.stores.length < 2;
+    if (branchStrip.hidden) return;
+    branchStrip.replaceChildren();
+    for (const store of snap.stores) {
+      const here = store.id === snap.activeStoreId;
+      const tab = h(
+        "button",
+        {
+          cls: `bstrip__tab${here ? " bstrip__tab--on" : ""}`,
+          attrs: { type: "button", "aria-pressed": String(here) },
+        },
+        [
+          h("span", { cls: "bstrip__cross", attrs: { "aria-hidden": "true" }, text: "✚" }),
+          districtById(store.districtId).name,
+          h("span", { cls: "bstrip__stars", text: `${store.repStars.toFixed(1)}★` }),
+        ],
+      );
+      tab.addEventListener("pointerdown", (e) => e.preventDefault());
+      tab.addEventListener("click", () => {
+        if (here) return;
+        if (sim.snapshot.phase !== "morning") {
+          toast("Branches switch in the morning — nobody moves mid-shift");
+          return;
+        }
+        sim.dispatch({ type: "branch.setActive", storeId: store.id });
+      });
+      branchStrip.append(tab);
+    }
   }
 
   // --- Bottom dock ---
@@ -420,14 +471,21 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
   /** Era just raised this morning (§13): the reveal card shows once. */
   let revealEra: 1 | 2 | 3 | 4 | null = null;
 
-  /** The morning card: crew day, era reveal, or the ordinary open (§13, §28). */
+  /** The morning card: crew day, era reveal, or the ordinary open (§13, §28).
+   *  With branches, the card names the store the day belongs to (§19). */
   function refreshMorning(): void {
     const state = sim.snapshot;
     if (state.phase !== "morning") return;
-    if (state.pendingEra !== null) {
-      const target = eraDef(state.pendingEra);
+    const store = activeStore(state);
+    const whereLine =
+      state.stores.length > 1
+        ? [h("p", { cls: "panel__where", text: `${storeName(store)} · switch from the tabs or the city map` })]
+        : [];
+    if (store.pendingEra !== null) {
+      const target = eraDef(store.pendingEra);
       morningStage.replaceChildren(
         Panel({ title: "The crew has the floor" }, [
+          ...whereLine,
           h("p", {
             cls: "panel__text",
             text: `Scaffolding in the aisles, dust sheets over the shelves. ${target.name} stands tomorrow.`,
@@ -452,6 +510,7 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     }
     morningStage.replaceChildren(
       Panel({ title: "Morning" }, [
+        ...whereLine,
         h("p", {
           cls: "panel__text",
           text: "Shelves are stocked and the till is counted. Open when you're ready.",
@@ -529,12 +588,13 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
 
   function buildShelfCard(shelfId: string): void {
     const state = sim.snapshot;
-    const slots = state.store.shelfSlots[shelfId] ?? [];
+    const store = activeStore(state);
+    const slots = store.shelfSlots[shelfId] ?? [];
     const rows: HTMLElement[] = [];
     let waiting = 0;
     for (const skuId of slots) {
       const def = otcDef(skuId);
-      const stock = stockOf(state.store, skuId);
+      const stock = stockOf(store, skuId);
       waiting += stock.backroom;
       rows.push(
         h("div", { cls: "shelfcard__row" }, [
@@ -550,7 +610,7 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
           ]),
           PriceTag({
             msrp: def.msrp,
-            multiplier: state.store.otcPricing[skuId] ?? 1,
+            multiplier: store.otcPricing[skuId] ?? 1,
             name: def.name,
             onChange: (multiplier) => sim.dispatch({ type: "otc.setPrice", skuId, multiplier }),
           }).root,
@@ -605,17 +665,17 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
   let fridgeCardId: string | null = null;
 
   function buildFridgeCard(): void {
-    const state = sim.snapshot;
-    const capacity = fridgeCapacity(state);
-    const held = refrigeratedHeld(state.store);
-    const inbound = refrigeratedInbound(state.store);
+    const store = activeStore(sim.snapshot);
+    const capacity = fridgeCapacity(store);
+    const held = refrigeratedHeld(store);
+    const inbound = refrigeratedInbound(store);
     const boxes = fridgeCardId === null ? 0 : sim.restockableUnits(fridgeCardId);
     // Over-capacity is a legal transient after selling a fridge (§14: no
     // spoilage, ordering blocked) — the count says so instead of lying flat.
     const over = held + inbound - capacity;
     // Cold stock pools across fridges (like the cabinet), so the card shows
     // store-wide numbers — the eyebrow says so once a second fridge stands.
-    const fridges = fridgeCount(state);
+    const fridges = fridgeCount(store);
     const lines = [
       h("p", {
         cls: "shelfcard__eyebrow",
@@ -662,6 +722,7 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
   root.append(
     topbar,
     ticker.root,
+    branchStrip,
     palette.root,
     orders.root,
     team.root,
@@ -784,14 +845,39 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     setDay(e.day);
     setPhase(e.phase);
     refreshTicker(); // the morning turns the page: season, shortage edges, storms
+    refreshBranchStrip(); // morning is when the tabs go live (§19)
   });
   bus.on("speed.changed", (e) => setSpeed(e.speed));
   bus.on("cash.changed", (e) => {
     setCash(e.cash);
     palette.refresh();
   });
-  bus.on("rep.changed", (e) => setStars(e.stars));
+  bus.on("rep.changed", (e) => {
+    // The chip is the active store's local standing (§19); a branch's own
+    // rep move only touches its tab.
+    if (e.storeId === sim.snapshot.activeStoreId) setStars(e.stars);
+    refreshBranchStrip();
+  });
   bus.on("build.changed", (e) => setBuildMode(e.active));
+  // --- Multi-branch (§19) ---
+  bus.on("branch.bought", (e) => {
+    const store = storeById(sim.snapshot, e.storeId);
+    toast(
+      store
+        ? `Deed signed — ${storeName(store)} is yours for ${money(e.cost)}. Empty shelves, 2.5★, day one.`
+        : `Branch bought — ${money(e.cost)}`,
+    );
+    refreshBranchStrip();
+  });
+  bus.on("branch.activeChanged", () => {
+    const store = activeStore(sim.snapshot);
+    setStars(store.repStars);
+    refreshBranchStrip();
+    refreshMorning();
+    refreshTicker(); // the storm headline names the district you stand in
+    palette.refresh(); // era gates and uniqueness follow the new floor
+    toast(`Good morning, ${storeName(store)}`);
+  });
   bus.on("furniture.placed", () => palette.refresh());
   bus.on("furniture.sold", (e) => {
     palette.refresh();
@@ -810,7 +896,7 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
   });
   bus.on("station.changed", (e) => {
     const item = e.stationId
-      ? sim.snapshot.store.furniture.find((f) => f.id === e.stationId)
+      ? activeStore(sim.snapshot).furniture.find((f) => f.id === e.stationId)
       : undefined;
     const name = item ? (STATION_NAMES[item.defId] ?? "station") : null;
     workingHint = name ? `Working the ${name} — click anywhere else to step away` : null;
@@ -844,12 +930,24 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
 
   // --- Inventory + economy (§10, §11) ---
 
+  /** "at Riverside Pharmacy" when the event's store isn't the one you're
+   *  standing in (§19 branch scope); silence otherwise — same toast as ever. */
+  function atBranch(storeId: string): string {
+    if (storeId === sim.snapshot.activeStoreId) return "";
+    const store = storeById(sim.snapshot, storeId);
+    return store ? ` at ${storeName(store)}` : "";
+  }
+
   bus.on("order.submitted", (e) => {
-    toast(`Order placed — ${e.units} units, ${money(e.total)}. The van comes at dawn.`);
+    toast(
+      `Order placed${atBranch(e.storeId)} — ${e.units} units, ${money(e.total)}. The van comes at dawn.`,
+    );
     if (openPanel === "orders") setPanel(null);
   });
   bus.on("order.delivered", (e) => {
-    toast(`Delivery unloaded — ${e.units} units across ${e.skus} lines, in the backroom`);
+    toast(
+      `Delivery unloaded${atBranch(e.storeId)} — ${e.units} units across ${e.skus} lines, in the backroom`,
+    );
   });
   bus.on("stock.restocked", (e) => {
     if (shelfCardId === e.furnitureId) buildShelfCard(e.furnitureId);
@@ -908,7 +1006,7 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     L2: "Expanded Formulary licensed — Tier-2 SKUs open in Orders",
     L3: "Controlled Substances licensed — the cabinet is in the Build palette",
     L4: "Immunization Certification licensed — the station arrives with its equipment",
-    L5: "Multi-Branch Operation licensed",
+    L5: "Multi-Branch Operation licensed — empty lots are for sale on the city map",
     L6: "Distribution Operations licensed",
   };
 
@@ -939,10 +1037,10 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
 
   bus.on("staff.hired", (e) => {
     toast(
-      `${e.member.name} joins as ${ROLE_LABELS[e.member.role]} — ${money(e.member.dailyWage)} a day`,
+      `${e.member.name} joins as ${ROLE_LABELS[e.member.role]}${atBranch(e.storeId)} — ${money(e.member.dailyWage)} a day`,
     );
   });
-  bus.on("staff.fired", (e) => toast(`${e.name} let go — wages stop tomorrow`));
+  bus.on("staff.fired", (e) => toast(`${e.name} let go${atBranch(e.storeId)} — wages stop tomorrow`));
   bus.on("staff.poolRefreshed", () => {
     if (sim.snapshot.day > 1) toast("Monday — fresh applications on the counter");
   });
@@ -1022,6 +1120,7 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
 
   setDay(state.day);
   refreshTicker();
+  refreshBranchStrip();
   setPhase(state.phase);
   setClock(state.clockIgm);
   setSpeed(state.speed);

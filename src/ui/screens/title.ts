@@ -11,6 +11,7 @@
 // player's own progress. Start / Settings stay deliberately small beneath it.
 
 import type { Sim } from "../../sim/sim";
+import { activeStore } from "../../sim/state";
 import { PillButton } from "../components/PillButton";
 import { h } from "../dom";
 import { money } from "../format";
@@ -100,7 +101,7 @@ export function createTitleScreen(sim: Sim, props: TitleProps): TitleHandle {
   lines.push(step(h("div", { cls: "tcard__actions" }, [newGame, settings])));
   const primary = continueButton ?? newGame;
 
-  const card = h("div", { cls: "tcard", attrs: { "data-era": String(sim.snapshot.era) } }, [
+  const card = h("div", { cls: "tcard", attrs: { "data-era": String(activeStore(sim.snapshot).era) } }, [
     h("div", { cls: "tcard__inner" }, lines),
   ]);
 

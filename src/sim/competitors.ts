@@ -20,7 +20,13 @@ import {
 import type { SimEvent } from "./events";
 import { recordMoment } from "./legacy";
 import { canFillDrug } from "./licenses";
-import type { GameState, PatientPool, PoolStrike, TransferRecord } from "./state";
+import {
+  activeStore,
+  type GameState,
+  type PatientPool,
+  type PoolStrike,
+  type TransferRecord,
+} from "./state";
 
 type Emit = (event: SimEvent) => void;
 
@@ -154,25 +160,40 @@ export function poolDrug(poolId: string, category: RxCategory): DrugDef | null {
  * play's record and is never reassigned; the gate is per key, so a pool
  * added by later content (a new district, a new chronic category) still
  * reaches existing saves instead of silently never existing there.
+ *
+ * Player-held pools are *network*-held (M14): whichever branch wins the
+ * scoring, the pool files under PLAYER_PHARMACY_ID — the regular's visits
+ * walk into whatever store the player runs that day (see PatientPool).
  */
 export function ensurePatientPools(state: GameState): void {
   for (const district of DISTRICTS) {
-    let best: PharmacyShare | null = null;
+    let bestId: string | null = null;
     for (const category of CHRONIC_CATEGORIES) {
       if ((district.prevalence[category] ?? 0) <= 0) continue;
       const key = poolKeyOf(district.id, category);
       if (state.patientPools[key]) continue;
-      if (best === null) {
+      if (bestId === null) {
         const shares = districtShares(state, district.id);
-        best = shares.player;
-        for (const entry of shares.rivals) {
-          if (entry.attractiveness > best.attractiveness) best = entry;
+        let best: PharmacyShare | null = null;
+        let playerWon = false;
+        for (const entry of shares.stores) {
+          if (best === null || entry.attractiveness > best.attractiveness) {
+            best = entry;
+            playerWon = true;
+          }
         }
+        for (const entry of shares.rivals) {
+          if (best === null || entry.attractiveness > best.attractiveness) {
+            best = entry;
+            playerWon = false;
+          }
+        }
+        bestId = playerWon ? PLAYER_PHARMACY_ID : best!.pharmacyId;
       }
       state.patientPools[key] = {
         districtId: district.id,
         category,
-        pharmacyId: best.pharmacyId,
+        pharmacyId: bestId,
         strikes: [],
         lastVisitDay: 0,
         retry: false,
@@ -216,7 +237,9 @@ export function duePoolVisit(
     (pool.retry && pool.lastVisitDay < state.day);
   if (!due) return null;
   const drug = poolDrug(poolId, category);
-  if (drug === null || !canFillDrug(state, drug)) return null;
+  // The regular walks into the store the player is running today (M14) —
+  // the visited floor is the only counter that can strike or settle them.
+  if (drug === null || !canFillDrug(state, activeStore(state), drug)) return null;
   return { poolId, patientName: poolPatientName(poolId), drug };
 }
 
@@ -303,10 +326,20 @@ export function recordPoolStrike(
 
 // --- The market's morning (called from beginMorning, §5) ---
 
-/** §18 "sustained high availability + rep" — the score both sides of the
- *  Monday evaluation are measured on (each term 0..1-ish, summed). */
-function pullScorePlayer(state: GameState): number {
-  return storeAvailability(state) + state.repStars / 5;
+/** §18 "sustained high availability + rep" — the network's side of the
+ *  Monday evaluation: its best branch *with a full week on the books*.
+ *  "Sustained" is literal: an empty or short history reads as availability
+ *  1.0 by benefit of the doubt (§17), and a run of dev-skipped days never
+ *  plays a close — without the gate, skipping (or a day-old branch) would
+ *  score on a week never worked. Null when no store qualifies. */
+function pullScorePlayer(state: GameState): number | null {
+  let best: number | null = null;
+  for (const store of state.stores) {
+    if (store.fillRate7d.length < 7) continue;
+    const score = storeAvailability(store) + store.repStars / 5;
+    if (best === null || score > best) best = score;
+  }
+  return best;
 }
 
 /**
@@ -316,22 +349,18 @@ function pullScorePlayer(state: GameState): number {
  * transfer-in moment (§22).
  */
 function evaluatePools(state: GameState, emit: Emit): void {
-  // "Sustained" is literal: a full trailing week of fill rates must be on
-  // the books before a pool can be won. An empty or short history reads as
-  // availability 1.0 by benefit of the doubt (§17), and a run of dev-
-  // skipped days never plays a close — without this gate, skipping would
-  // score a store on a week it never worked.
-  if (state.store.fillRate7d.length < 7) return;
   const playerScore = pullScorePlayer(state);
+  if (playerScore === null) return;
   const candidates: { poolId: string; pool: PatientPool; gap: number }[] = [];
   for (const poolId of Object.keys(state.patientPools)) {
     const pool = state.patientPools[poolId]!;
     if (pool.pharmacyId === PLAYER_PHARMACY_ID) continue;
     const holder = state.competitors.find((c) => c.id === pool.pharmacyId);
     if (!holder) continue;
-    // A pool the store couldn't serve is not a pool the store has won.
+    // A pool no store could serve is not a pool the network has won — any
+    // branch's coverage counts; the visit lands wherever the player is.
     const drug = poolDrug(poolId, pool.category);
-    if (drug === null || !canFillDrug(state, drug)) continue;
+    if (drug === null || !state.stores.some((s) => canFillDrug(state, s, drug))) continue;
     const holderScore = rivalAvailability(state, holder) + holder.repStars / 5;
     const gap = playerScore - (holderScore + PULL_MARGIN);
     if (gap > 0) candidates.push({ poolId, pool, gap });

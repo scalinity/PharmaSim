@@ -10,7 +10,7 @@ import { DRUG_DEFS } from "../data/drugs";
 import { isRefrigerated } from "./coldchain";
 import { categoryLabel, listWholesale, post, round2 } from "./economy";
 import type { SimEvent } from "./events";
-import type { GameState, StormEvent } from "./state";
+import { activeStore, type GameState, type StormEvent } from "./state";
 
 type Emit = (event: SimEvent) => void;
 
@@ -244,13 +244,16 @@ export function advanceWorld(state: GameState, emit: Emit): void {
  *  generator exists to buy off. Valued at list wholesale — "wholesale
  *  value" per §14 — not today's discounted or shortage-inflated price. */
 function beginOutage(state: GameState, emit: Emit): void {
-  const generator = state.store.furniture.some((f) => f.defId === "generator_backup");
+  // The outage plays out on the visited floor (§16): unvisited branches
+  // resolve statistically and sit outside the storm's cold-chain drama.
+  const store = activeStore(state);
+  const generator = store.furniture.some((f) => f.defId === "generator_backup");
   let units = 0;
   let value = 0;
   if (!generator) {
-    for (const skuId of Object.keys(state.store.stock)) {
+    for (const skuId of Object.keys(store.stock)) {
       if (!isRefrigerated(skuId)) continue;
-      const line = state.store.stock[skuId]!;
+      const line = store.stock[skuId]!;
       const held = line.backroom + line.shelved;
       if (held <= 0) continue;
       units += held;

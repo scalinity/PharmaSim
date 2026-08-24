@@ -4,6 +4,11 @@
 // as blister-pack pips, the trait as a stuck-on label, the wage ask in Plex
 // Mono with Penny-wise showing the struck rate). Empty states speak §28's
 // voice: "No tech — scripts wait for you at the bench."
+//
+// Multi-branch (§19): the folder carries a branch scope row — the hiring
+// pool is shared, but every roster, station and new hire belongs to one
+// store. Managers are real cards now: they hold no station and run the
+// branch on days you aren't in it.
 
 import type { EventBus } from "../../core/bus";
 import { furnitureDef } from "../../data/furniture";
@@ -21,6 +26,8 @@ import {
   type StaffMember,
   type StaffRole,
 } from "../../sim/staff";
+import { activeStore, storeById, storeName, type StoreState } from "../../sim/state";
+import { BranchScope } from "../components/BranchScope";
 import { Meter } from "../components/Meter";
 import { Panel } from "../components/Panel";
 import { PillButton } from "../components/PillButton";
@@ -36,10 +43,11 @@ const ROLE_PLURALS: Record<StaffRole, string> = {
 };
 
 /** §28 empty-state copy — what the gap costs you, said plainly. */
-const EMPTY_ROSTER: Record<string, string> = {
+const EMPTY_ROSTER: Record<StaffRole, string> = {
   cashier: "No cashier — the till only rings when you work it.",
   tech: "No tech — scripts wait for you at the bench.",
   pharmacist: "No pharmacist — you're the last check on every script.",
+  manager: "No manager — an unvisited branch runs at 60%.",
 };
 
 const STATION_LABELS: Record<string, string> = {
@@ -65,8 +73,11 @@ export function createStaffPanel(sim: Sim, bus: EventBus<SimEvent>): StaffPanelH
   let visible = false;
 
   const payroll = h("span", { cls: "teamp__payroll" });
+  const eyebrow = h("p", { cls: "teamp__eyebrow" });
   const rosterView = h("div", { cls: "teamp__view" });
   const appsView = h("div", { cls: "teamp__view" });
+
+  const scope = BranchScope(sim, () => refreshAll());
 
   // Tabs owns the active state; the panel only mirrors it onto the views.
   const tabs = Tabs(
@@ -84,12 +95,10 @@ export function createStaffPanel(sim: Sim, bus: EventBus<SimEvent>): StaffPanelH
 
   const panel = Panel({ cls: "teamp" }, [
     h("div", { cls: "teamp__top" }, [
-      h("div", {}, [
-        h("p", { cls: "teamp__eyebrow", text: "Old Town Pharmacy · personnel" }),
-        h("h2", { cls: "panel__title", text: "Team" }),
-      ]),
+      h("div", {}, [eyebrow, h("h2", { cls: "panel__title", text: "Team" })]),
       payroll,
     ]),
+    scope.root,
     tabs.root,
     h("div", { cls: "teamp__body" }, [rosterView, appsView]),
   ]);
@@ -97,22 +106,26 @@ export function createStaffPanel(sim: Sim, bus: EventBus<SimEvent>): StaffPanelH
   const root = h("div", { cls: "team" }, [panel]);
   root.hidden = true;
 
+  /** The branch this folder is open to (§19). */
+  function scopedStore(): StoreState {
+    return storeById(sim.snapshot, scope.current()) ?? activeStore(sim.snapshot);
+  }
+
   // --- Shared bits ---
 
-  /** Stations this role can hold, numbered when the def repeats. */
-  function stationOptions(role: StaffRole): StationOption[] {
-    const state = sim.snapshot;
+  /** Stations this role can hold in the scoped store, numbered on repeats. */
+  function stationOptions(store: StoreState, role: StaffRole): StationOption[] {
     const defs = ROLE_STATIONS[role];
     const counts: Record<string, number> = {};
     const totals: Record<string, number> = {};
-    for (const item of state.store.furniture) totals[item.defId] = (totals[item.defId] ?? 0) + 1;
+    for (const item of store.furniture) totals[item.defId] = (totals[item.defId] ?? 0) + 1;
     const options: StationOption[] = [];
-    for (const item of state.store.furniture) {
+    for (const item of store.furniture) {
       if (!defs.includes(item.defId)) continue;
       const n = (counts[item.defId] = (counts[item.defId] ?? 0) + 1);
       const base = STATION_LABELS[item.defId] ?? furnitureDef(item.defId).name;
       const label = (totals[item.defId] ?? 0) > 1 ? `${base} ${n}` : base;
-      const holder = state.store.staff.find((m) => m.assignment?.stationId === item.id);
+      const holder = store.staff.find((m) => m.assignment?.stationId === item.id);
       options.push({ id: item.id, label, takenBy: holder ? holder.id : null });
     }
     return options;
@@ -135,39 +148,49 @@ export function createStaffPanel(sim: Sim, bus: EventBus<SimEvent>): StaffPanelH
 
   // --- Roster tab ---
 
-  function buildRosterRow(member: StaffMember): HTMLElement {
-    const select = h("select", {
-      cls: "srow__assign",
-      attrs: { "aria-label": `${member.name} assignment` },
-    });
-    select.append(h("option", { text: "Off duty", attrs: { value: "" } }));
-    for (const option of stationOptions(member.role)) {
-      const el = h("option", {
-        text: option.takenBy && option.takenBy !== member.id ? `${option.label} · taken` : option.label,
-        attrs: { value: option.id },
+  function buildRosterRow(store: StoreState, member: StaffMember): HTMLElement {
+    // Managers hold no station (§9/§19): the whole branch is their post.
+    let assignCell: HTMLElement;
+    if (member.role === "manager") {
+      assignCell = h("span", { cls: "srow__assign srow__assign--manager", text: "Runs the branch" });
+    } else {
+      const select = h("select", {
+        cls: "srow__assign",
+        attrs: { "aria-label": `${member.name} assignment` },
       });
-      if (option.takenBy && option.takenBy !== member.id) el.disabled = true;
-      select.append(el);
+      select.append(h("option", { text: "Off duty", attrs: { value: "" } }));
+      for (const option of stationOptions(store, member.role)) {
+        const el = h("option", {
+          text:
+            option.takenBy && option.takenBy !== member.id ? `${option.label} · taken` : option.label,
+          attrs: { value: option.id },
+        });
+        if (option.takenBy && option.takenBy !== member.id) el.disabled = true;
+        select.append(el);
+      }
+      select.value = member.assignment?.stationId ?? "";
+      select.addEventListener("change", () => {
+        sim.dispatch({
+          type: "staff.assign",
+          staffId: member.id,
+          stationId: select.value === "" ? null : select.value,
+          storeId: store.id,
+        });
+      });
+      assignCell = select;
     }
-    select.value = member.assignment?.stationId ?? "";
-    select.addEventListener("change", () => {
-      sim.dispatch({
-        type: "staff.assign",
-        staffId: member.id,
-        stationId: select.value === "" ? null : select.value,
-      });
-    });
 
-    const fire = PillButton("Let go", () => sim.dispatch({ type: "staff.fire", staffId: member.id }), {
-      variant: "secondary",
-      cls: "pill--small srow__fire",
-    });
+    const fire = PillButton(
+      "Let go",
+      () => sim.dispatch({ type: "staff.fire", staffId: member.id, storeId: store.id }),
+      { variant: "secondary", cls: "pill--small srow__fire" },
+    );
 
     return h("div", { cls: "srow" }, [
       h("div", { cls: "srow__head" }, [
         h("span", { cls: "srow__name", text: member.name }),
         h("span", { cls: "srow__wage", text: `${money(member.dailyWage)} a day` }),
-        select,
+        assignCell,
         fire,
       ]),
       h("div", { cls: "srow__detail" }, [meters(member), traitChip(member)]),
@@ -175,18 +198,18 @@ export function createStaffPanel(sim: Sim, bus: EventBus<SimEvent>): StaffPanelH
   }
 
   function buildRoster(): void {
-    const state = sim.snapshot;
+    const store = scopedStore();
     rosterView.replaceChildren();
     for (const role of HIREABLE_ROLES) {
-      const members = state.store.staff.filter((m) => m.role === role);
+      const members = store.staff.filter((m) => m.role === role);
       rosterView.append(
         h("div", { cls: "teamp__section" }, [
           h("h3", { cls: "teamp__sectitle", text: ROLE_PLURALS[role] }),
         ]),
       );
       if (members.length === 0) {
-        rosterView.append(h("p", { cls: "teamp__slip", text: EMPTY_ROSTER[role]! }));
-        if (role === "pharmacist" && !state.store.furniture.some((f) => f.defId === "verify_desk")) {
+        rosterView.append(h("p", { cls: "teamp__slip", text: EMPTY_ROSTER[role] }));
+        if (role === "pharmacist" && !store.furniture.some((f) => f.defId === "verify_desk")) {
           rosterView.append(
             h("p", {
               cls: "teamp__hint",
@@ -196,10 +219,10 @@ export function createStaffPanel(sim: Sim, bus: EventBus<SimEvent>): StaffPanelH
         }
         continue;
       }
-      for (const member of members) rosterView.append(buildRosterRow(member));
+      for (const member of members) rosterView.append(buildRosterRow(store, member));
     }
 
-    const total = state.store.staff.reduce((sum, m) => sum + m.dailyWage, 0);
+    const total = store.staff.reduce((sum, m) => sum + m.dailyWage, 0);
     if (total > 0) {
       rosterView.append(
         h("div", { cls: "teamp__foot" }, [
@@ -231,21 +254,32 @@ export function createStaffPanel(sim: Sim, bus: EventBus<SimEvent>): StaffPanelH
       meters(candidate),
       traitChip(candidate),
       wage,
-      PillButton("Hire", () => sim.dispatch({ type: "staff.hire", candidateId: candidate.id }), {
-        cls: "pill--small acard__hire",
-      }),
+      PillButton(
+        "Hire",
+        () =>
+          sim.dispatch({
+            type: "staff.hire",
+            candidateId: candidate.id,
+            storeId: scopedStore().id,
+          }),
+        { cls: "pill--small acard__hire" },
+      ),
     ]);
     return card;
   }
 
   function buildApps(): void {
     const state = sim.snapshot;
+    const store = scopedStore();
     appsView.replaceChildren();
     const nextMonday = mondayOf(state.day) + 7;
     appsView.append(
       h("p", {
         cls: "teamp__note",
-        text: `Three applicants a role. A fresh batch lands Monday morning — day ${nextMonday}. Better word of mouth, better hands.`,
+        text:
+          `Three applicants a role. A fresh batch lands Monday morning — day ${nextMonday}. ` +
+          `Better word of mouth, better hands.` +
+          (state.stores.length > 1 ? ` Hires join ${storeName(store)}.` : ""),
       }),
     );
     for (const role of HIREABLE_ROLES) {
@@ -254,6 +288,14 @@ export function createStaffPanel(sim: Sim, bus: EventBus<SimEvent>): StaffPanelH
           h("h3", { cls: "teamp__sectitle", text: ROLE_PLURALS[role] }),
         ]),
       );
+      if (role === "manager") {
+        appsView.append(
+          h("p", {
+            cls: "teamp__hint",
+            text: "Managers run branches you're not standing in — the day holds its pace instead of falling to 60%.",
+          }),
+        );
+      }
       const candidates = state.hiring.candidates.filter((c) => c.role === role);
       const grid = h("div", { cls: "acards" });
       candidates.forEach((candidate, i) => grid.append(buildCandidateCard(candidate, i)));
@@ -267,19 +309,10 @@ export function createStaffPanel(sim: Sim, bus: EventBus<SimEvent>): StaffPanelH
       }
       appsView.append(grid);
     }
-    appsView.append(
-      h("div", { cls: "teamp__section" }, [
-        h("h3", { cls: "teamp__sectitle", text: ROLE_PLURALS.manager }),
-      ]),
-      h("p", {
-        cls: "teamp__slip",
-        text: "Managers run branches you're not standing in. For future branches.",
-      }),
-    );
   }
 
   function refreshPayroll(): void {
-    const total = sim.snapshot.store.staff.reduce((sum, m) => sum + m.dailyWage, 0);
+    const total = scopedStore().staff.reduce((sum, m) => sum + m.dailyWage, 0);
     payroll.textContent =
       total > 0
         ? `Payroll ${money(total)} a day`
@@ -287,10 +320,13 @@ export function createStaffPanel(sim: Sim, bus: EventBus<SimEvent>): StaffPanelH
   }
 
   function refreshAll(): void {
+    const store = scopedStore();
+    eyebrow.textContent = `${storeName(store)} · personnel`;
+    scope.refresh();
     buildRoster();
     buildApps();
     refreshPayroll();
-    tabs.setLabel("roster", `On the clock · ${sim.snapshot.store.staff.length}`);
+    tabs.setLabel("roster", `On the clock · ${store.staff.length}`);
     tabs.setLabel("apps", `Applications · ${sim.snapshot.hiring.candidates.length}`);
   }
 
@@ -304,13 +340,21 @@ export function createStaffPanel(sim: Sim, bus: EventBus<SimEvent>): StaffPanelH
   bus.on("furniture.placed", refreshIfVisible);
   bus.on("furniture.sold", refreshIfVisible);
   bus.on("day.phaseChanged", refreshIfVisible);
+  bus.on("branch.bought", refreshIfVisible);
+  bus.on("branch.activeChanged", () => {
+    scope.reset();
+    refreshIfVisible();
+  });
 
   return {
     root,
     setVisible(on) {
       visible = on;
       root.hidden = !on;
-      if (on) refreshAll();
+      if (on) {
+        scope.reset();
+        refreshAll();
+      }
     },
   };
 }

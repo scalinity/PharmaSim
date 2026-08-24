@@ -33,7 +33,7 @@ import {
   vaccinationUnlocked,
 } from "./coldchain";
 import { beginPoolVisit, duePoolVisit, recordPoolServed, recordPoolStrike } from "./competitors";
-import { COPAY, post, STORE_DISTRICT_ID } from "./economy";
+import { COPAY, post } from "./economy";
 import type { SimEvent } from "./events";
 import { otcDemandMult, vaccineWalkinMult, visitorMult } from "./events-world";
 import {
@@ -49,7 +49,7 @@ import {
 } from "./inventory";
 import { backroomZone } from "./placement";
 import type { StaffSystem, StationWorker } from "./staffSystem";
-import type { GameState, PlacedFurniture } from "./state";
+import { activeStore, type GameState, type PlacedFurniture } from "./state";
 import type { RxWorkflow } from "./workflow";
 
 export type Archetype = "hurried" | "steady" | "bargain" | "chatty";
@@ -237,17 +237,20 @@ function pickArchetype(): ArchetypeDef {
   return ARCHETYPES[ARCHETYPES.length - 1]!;
 }
 
-/** Apply a §15 reputation delta: clamp, tally by reason for the receipt, emit. */
+/** Apply a §15 reputation delta to the store the player is running — every
+ *  delta the floor earns lands on that store's §19 local name — clamped,
+ *  tallied by reason for the receipt, emitted with the store's id. */
 export function applyRep(state: GameState, delta: number, emit: Emit, reason: string): void {
-  const next = Math.min(5, Math.max(0, state.repStars + delta));
-  const applied = next - state.repStars;
+  const store = activeStore(state);
+  const next = Math.min(5, Math.max(0, store.repStars + delta));
+  const applied = next - store.repStars;
   if (applied === 0) return;
-  state.repStars = next;
+  store.repStars = next;
   state.dayStats.repDelta += applied;
   const tally = (state.dayStats.repReasons[reason] ??= { count: 0, delta: 0 });
   tally.count++;
   tally.delta += applied;
-  emit({ type: "rep.changed", stars: state.repStars, delta: applied });
+  emit({ type: "rep.changed", storeId: store.id, stars: store.repStars, delta: applied });
 }
 
 export class CustomerSystem {
@@ -304,7 +307,7 @@ export class CustomerSystem {
     state: GameState,
     private workflow: RxWorkflow,
   ) {
-    this.resizeGrid(state.store.grid.cols, state.store.grid.rows);
+    this.resizeGrid(activeStore(state).grid.cols, activeStore(state).grid.rows);
     this.layoutChanged(state);
   }
 
@@ -396,9 +399,10 @@ export class CustomerSystem {
 
     // §15/§26 interplay: reputation moves the door twice, by design — the
     // §17 routing share (how much of each district comes here at all) and
-    // the §7 repMult on the whole schedule. Both sit at ×1 at the 2.5★
-    // baseline, so the §26 20/day emerges untouched.
-    const repMult = 0.4 + 0.24 * state.repStars;
+    // the §7 repMult on the whole schedule. Both read the visited store's
+    // own §19 local stars, and both sit at ×1 at the 2.5★ baseline, so the
+    // §26 20/day emerges untouched.
+    const repMult = 0.4 + 0.24 * activeStore(state).repStars;
     const dayNoise = randRange(0.85, 1.15);
     // §16/§26 on the whole door: the summer lull, the winter crowd, and a
     // storm day's ×0.6 all scale today's schedule.
@@ -411,7 +415,7 @@ export class CustomerSystem {
     // on the same rush curve as everyone else — and ×4 through flu season.
     // Deliberately *only* the ×4: §26 gives the walk-in stream exactly one
     // multiplier, so the visitor-side lulls and storm ×0.6 stay off it.
-    this.vaccineArrivals = vaccinationUnlocked(state)
+    this.vaccineArrivals = vaccinationUnlocked(state, activeStore(state))
       ? this.sampleArrivals(
           Math.round(randInt(VACCINE_WALKINS_MIN, VACCINE_WALKINS_MAX) * vaccineWalkinMult(state)),
           DAY_START_IGM,
@@ -519,7 +523,7 @@ export class CustomerSystem {
    * usual layout re-derivation runs.
    */
   gridChanged(state: GameState): void {
-    const { cols, rows } = state.store.grid;
+    const { cols, rows } = activeStore(state).grid;
     if (cols === this.cols && rows === this.rows) return;
     this.resizeGrid(cols, rows);
     this.queues.clear();
@@ -527,11 +531,26 @@ export class CustomerSystem {
     this.layoutChanged(state);
   }
 
+  /**
+   * The active store itself changed (§19 morning switch, nobody on the
+   * floor): rebuild every cell-indexed structure for the new branch — even
+   * at identical dimensions the furniture underneath is a different store's
+   * — and forget yesterday's plan; beginDay draws the new floor's own.
+   */
+  storeChanged(state: GameState): void {
+    const { cols, rows } = activeStore(state).grid;
+    this.resizeGrid(cols, rows);
+    this.queues.clear();
+    this.chairOccupants.clear();
+    this.plan = null;
+    this.layoutChanged(state);
+  }
+
   /** Rebuild walkable/queue geometry after any furniture change. */
   layoutChanged(state: GameState, emit: Emit = () => {}): void {
     const { cols } = this;
     this.staticWalk.fill(1);
-    for (const item of state.store.furniture) {
+    for (const item of activeStore(state).furniture) {
       const def = furnitureDef(item.defId);
       if (def.walkable) continue;
       const rect = footprintRect(def.cells, item.cellX, item.cellY, item.rot);
@@ -557,7 +576,7 @@ export class CustomerSystem {
     // seeds from — so every lane falls back to any open side rather than
     // ever standing with zero slots, silently turning customers away.
     this.queueSlots.clear();
-    for (const item of state.store.furniture) {
+    for (const item of activeStore(state).furniture) {
       const [fx, fy] = FACING[item.rot]!;
       if (item.defId === "counter_register") {
         let slots = this.computeSlots(item.cellX + fx, item.cellY + fy, fx, fy, 1);
@@ -596,7 +615,7 @@ export class CustomerSystem {
     }
 
     // Script waiters lose their pipeline if the service counter is gone.
-    const counterExists = state.store.furniture.some((f) => f.defId === "counter_service");
+    const counterExists = activeStore(state).furniture.some((f) => f.defId === "counter_service");
     if (!counterExists) {
       for (const c of this.pool) {
         if (!c.active || c.scriptId === 0 || c.laneId !== null || c.mode === "leave") continue;
@@ -610,7 +629,7 @@ export class CustomerSystem {
       }
     }
     for (const [chairId, poolIndex] of [...this.chairOccupants]) {
-      if (state.store.furniture.some((f) => f.id === chairId)) continue;
+      if (activeStore(state).furniture.some((f) => f.id === chairId)) continue;
       this.chairOccupants.delete(chairId);
       const c = this.pool[poolIndex];
       if (c?.active && (c.mode === "sit" || c.mode === "toChair")) {
@@ -624,7 +643,7 @@ export class CustomerSystem {
       if (!c.active) continue;
       if (c.mode === "toShelf") this.planNextTarget(state, c);
       else if (c.mode === "toChair" && c.chairId) {
-        const chair = state.store.furniture.find((f) => f.id === c.chairId);
+        const chair = activeStore(state).furniture.find((f) => f.id === c.chairId);
         if (chair) this.pathToChair(c, chair);
       } else if (c.mode === "rxWait") {
         // The loiter spot may now sit inside new furniture; pick a fresh one.
@@ -837,7 +856,7 @@ export class CustomerSystem {
         if (this.step(c, dIgm)) {
           c.mode = "sit";
           if (c.chairId) {
-            const chair = state.store.furniture.find((f) => f.id === c.chairId);
+            const chair = activeStore(state).furniture.find((f) => f.id === c.chairId);
             if (chair) {
               const [fx, fy] = FACING[chair.rot]!;
               c.yaw = Math.atan2(fx, fy);
@@ -883,7 +902,7 @@ export class CustomerSystem {
         front.mode = "pay";
         if (front.serveLeft <= 0) front.serveLeft = CHECKOUT_IGM * worker.mult;
         // Face the counter while paying.
-        const reg = state.store.furniture.find((f) => f.id === regId);
+        const reg = activeStore(state).furniture.find((f) => f.id === regId);
         if (reg) {
           const [fx, fy] = FACING[reg.rot]!;
           front.yaw = Math.atan2(-fx, -fy);
@@ -902,7 +921,7 @@ export class CustomerSystem {
    * the longest.
    */
   private serveCounters(state: GameState, dIgm: number, emit: Emit): void {
-    for (const counter of state.store.furniture) {
+    for (const counter of activeStore(state).furniture) {
       if (counter.defId !== "counter_service") continue;
       const worker = this.stationWorker(state, counter.id);
       const lanes = [
@@ -980,7 +999,7 @@ export class CustomerSystem {
    * no dose in the bins leaves the §15 walk-out way.
    */
   private serveVaccines(state: GameState, dIgm: number, emit: Emit): void {
-    for (const station of state.store.furniture) {
+    for (const station of activeStore(state).furniture) {
       if (station.defId !== "vaccine_station") continue;
       const laneId = CustomerSystem.vaxLaneId(station.id);
       const front = this.queues.get(laneId)?.[0];
@@ -996,7 +1015,7 @@ export class CustomerSystem {
         // §14: no dose to give — better they leave now than wait on nothing.
         // It's a sale lost to an empty bin like any other (§11): it counts
         // against the fill rate and can trip the reorder-rules unlock.
-        if (shelvedUnits(state.store, VACCINE_DOSE_ID) <= 0) {
+        if (shelvedUnits(activeStore(state), VACCINE_DOSE_ID) <= 0) {
           recordStockOut(state, VACCINE_DOSE_ID, emit);
           emit({ type: "vaccine.noDose", customerId: front.id });
           this.walkout(state, front, emit);
@@ -1016,7 +1035,7 @@ export class CustomerSystem {
 
   /** Shot done: one dose out of the fridge, $30 in, +0.01 rep (§14, §26). */
   private completeVaccination(state: GameState, c: Customer, emit: Emit): void {
-    if (!takeShelved(state.store, VACCINE_DOSE_ID)) {
+    if (!takeShelved(activeStore(state), VACCINE_DOSE_ID)) {
       // Another station used the last dose mid-shot — vanishingly rare.
       recordStockOut(state, VACCINE_DOSE_ID, emit);
       emit({ type: "vaccine.noDose", customerId: c.id });
@@ -1024,7 +1043,7 @@ export class CustomerSystem {
       return;
     }
     state.dayStats.vaccinations++;
-    recordSale(state.store, VACCINE_DOSE_ID, 1);
+    recordSale(activeStore(state), VACCINE_DOSE_ID, 1);
     post(state, "vaccine", VACCINE_REIMBURSEMENT, emit);
     applyRep(state, REP_VACCINE, emit, REP_REASONS.vaccine);
     emit({ type: "vaccine.given", customerId: c.id, total: VACCINE_REIMBURSEMENT });
@@ -1071,13 +1090,13 @@ export class CustomerSystem {
     const basketTotal = c.basket.reduce((sum, line) => sum + line.price, 0);
 
     state.dayStats.fills++;
-    recordSale(state.store, script.drugId, 1);
+    recordSale(activeStore(state), script.drugId, 1);
     post(state, "rx.reimbursement", drug.reimbursement, emit);
     post(state, "rx.copay", COPAY, emit);
     if (basketTotal > 0) {
       state.dayStats.otcSales++;
       state.dayStats.otcUnits += c.basket.length;
-      for (const line of c.basket) recordSale(state.store, line.skuId, 1);
+      for (const line of c.basket) recordSale(activeStore(state), line.skuId, 1);
       post(state, "otc.sale", basketTotal, emit);
     }
     let cashDelta = COPAY + drug.reimbursement + basketTotal;
@@ -1157,7 +1176,8 @@ export class CustomerSystem {
       name: "",
       archetype: "steady",
       kind: "otc",
-      districtId: STORE_DISTRICT_ID,
+      // Pool-slot placeholder; every spawn overwrites it before use.
+      districtId: "oldTown",
       mode: "enter",
       scriptId: 0,
       poolId: null,
@@ -1247,13 +1267,14 @@ export class CustomerSystem {
 
     // §26 mix, ~35% Rx at the baseline; today's actual split follows the
     // routed §17 streams. Rx needs a service counter to drop off at.
-    // Vaccine walk-ins arrive on their own §14 schedule, already decided.
+    // Vaccine walk-ins arrive on their own §14 schedule, already decided —
+    // they file under the visited store's own district.
     c.kind = "otc";
-    c.districtId = STORE_DISTRICT_ID;
+    c.districtId = activeStore(state).districtId;
     if (kind === "vaccine") {
       c.kind = "vaccine";
     } else if (
-      state.store.furniture.some((f) => f.defId === "counter_service") &&
+      activeStore(state).furniture.some((f) => f.defId === "counter_service") &&
       Math.random() < this.rxShare
     ) {
       // §17: the script is a district's routed demand — draw which district
@@ -1278,7 +1299,7 @@ export class CustomerSystem {
       }
     }
     if (c.kind === "otc") {
-      c.districtId = this.drawOtcDistrict()?.districtId ?? STORE_DISTRICT_ID;
+      c.districtId = this.drawOtcDistrict()?.districtId ?? activeStore(state).districtId;
       recordSeen(state, c.districtId, OTC_TALLY_KEY);
       this.pickShelfTargets(state, c, def.targetsMin, def.targetsMax);
     }
@@ -1318,13 +1339,13 @@ export class CustomerSystem {
     c.targets.length = 0;
     c.targetIdx = 0;
     const stocked: { id: string; weight: number }[] = [];
-    for (const item of state.store.furniture) {
+    for (const item of activeStore(state).furniture) {
       if (item.defId !== "otc_shelf") continue;
-      const slots = state.store.shelfSlots[item.id];
+      const slots = activeStore(state).shelfSlots[item.id];
       if (!slots || slots.length === 0) continue;
       // Weight by what is actually on the shelf — empty labels pull no one in.
       let units = 0;
-      for (const skuId of slots) units += shelvedUnits(state.store, skuId);
+      for (const skuId of slots) units += shelvedUnits(activeStore(state), skuId);
       if (units > 0) stocked.push({ id: item.id, weight: units });
     }
     let wanted = Math.min(randInt(min, max), stocked.length);
@@ -1362,7 +1383,7 @@ export class CustomerSystem {
    *  Rx script waiters go back to waiting instead of checking out (§7). */
   private planNextTarget(state: GameState, c: Customer): void {
     while (c.targetIdx < c.targets.length) {
-      const shelf = state.store.furniture.find((f) => f.id === c.targets[c.targetIdx]);
+      const shelf = activeStore(state).furniture.find((f) => f.id === c.targets[c.targetIdx]);
       if (shelf && this.pathToShelfFront(c, shelf)) {
         c.mode = "toShelf";
         return;
@@ -1390,7 +1411,7 @@ export class CustomerSystem {
   private goVaccineQueue(state: GameState, c: Customer): void {
     let bestLane: string | null = null;
     let bestLen = Infinity;
-    for (const item of state.store.furniture) {
+    for (const item of activeStore(state).furniture) {
       if (item.defId !== "vaccine_station") continue;
       const laneId = CustomerSystem.vaxLaneId(item.id);
       if (!this.queueSlots.get(laneId)?.length) continue;
@@ -1410,7 +1431,7 @@ export class CustomerSystem {
 
   /** Fresh through the door: line up at the drop-off lane. */
   private goDropoff(state: GameState, c: Customer, emit: Emit): void {
-    const counter = state.store.furniture.find((f) => f.defId === "counter_service");
+    const counter = activeStore(state).furniture.find((f) => f.defId === "counter_service");
     const laneId = counter ? CustomerSystem.dropLaneId(counter.id) : null;
     if (!laneId || !this.queueSlots.get(laneId)?.length) {
       this.cancelScript(state, c, emit);
@@ -1426,7 +1447,7 @@ export class CustomerSystem {
       this.chairOccupants.delete(c.chairId);
       c.chairId = null;
     }
-    const counter = state.store.furniture.find((f) => f.defId === "counter_service");
+    const counter = activeStore(state).furniture.find((f) => f.defId === "counter_service");
     const laneId = counter ? CustomerSystem.pickLaneId(counter.id) : null;
     if (!laneId || !this.queueSlots.get(laneId)?.length) {
       this.cancelScript(state, c, emit);
@@ -1518,7 +1539,7 @@ export class CustomerSystem {
     if (c.basket.length >= BASKET_MAX) return;
     const shelfId = c.targets[c.targetIdx];
     if (shelfId === undefined) return;
-    const slots = state.store.shelfSlots[shelfId];
+    const slots = activeStore(state).shelfSlots[shelfId];
     if (!slots || slots.length === 0) return;
     if (c.basket.length > 0 && Math.random() > EXTRA_ITEM_CHANCE) return;
 
@@ -1540,16 +1561,16 @@ export class CustomerSystem {
     }
     if (wanted === null) return;
 
-    if (shelvedUnits(state.store, wanted) <= 0) {
+    if (shelvedUnits(activeStore(state), wanted) <= 0) {
       recordStockOut(state, wanted, emit);
       return;
     }
-    if (balksAt(priceMultiplier(state.store, wanted), c.archetype === "bargain")) {
+    if (balksAt(priceMultiplier(activeStore(state), wanted), c.archetype === "bargain")) {
       recordBalk(state, wanted);
       return;
     }
-    takeShelved(state.store, wanted);
-    c.basket.push({ skuId: wanted, shelfId, price: otcPrice(state.store, wanted) });
+    takeShelved(activeStore(state), wanted);
+    c.basket.push({ skuId: wanted, shelfId, price: otcPrice(activeStore(state), wanted) });
   }
 
   /** Join the shortest register queue. False if no register is usable. */
@@ -1619,7 +1640,7 @@ export class CustomerSystem {
   private trySit(state: GameState, c: Customer): boolean {
     let bestChair: PlacedFurniture | null = null;
     let bestDist = Infinity;
-    for (const item of state.store.furniture) {
+    for (const item of activeStore(state).furniture) {
       if (item.defId !== "chair_waiting" || this.chairOccupants.has(item.id)) continue;
       const dist = Math.abs(item.cellX - c.x) + Math.abs(item.cellY - c.y);
       if (dist < bestDist) {
@@ -1704,7 +1725,7 @@ export class CustomerSystem {
     const total = c.basket.reduce((sum, line) => sum + line.price, 0);
     state.dayStats.otcSales++;
     state.dayStats.otcUnits += c.basket.length;
-    for (const line of c.basket) recordSale(state.store, line.skuId, 1);
+    for (const line of c.basket) recordSale(activeStore(state), line.skuId, 1);
     post(state, "otc.sale", total, emit);
     // §17 neighborhood memory: a rung-up front-store visit counts served.
     recordServed(state, c.districtId, OTC_TALLY_KEY);
@@ -1740,7 +1761,7 @@ export class CustomerSystem {
 
   /** Put unpurchased basket items back on their shelves. */
   private returnBasket(state: GameState, c: Customer): void {
-    for (const line of c.basket) returnShelved(state.store, line.skuId);
+    for (const line of c.basket) returnShelved(activeStore(state), line.skuId);
     c.basket.length = 0;
   }
 

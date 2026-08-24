@@ -173,6 +173,8 @@ export function createLicensesPanel(sim: Sim, bus: EventBus<SimEvent>): Licenses
   bus.on("cash.changed", invalidate);
   bus.on("rep.changed", invalidate);
   bus.on("license.bought", invalidate);
+  // §19: L6's branch-count gate ticks over with the second purchase.
+  bus.on("branch.bought", invalidate);
 
   return {
     root,

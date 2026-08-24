@@ -19,7 +19,8 @@ export type SimEvent =
   | { type: "customer.spawned"; id: number; archetype: Archetype }
   | { type: "customer.walkout"; id: number; archetype: Archetype }
   | { type: "sale.completed"; customerId: number; items: number; total: number }
-  | { type: "rep.changed"; stars: number; delta: number }
+  /** A store's §19 local reputation moved — `storeId` names whose. */
+  | { type: "rep.changed"; storeId: string; stars: number; delta: number }
   | { type: "station.changed"; stationId: string | null }
   // --- Prescription workflow (§8, milestone 04) ---
   | { type: "rx.stageChanged"; scriptId: number; stage: RxStage }
@@ -55,8 +56,9 @@ export type SimEvent =
   | { type: "stock.restocked"; furnitureId: string; units: number; by?: string }
   /** First stock-out: per-SKU reorder rules become available (§11). */
   | { type: "reorder.unlocked" }
-  | { type: "order.submitted"; lines: OrderLine[]; units: number; total: number }
-  | { type: "order.delivered"; units: number; skus: number }
+  | { type: "order.submitted"; storeId: string; lines: OrderLine[]; units: number; total: number }
+  /** One van per store with goods due (§19) — `storeId` names the door. */
+  | { type: "order.delivered"; storeId: string; units: number; skus: number }
   | { type: "otc.priceChanged"; skuId: string; multiplier: number }
   | { type: "loan.changed"; bank: number; family: number }
   // --- Licenses + expansion (§6, §12, milestone 08; legacy moments for 10, §22) ---
@@ -73,10 +75,10 @@ export type SimEvent =
   | { type: "vaccine.given"; customerId: number; total: number }
   /** A walk-in reached the station and there was no dose to give (§14). */
   | { type: "vaccine.noDose"; customerId: number }
-  // --- Staff (§9, milestone 07) ---
-  | { type: "staff.hired"; member: StaffMember }
-  | { type: "staff.fired"; id: string; name: string }
-  | { type: "staff.assigned"; id: string; stationId: string | null }
+  // --- Staff (§9, milestone 07; per-branch rosters M14) ---
+  | { type: "staff.hired"; storeId: string; member: StaffMember }
+  | { type: "staff.fired"; storeId: string; id: string; name: string }
+  | { type: "staff.assigned"; storeId: string; id: string; stationId: string | null }
   /** Monday morning: a fresh set of applications on the counter (§9). */
   | { type: "staff.poolRefreshed"; day: number }
   // --- World events + atmosphere (§16, milestone 11) ---
@@ -103,6 +105,14 @@ export type SimEvent =
    *  experiences, in on the Monday evaluation. A trigger only — the
    *  names and reason live on state.market.transfers. */
   | { type: "market.transfer"; direction: "in" | "out"; poolId: string; day: number }
+  // --- Multi-branch (§19, milestone 14) ---
+  /** A lot became a branch: the deed is signed, the §24 store exists. */
+  | { type: "branch.bought"; storeId: string; districtId: string; cost: number; day: number }
+  /** The morning's store changed (§19): the 3D sim rebuilds onto it. */
+  | { type: "branch.activeChanged"; storeId: string }
+  /** An unvisited branch's day resolved (§19/§24). A trigger only — the
+   *  numbers live on that store's daySummary. */
+  | { type: "branch.daySummary"; storeId: string; day: number }
   /** A dev console command took effect; the message is toast-ready. */
   | { type: "dev.eventForced"; message: string }
   // --- App shell (§23, milestone 06) ---

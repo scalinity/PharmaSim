@@ -9,7 +9,7 @@ import { OTC_DEFS, otcDef } from "../data/otc";
 import { isRefrigerated } from "./coldchain";
 import { round2 } from "./economy";
 import type { SimEvent } from "./events";
-import type { GameState, OrderLine, StockLine, StoreState } from "./state";
+import { activeStore, type GameState, type OrderLine, type StockLine, type StoreState } from "./state";
 
 /** §6 otc_shelf: 4 SKU labels × 24 units. */
 export const SHELF_SLOTS = 4;
@@ -171,9 +171,10 @@ function unlabelled(store: StoreState): string[] {
   ).map((def) => def.id);
 }
 
-/** Units this shelf/bin could take from the backroom right now (§11 prompt). */
+/** Units this shelf/bin could take from the backroom right now (§11 prompt).
+ *  Active-store surfaces only — the overlay chips and floor clicks. */
 export function restockableUnits(state: GameState, furnitureId: string): number {
-  const store = state.store;
+  const store = activeStore(state);
   const item = store.furniture.find((f) => f.id === furnitureId);
   if (!item) return 0;
   if (item.defId === "otc_shelf") {
@@ -214,7 +215,7 @@ export function restockableUnits(state: GameState, furnitureId: string): number 
  *  Rx bins count as dry only while the backroom could actually refill them —
  *  a drug that is simply out of stock is an ordering problem, not a trip. */
 export function hasEmptySlot(state: GameState, furnitureId: string): boolean {
-  const store = state.store;
+  const store = activeStore(state);
   const item = store.furniture.find((f) => f.id === furnitureId);
   if (item?.defId === "otc_shelf") {
     const slots = store.shelfSlots[furnitureId];
@@ -238,7 +239,7 @@ export function hasEmptySlot(state: GameState, furnitureId: string): boolean {
  * whole backroom (instant in the solo era, §11). Returns units moved.
  */
 export function restock(state: GameState, furnitureId: string): number {
-  const store = state.store;
+  const store = activeStore(state);
   const item = store.furniture.find((f) => f.id === furnitureId);
   if (!item) return 0;
   let moved = 0;
@@ -325,12 +326,13 @@ export function receiveDeliveries(store: StoreState): { units: number; skus: num
   return { units, skus };
 }
 
-/** Reorder rules → a draft cart the player still has to send (§11). */
-export function draftOrder(state: GameState): Record<string, number> {
+/** Reorder rules → a draft cart the player still has to send (§11). Takes
+ *  the store: rules are per branch, and Orders scopes per branch (§19). */
+export function draftOrder(store: StoreState): Record<string, number> {
   const draft: Record<string, number> = {};
-  if (!state.store.reorderUnlocked) return draft;
-  for (const [skuId, rule] of Object.entries(state.store.reorderRules)) {
-    const held = onHand(state.store, skuId);
+  if (!store.reorderUnlocked) return draft;
+  for (const [skuId, rule] of Object.entries(store.reorderRules)) {
+    const held = onHand(store, skuId);
     if (held > rule.min) continue;
     const units = rule.target - held;
     if (units > 0) draft[skuId] = units;
@@ -340,13 +342,15 @@ export function draftOrder(state: GameState): Record<string, number> {
 
 // --- Stock-outs, sales history, fill rate (§11, §17) ---
 
-/** A sale lost to an empty label or bin. The first one teaches reorder rules. */
+/** A sale lost to an empty label or bin on the visited floor. The first
+ *  one teaches this store its reorder rules. */
 export function recordStockOut(state: GameState, skuId: string, emit: Emit): void {
   const stats = state.dayStats;
   stats.stockOuts[skuId] = (stats.stockOuts[skuId] ?? 0) + 1;
   emit({ type: "stock.out", skuId });
-  if (!state.store.reorderUnlocked) {
-    state.store.reorderUnlocked = true;
+  const store = activeStore(state);
+  if (!store.reorderUnlocked) {
+    store.reorderUnlocked = true;
     emit({ type: "reorder.unlocked" });
   }
 }
@@ -368,25 +372,31 @@ export function sales7d(store: StoreState, skuId: string): number {
   return units;
 }
 
-/**
- * Roll the day's history at close: sales log, the §17 fill rate (served vs.
- * demand we could not meet), and gross revenue for the bank's credit line.
- */
-export function rollHistory(state: GameState, gross: number): void {
-  const store = state.store;
-  const stats = state.dayStats;
-
+/** One day onto a store's trailing books: sales log, §17 fill rate, gross.
+ *  The visited close and the §19 branch resolver both come through here, so
+ *  the windows can never drift apart. */
+export function pushHistory(store: StoreState, rate: number, gross: number): void {
   store.salesLog.unshift(store.salesToday);
   store.salesLog.length = Math.min(store.salesLog.length, HISTORY_DAYS - 1);
   store.salesToday = {};
 
-  let missed = stats.refusals;
-  for (const count of Object.values(stats.stockOuts)) missed += count;
-  const served = stats.fills + stats.otcUnits + stats.vaccinations;
-  const rate = served + missed === 0 ? 1 : round2(served / (served + missed));
-  store.fillRate7d.unshift(rate);
+  store.fillRate7d.unshift(round2(rate));
   store.fillRate7d.length = Math.min(store.fillRate7d.length, HISTORY_DAYS);
 
   store.gross7d.unshift(round2(gross));
   store.gross7d.length = Math.min(store.gross7d.length, HISTORY_DAYS);
+}
+
+/**
+ * Roll the visited day's history at close: sales log, the §17 fill rate
+ * (served vs. demand we could not meet), and gross revenue for the bank's
+ * credit line.
+ */
+export function rollHistory(state: GameState, gross: number): void {
+  const stats = state.dayStats;
+  let missed = stats.refusals;
+  for (const count of Object.values(stats.stockOuts)) missed += count;
+  const served = stats.fills + stats.otcUnits + stats.vaccinations;
+  const rate = served + missed === 0 ? 1 : served / (served + missed);
+  pushHistory(activeStore(state), rate, gross);
 }

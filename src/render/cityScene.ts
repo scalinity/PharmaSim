@@ -104,6 +104,11 @@ export class CityScene {
   private groundPlane = new Plane(new Vector3(0, 1, 0), 0);
   private hit = new Vector3();
 
+  /** The §19 lot layer: for-sale posts and bought branches' shopfronts.
+   *  Rebuilt whole on ownership changes — a per-run handful of merges. */
+  private lotLayer: Mesh | null = null;
+  private lotMaterial!: MeshLambertMaterial;
+
   constructor() {
     const flat = new MeshLambertMaterial({ vertexColors: true, flatShading: true });
 
@@ -133,13 +138,12 @@ export class CityScene {
         const park = new CylinderGeometry(pr, pr, 0.06, 10);
         plates.add(park, PARK_SAGE, px, PLATE_H + 0.03, pz);
       }
-      // The empty lot (§19): a cream plot with a little post — nothing to
-      // buy yet; M14 makes these purchasable branch sites.
+      // The branch lot's plot (§19): the cream plot is static ground; what
+      // stands on it — a for-sale post or a bought branch's shopfront —
+      // lives on the dynamic ownership layer (setBranches).
       const [lx, lz] = m.lot;
       const plot = new BoxGeometry(3, 0.06, 2.4);
       plates.add(plot, LOT_CREAM, lx, PLATE_H + 0.03, lz);
-      plates.add(new BoxGeometry(0.12, 0.8, 0.12), LOT_POST, lx + 1.1, PLATE_H + 0.4, lz + 0.8);
-      plates.add(new BoxGeometry(0.7, 0.4, 0.06), LOT_POST, lx + 1.1, PLATE_H + 0.85, lz + 0.8);
     }
     this.scene.add(new Mesh(plates.build(), flat));
 
@@ -147,6 +151,9 @@ export class CityScene {
     this.buildLandmarks(flat);
     this.buildStoreMarker(flat);
     this.buildRivalMarkers(flat);
+    this.lotMaterial = flat;
+    // Until main.ts reports ownership, every lot shows its for-sale post.
+    this.setBranches([]);
 
     const ring = new RingGeometry(0.88, 1, 48);
     ring.rotateX(-Math.PI / 2);
@@ -324,6 +331,41 @@ export class CityScene {
       b.add(new BoxGeometry(0.34, 1.05, 0.26), rival.accent, x, y + 2.85, z);
     }
     this.scene.add(new Mesh(b.build(), material));
+  }
+
+  /**
+   * §19/§27 lot ownership: districts with a bought branch get the player's
+   * store-cross treatment on their lot (the same pattern as the founding
+   * marker, branch-sized); the rest keep the for-sale post. Called on boot
+   * and on every branch purchase — never per frame.
+   */
+  setBranches(ownedDistrictIds: readonly string[]): void {
+    if (this.lotLayer) {
+      this.scene.remove(this.lotLayer);
+      this.lotLayer.geometry.dispose();
+      this.lotLayer = null;
+    }
+    const owned = new Set(ownedDistrictIds);
+    const b = new PartsBuilder();
+    for (const district of DISTRICTS) {
+      const m = DISTRICT_MAPS[district.id]!;
+      const [lx, lz] = m.lot;
+      const y = PLATE_H;
+      if (owned.has(district.id)) {
+        // A working branch: shopfront + pine cross, sized between a rival's
+        // marker and the founding store so the family look reads at once.
+        b.add(new BoxGeometry(1.7, 1.0, 1.3), LOT_CREAM, lx, y + 0.6, lz);
+        b.add(new BoxGeometry(1.9, 0.12, 1.5), PINE, lx, y + 1.16, lz);
+        b.add(new BoxGeometry(0.15, 1.9, 0.15), 0x4a5a50, lx, y + 2.1, lz);
+        b.add(new BoxGeometry(1.15, 0.38, 0.28), PINE, lx, y + 3.1, lz);
+        b.add(new BoxGeometry(0.38, 1.15, 0.28), PINE, lx, y + 3.1, lz);
+      } else {
+        b.add(new BoxGeometry(0.12, 0.8, 0.12), LOT_POST, lx + 1.1, y + 0.4, lz + 0.8);
+        b.add(new BoxGeometry(0.7, 0.4, 0.06), LOT_POST, lx + 1.1, y + 0.85, lz + 0.8);
+      }
+    }
+    this.lotLayer = new Mesh(b.build(), this.lotMaterial);
+    this.scene.add(this.lotLayer);
   }
 
   /** District plate under the pointer's ground hit, or null. */

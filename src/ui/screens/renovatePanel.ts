@@ -9,6 +9,7 @@ import type { EventBus } from "../../core/bus";
 import type { SimEvent } from "../../sim/events";
 import { ERA_DEFS, renovationLock, type EraDef } from "../../sim/renovation";
 import type { Sim } from "../../sim/sim";
+import { activeStore } from "../../sim/state";
 import { ChipStrip } from "../components/ChipStrip";
 import { Panel } from "../components/Panel";
 import { h } from "../dom";
@@ -46,14 +47,16 @@ export function createRenovatePanel(sim: Sim, bus: EventBus<SimEvent>): Renovate
 
   function buildCard(def: EraDef): HTMLElement {
     const state = sim.snapshot;
+    // The proposals describe the store you're standing in (§13/§19).
+    const store = activeStore(state);
     const status: "built" | "current" | "pending" | "next" | "later" =
-      def.era === state.pendingEra
+      def.era === store.pendingEra
         ? "pending"
-        : def.era <= state.era
-          ? def.era === state.era
+        : def.era <= store.era
+          ? def.era === store.era
             ? "current"
             : "built"
-          : def.era === state.era + 1 && state.pendingEra === null
+          : def.era === store.era + 1 && store.pendingEra === null
             ? "next"
             : "later";
 
@@ -148,6 +151,8 @@ export function createRenovatePanel(sim: Sim, bus: EventBus<SimEvent>): Renovate
   bus.on("day.phaseChanged", () => invalidate("full"));
   bus.on("era.renovationStarted", () => invalidate("full"));
   bus.on("era.changed", () => invalidate("full"));
+  // §19: the proposals follow the store you're standing in.
+  bus.on("branch.activeChanged", () => invalidate("full"));
 
   return {
     root,

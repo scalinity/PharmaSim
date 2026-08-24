@@ -18,13 +18,13 @@ import { seasonForDay } from "./core/clock";
 import { cellToWorld, FACING } from "./core/grid";
 import { startLoop } from "./core/loop";
 import { COMPETITOR_DEFS } from "./data/competitors";
-import { DISTRICT_MAPS, DISTRICTS } from "./data/districts";
+import { DISTRICT_MAPS, DISTRICTS, STORE_SITE } from "./data/districts";
 import { createStorage } from "./platform/storage";
 import { CustomerSystem } from "./sim/customers";
 import type { SimEvent } from "./sim/events";
 import { hydrate, migrate, serialize, type SaveFile } from "./sim/save";
 import { Sim } from "./sim/sim";
-import { createGameState } from "./sim/state";
+import { activeStore, createGameState } from "./sim/state";
 import { CameraRig, type CameraPose } from "./render/cameraRig";
 import { CityScene } from "./render/cityScene";
 import { Lighting } from "./render/lighting";
@@ -92,16 +92,33 @@ bus.on("clock.minute", (e) => {
 // stay ahead of every later subscriber in its chain (§23).
 lighting.setSeason(seasonForDay(sim.snapshot.day) === "Winter");
 lighting.setTime(sim.snapshot.clockIgm);
-lighting.fitFloor(sim.snapshot.store.grid.cols, sim.snapshot.store.grid.rows);
+lighting.fitFloor(activeStore(sim.snapshot).grid.cols, activeStore(sim.snapshot).grid.rows);
 cityLighting.setSeason(seasonForDay(sim.snapshot.day) === "Winter");
 cityLighting.setTime(sim.snapshot.clockIgm);
 bus.on("expansion.bought", (e) => lighting.fitFloor(e.cols, e.rows));
 
-// §28 era tint: the store's generation rides the document root, and every
-// surface reading --paper quietly modernizes with it (ui/tokens.css).
-document.documentElement.dataset.era = String(sim.snapshot.era);
+// §28 era tint: the active store's generation rides the document root, and
+// every surface reading --paper quietly modernizes with it (ui/tokens.css).
+document.documentElement.dataset.era = String(activeStore(sim.snapshot).era);
 bus.on("era.changed", (e) => {
   document.documentElement.dataset.era = String(e.era);
+});
+
+// §19/§27 map ownership: the pine cross stands on every bought lot. The
+// founding store keeps its own site marker; branches (stores past the
+// first) claim their district's lot.
+function refreshCityOwnership(): void {
+  city.setBranches(sim.snapshot.stores.slice(1).map((store) => store.districtId));
+}
+refreshCityOwnership();
+bus.on("branch.bought", refreshCityOwnership);
+
+// §19 morning switch: the store scene rebuilt itself off the same event
+// (render/storeScene.ts); the shadow box and paper tint follow here.
+bus.on("branch.activeChanged", () => {
+  const store = activeStore(sim.snapshot);
+  lighting.fitFloor(store.grid.cols, store.grid.rows);
+  document.documentElement.dataset.era = String(store.era);
 });
 
 // --- Saves (§5, §23) ---
@@ -234,7 +251,7 @@ function applyCityShown(on: boolean): void {
     picking.setSuspended(true);
     // The store's screen-space chips stop being placed while the map is up;
     // whatever is on screen right now comes down with the swap.
-    for (const item of sim.snapshot.store.furniture) {
+    for (const item of activeStore(sim.snapshot).furniture) {
       hud.hideStockChip(item.id);
       hud.hideQueueChip(item.id);
     }
@@ -328,8 +345,8 @@ bus.on("rx.fillStarted", (e) => {
   // can't start under the map — but never glide a camera that isn't home.
   if (cityShown) return;
   const state = sim.snapshot;
-  const { cols, rows } = state.store.grid;
-  const shelf = e.shelfId ? state.store.furniture.find((f) => f.id === e.shelfId) : undefined;
+  const { cols, rows } = activeStore(state).grid;
+  const shelf = e.shelfId ? activeStore(state).furniture.find((f) => f.id === e.shelfId) : undefined;
   if (!shelf) return;
   binBoard.show(shelf, cols, rows, e.bins);
   const [fx, fy] = FACING[shelf.rot]!;
@@ -369,11 +386,11 @@ function updateRoleGlyphs(): void {
   const state = sim.snapshot;
   const ids = new Set<string>();
   if (!state.buildMode && state.phase !== "close") {
-    const { cols, rows } = state.store.grid;
-    for (const member of state.store.staff) {
+    const { cols, rows } = activeStore(state).grid;
+    for (const member of activeStore(state).staff) {
       const stationId = member.assignment?.stationId;
       if (!stationId) continue;
-      const station = state.store.furniture.find((f) => f.id === stationId);
+      const station = activeStore(state).furniture.find((f) => f.id === stationId);
       if (!station) continue;
       const [wx, wz] = cellToWorld(cols, rows, station.cellX, station.cellY);
       const [sx, sy] = project(wx, 2.75, wz);
@@ -391,7 +408,8 @@ function updateOverlays(): void {
   if (hudRoot.hidden) return; // title screen: no chips to place
   if (cityShown) {
     // The map's own overlay: street tags pinned to each district's plate,
-    // and the §18 rivals' shop tags pinned over their marker crosses.
+    // the §18 rivals' shop tags over their marker crosses, and the player's
+    // own pine tags over the founding site and every bought lot (§19).
     for (const district of DISTRICTS) {
       const m = DISTRICT_MAPS[district.id]!;
       const [sx, sy] = project(m.center[0], 0.4, m.center[1]);
@@ -401,6 +419,12 @@ function updateOverlays(): void {
       const [sx, sy] = project(rival.site[0], 3.9, rival.site[1]);
       cityOverlay.updateLabel(rival.id, sx, sy);
     }
+    const stores = sim.snapshot.stores;
+    for (let i = 0; i < stores.length; i++) {
+      const site = i === 0 ? STORE_SITE : DISTRICT_MAPS[stores[i]!.districtId]!.lot;
+      const [sx, sy] = project(site[0], 4.4, site[1]);
+      cityOverlay.updateLabel(`branch:${stores[i]!.id}`, sx, sy);
+    }
     return;
   }
   const state = sim.snapshot;
@@ -409,13 +433,13 @@ function updateOverlays(): void {
     store.setBottleneck(null);
     return;
   }
-  const { cols, rows } = state.store.grid;
+  const { cols, rows } = activeStore(state).grid;
 
   // Shelves that want a trip to the backroom say so (§11 restock nudge).
   // Chips are cleared by the HUD on entering build mode, so the loop can be
   // skipped outright there — no per-frame [] stand-in (§30).
   if (!state.buildMode) {
-    for (const item of state.store.furniture) {
+    for (const item of activeStore(state).furniture) {
       if (
         item.defId !== "otc_shelf" &&
         item.defId !== "rx_shelf" &&
@@ -462,7 +486,7 @@ function updateOverlays(): void {
   const verifyDepth = sim.workflow.verifyDepth;
   const autoDepth = sim.workflow.autoFillDepth;
 
-  for (const item of state.store.furniture) {
+  for (const item of activeStore(state).furniture) {
     if (item.defId === "counter_register") {
       const count = sim.queueLength(item.id);
       consider(item.id, count);
@@ -562,7 +586,9 @@ const shell = createShell(document.getElementById("shell")!, {
         day: saved.day,
         season: seasonForDay(saved.day),
         cash: saved.cash,
-        repStars: saved.repStars,
+        // The daybook line shows the store the run left off in (§19).
+        repStars: (saved.stores.find((s) => s.id === saved.activeStoreId) ?? saved.stores[0]!)
+          .repStars,
       }
     : null,
   onPlay: () => enterPlay(),

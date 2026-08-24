@@ -8,7 +8,7 @@
 import type { SimEvent } from "./events";
 import { post } from "./economy";
 import { recordMoment } from "./legacy";
-import type { GameState } from "./state";
+import { activeStore, type GameState } from "./state";
 
 type Emit = (event: SimEvent) => void;
 
@@ -61,16 +61,18 @@ export function eraDef(era: number): EraDef {
   return def;
 }
 
-/** The renovation the store could buy next, or null at Gen 4. */
+/** The renovation the active store could buy next, or null at Gen 4. The
+ *  Renovate sheet works on the store you're standing in (§13/§19). */
 function renovationTarget(state: GameState): EraDef | null {
-  return state.era >= 4 ? null : eraDef(state.era + 1);
+  const era = activeStore(state).era;
+  return era >= 4 ? null : eraDef(era + 1);
 }
 
 /** Why the next renovation can't be bought right now, or null when it can. */
 export function renovationLock(state: GameState): string | null {
   const target = renovationTarget(state);
   if (!target) return "The store is at Gen 4";
-  if (state.pendingEra !== null) return "The crew already has the floor";
+  if (activeStore(state).pendingEra !== null) return "The crew already has the floor";
   if (state.phase === "close") return "The register is closed — tomorrow";
   if (state.cash < target.cost) {
     return `Short $${(target.cost - state.cash).toLocaleString("en-US")}`;
@@ -79,14 +81,14 @@ export function renovationLock(state: GameState): string | null {
 }
 
 /**
- * §13 purchase: pay the crew, put the scaffolding up, close the store for the
- * rest of today. Sim reacts to the emitted event by cancelling the day's
- * remaining arrivals; the era itself flips at the next day.advance.
+ * §13 purchase: pay the crew, put the scaffolding up, close the active store
+ * for the rest of today. Sim reacts to the emitted event by cancelling the
+ * day's remaining arrivals; the era itself flips at the next day.advance.
  */
 export function beginRenovation(state: GameState, emit: Emit): void {
   if (renovationLock(state) !== null) return;
   const target = renovationTarget(state)!;
-  state.pendingEra = target.era as 2 | 3 | 4;
+  activeStore(state).pendingEra = target.era as 2 | 3 | 4;
   post(state, "renovation", -target.cost, emit);
   // §22: the first renovation is its moment — the note is written in the
   // scaffolding-day voice, so it pins to tonight's receipt.
@@ -100,17 +102,24 @@ export function beginRenovation(state: GameState, emit: Emit): void {
   });
 }
 
-/** Next morning: the scaffolding comes down and the new era stands. */
+/** Next morning: scaffolding comes down wherever a crew was in — a branch
+ *  renovates on schedule whether or not you stand in it tomorrow (§13/§19).
+ *  era.changed announces only the active store: it drives the scene reskin
+ *  and the HUD paper tint, and both belong to the floor on screen. */
 export function completeRenovation(state: GameState, emit: Emit): void {
-  if (state.pendingEra === null) return;
-  state.era = state.pendingEra;
-  state.pendingEra = null;
-  // Recorded on the morning the era stands, like every sibling stats key
-  // ("the day this became true") — the proposal card stamps "Raised" from it.
-  state.stats[`era.${state.era}`] = state.day;
-  // §22: reaching Gen 4 is a moment of its own, and its note speaks of a
-  // store that already looks like this — so it belongs to today, not to
-  // yesterday's scaffolding.
-  if (state.era === 4) recordMoment(state, "first_gen4", emit);
-  emit({ type: "era.changed", era: state.era });
+  for (const store of state.stores) {
+    if (store.pendingEra === null) continue;
+    store.era = store.pendingEra;
+    store.pendingEra = null;
+    // Recorded the morning an era first stands anywhere, like every sibling
+    // stats key ("the day this became true") — the proposal card stamps
+    // "Raised" from it. Later stores reaching the same generation keep the
+    // first date; the album records firsts, not repeats.
+    state.stats[`era.${store.era}`] ??= state.day;
+    // §22: reaching Gen 4 is a moment of its own, and its note speaks of a
+    // store that already looks like this — so it belongs to today, not to
+    // yesterday's scaffolding.
+    if (store.era === 4) recordMoment(state, "first_gen4", emit);
+    if (store.id === state.activeStoreId) emit({ type: "era.changed", era: store.era });
+  }
 }

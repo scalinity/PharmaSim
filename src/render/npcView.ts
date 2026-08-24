@@ -26,6 +26,7 @@ import { FACING, footprintRect, rectCenterWorld } from "../core/grid";
 import { furnitureDef } from "../data/furniture";
 import { showsPatienceRing } from "../sim/customers";
 import type { Sim } from "../sim/sim";
+import { activeStore } from "../sim/state";
 import { PartsBuilder } from "./meshes/parts";
 import { FLOOR_Y } from "./storeScene";
 
@@ -160,7 +161,7 @@ export class NpcView {
   update(alpha: number): void {
     const state = this.sim.snapshot;
     // Read fresh — a §6 expansion re-centers the grid under everyone's feet.
-    const { cols, rows } = state.store.grid;
+    const { cols, rows } = activeStore(state).grid;
     let n = 0; // body/head instance cursor
     let nb = 0; // box layer cursor (accents + bags)
     let nr = 0; // ring cursor
@@ -263,13 +264,13 @@ export class NpcView {
       this.owner.visible = false;
       return;
     }
-    const item = this.sim.snapshot.store.furniture.find((f) => f.id === stationId);
+    const item = activeStore(this.sim.snapshot).furniture.find((f) => f.id === stationId);
     if (!item) {
       this.owner.visible = false;
       return;
     }
     const def = furnitureDef(item.defId);
-    const { cols, rows } = this.sim.snapshot.store.grid;
+    const { cols, rows } = activeStore(this.sim.snapshot).grid;
     const rect = footprintRect(def.cells, item.cellX, item.cellY, item.rot);
     const [cx, cz] = rectCenterWorld(cols, rows, rect);
     const [fx, fy] = FACING[item.rot]!;

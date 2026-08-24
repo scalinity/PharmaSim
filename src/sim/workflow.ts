@@ -13,7 +13,7 @@ import type { SimEvent } from "./events";
 import { binFixtureFor, returnShelved, takeShelved } from "./inventory";
 import { fillableDrugs } from "./licenses";
 import { OWNER_CATCH_RATE } from "./staff";
-import type { GameState } from "./state";
+import { activeStore, type GameState } from "./state";
 
 export type RxStage =
   | "dropoff"
@@ -125,7 +125,7 @@ export function generateBins(state: GameState, correctId: string): string[] {
   const fillerPool =
     fixture === "fridge_medical"
       ? DRUG_DEFS.filter((def) => def.refrigerated)
-      : fillableDrugs(state).filter(
+      : fillableDrugs(state, activeStore(state)).filter(
           (def) => !def.refrigerated && (def.tier === 3) === (fixture === "cabinet_controlled"),
         );
 
@@ -281,7 +281,7 @@ export class RxWorkflow {
    * out of stock (caller applies the −0.08 rep and walk-away, §15).
    */
   tryAccept(state: GameState, script: RxScript, emit: Emit): boolean {
-    if (!takeShelved(state.store, script.drugId)) {
+    if (!takeShelved(activeStore(state), script.drugId)) {
       this.scripts.delete(script.id);
       return false;
     }
@@ -423,7 +423,7 @@ export class RxWorkflow {
    * A fill in progress inside a sold machine goes back on top of a queue.
    */
   private syncDispenserLanes(state: GameState, emit: Emit): void {
-    this.autoLaneOpen = state.store.furniture.some((f) => f.defId === "dispenser_robotic");
+    this.autoLaneOpen = activeStore(state).furniture.some((f) => f.defId === "dispenser_robotic");
     // A closing lane drains before any held task is released, so the fill a
     // sold machine was mid-way through lands back on *top* of the pile it
     // was already ahead of, not behind its own queue.
@@ -432,7 +432,7 @@ export class RxWorkflow {
       this.autoQueue.length = 0;
     }
     for (const [dispenserId, task] of this.dispenserTasks) {
-      if (state.store.furniture.some((f) => f.id === dispenserId)) continue;
+      if (activeStore(state).furniture.some((f) => f.id === dispenserId)) continue;
       this.dispenserTasks.delete(dispenserId);
       const script = this.scripts.get(task.scriptId);
       if (script && script.stage === "filling") {
@@ -461,7 +461,7 @@ export class RxWorkflow {
       const script = this.scripts.get(task.scriptId);
       if (!script || script.stage !== "filling") this.dispenserTasks.delete(dispenserId);
     }
-    for (const item of state.store.furniture) {
+    for (const item of activeStore(state).furniture) {
       if (item.defId !== "dispenser_robotic") continue;
       const task = this.dispenserTasks.get(item.id);
       if (!task) {
@@ -488,7 +488,7 @@ export class RxWorkflow {
 
   /** Reconcile the fill/verify interactions with wherever the player works. */
   syncStation(state: GameState, emit: Emit): void {
-    const station = state.store.furniture.find((f) => f.id === state.workingStationId);
+    const station = activeStore(state).furniture.find((f) => f.id === state.workingStationId);
     if (station?.defId === "fill_bench" && !state.buildMode) {
       this.takeNext(state, emit);
     } else if (this.fillingId !== null) {
@@ -513,10 +513,10 @@ export class RxWorkflow {
     // Frame the bin fixture nearest the worked bench (§8 camera glide):
     // the cabinet for Tier 3, the fridge for cold chain, else an Rx shelf.
     const binDef = binFixtureFor(script.drugId);
-    const bench = state.store.furniture.find((f) => f.id === state.workingStationId);
+    const bench = activeStore(state).furniture.find((f) => f.id === state.workingStationId);
     let shelfId: string | null = null;
     let best = Infinity;
-    for (const item of state.store.furniture) {
+    for (const item of activeStore(state).furniture) {
       if (item.defId !== binDef) continue;
       const dist = bench
         ? Math.abs(item.cellX - bench.cellX) + Math.abs(item.cellY - bench.cellY)
@@ -589,7 +589,7 @@ export class RxWorkflow {
 
   /** The owner at the desk checks scripts by hand: 8 igm each, 90% (§26). */
   private tickPlayerVerify(state: GameState, emit: Emit): void {
-    const station = state.store.furniture.find((f) => f.id === state.workingStationId);
+    const station = activeStore(state).furniture.find((f) => f.id === state.workingStationId);
     if (station?.defId !== "verify_desk" || state.buildMode) return;
     if (this.playerVerifyId === null) {
       const script = this.claimVerify(emit);
@@ -613,7 +613,7 @@ export class RxWorkflow {
   cancel(state: GameState, scriptId: number, emit: Emit): void {
     const script = this.scripts.get(scriptId);
     if (!script) return;
-    if (script.stage !== "dropoff") returnShelved(state.store, script.drugId);
+    if (script.stage !== "dropoff") returnShelved(activeStore(state), script.drugId);
     const queued = this.fillQueue.indexOf(scriptId);
     if (queued !== -1) this.fillQueue.splice(queued, 1);
     const autoQueued = this.autoQueue.indexOf(scriptId);

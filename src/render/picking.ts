@@ -10,6 +10,7 @@ import { Pathfinder } from "../core/pathfind";
 import { furnitureDef, STATION_NAMES } from "../data/furniture";
 import type { SimEvent } from "../sim/events";
 import type { Sim } from "../sim/sim";
+import { activeStore } from "../sim/state";
 import type { RxBinBoard } from "./rxBins";
 import { FLOOR_Y, type StoreScene } from "./storeScene";
 
@@ -75,7 +76,7 @@ export class Picking {
     private canvas: HTMLCanvasElement,
     private callbacks: PickingCallbacks,
   ) {
-    const { cols, rows } = sim.snapshot.store.grid;
+    const { cols, rows } = activeStore(sim.snapshot).grid;
     this.pathfinder = new Pathfinder(cols, rows);
 
     canvas.addEventListener("pointermove", (e) => this.onPointerMove(e));
@@ -149,7 +150,7 @@ export class Picking {
   /** Context panel: pick the selected item up as a move ghost. */
   beginMove(): void {
     if (!this.selection) return;
-    const item = this.sim.snapshot.store.furniture.find((f) => f.id === this.selection!.id);
+    const item = activeStore(this.sim.snapshot).furniture.find((f) => f.id === this.selection!.id);
     if (!item) return;
     this.movingId = item.id;
     this.ghostDefId = item.defId;
@@ -215,7 +216,7 @@ export class Picking {
     }
 
     const id = this.pickFurnitureId(e.clientX, e.clientY);
-    const item = id ? state.store.furniture.find((f) => f.id === id) : undefined;
+    const item = id ? activeStore(state).furniture.find((f) => f.id === id) : undefined;
 
     // Shelves and bins take a restock click, morning or mid-shift (§11).
     if (item && this.isRestockable(item.defId)) {
@@ -298,7 +299,7 @@ export class Picking {
       }
       // Work the station you click; click anywhere else to leave the post.
       const id = this.pickFurnitureId(e.clientX, e.clientY);
-      const item = id ? state.store.furniture.find((f) => f.id === id) : undefined;
+      const item = id ? activeStore(state).furniture.find((f) => f.id === id) : undefined;
       // A shelf takes the backroom's stock out front (§11) — morning or mid-shift.
       if (item && this.isRestockable(item.defId)) {
         this.sim.dispatch({ type: "stock.restock", furnitureId: item.id });
@@ -356,7 +357,7 @@ export class Picking {
 
     const id = this.pickFurnitureId(e.clientX, e.clientY);
     if (id) {
-      const item = state.store.furniture.find((f) => f.id === id);
+      const item = activeStore(state).furniture.find((f) => f.id === id);
       if (item) this.setSelection({ id: item.id, defId: item.defId });
     } else {
       this.setSelection(null);
@@ -415,13 +416,13 @@ export class Picking {
       this.scene.setPath(null);
       return;
     }
-    const { cols, rows } = this.sim.snapshot.store.grid;
+    const { cols, rows } = activeStore(this.sim.snapshot).grid;
     // A §6 expansion outgrows the preallocated search buffers; resize lazily.
     if (this.pathfinder.cols !== cols || this.pathfinder.rows !== rows) {
       this.pathfinder = new Pathfinder(cols, rows);
     }
     const walkable = new Uint8Array(cols * rows).fill(1);
-    for (const item of this.sim.snapshot.store.furniture) {
+    for (const item of activeStore(this.sim.snapshot).furniture) {
       const def = furnitureDef(item.defId);
       if (def.walkable) continue;
       const [w, h] = rotatedSize(def.cells, item.rot);
@@ -458,7 +459,7 @@ export class Picking {
       this.hasHoverCell = false;
       return;
     }
-    const { cols, rows } = this.sim.snapshot.store.grid;
+    const { cols, rows } = activeStore(this.sim.snapshot).grid;
     const x = Math.floor(hit.x + cols / 2);
     const y = Math.floor(hit.z + rows / 2);
     if (x < 0 || x >= cols || y < 0 || y >= rows) {

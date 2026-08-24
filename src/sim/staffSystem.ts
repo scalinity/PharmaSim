@@ -24,7 +24,7 @@ import {
   verifyCatchRate,
   type StaffMember,
 } from "./staff";
-import type { GameState, PlacedFurniture } from "./state";
+import { activeStore, type GameState, type PlacedFurniture } from "./state";
 import { FILL_IGM, VERIFY_IGM, type RxWorkflow } from "./workflow";
 
 type Emit = (event: SimEvent) => void;
@@ -112,7 +112,7 @@ export class StaffSystem {
     private workflow: RxWorkflow,
     private customers: CustomerSystem,
   ) {
-    this.resizeGrid(state.store.grid.cols, state.store.grid.rows);
+    this.resizeGrid(activeStore(state).grid.cols, activeStore(state).grid.rows);
     // Back-register with the customer system here, so the two can never be
     // constructed half-wired (§9: stations manned by staff, not just the
     // player).
@@ -157,7 +157,7 @@ export class StaffSystem {
    */
   requestCounsel(state: GameState, counterId: string, baseIgm: number): StationWorker | null {
     if (this.counselors.has(counterId)) return null; // one chat per counter
-    const counter = state.store.furniture.find((f) => f.id === counterId);
+    const counter = activeStore(state).furniture.find((f) => f.id === counterId);
     if (!counter) return null;
     for (const agent of this.agentList) {
       const member = agent.member;
@@ -168,7 +168,7 @@ export class StaffSystem {
       // walking somewhere — or standing at any other post — is still free
       // to take the chat.
       if (agent.targetKind === "post" && agent.arrived && agent.targetId !== null) {
-        const post = state.store.furniture.find((f) => f.id === agent.targetId);
+        const post = activeStore(state).furniture.find((f) => f.id === agent.targetId);
         if (post?.defId === "vaccine_station" && this.customers.frontIsPaying(post.id)) {
           continue;
         }
@@ -216,7 +216,7 @@ export class StaffSystem {
   /** Assigned to a station that exists — "stationed", §9. */
   private isOnDuty(state: GameState, member: StaffMember): boolean {
     if (!member.assignment) return false;
-    return state.store.furniture.some((f) => f.id === member.assignment!.stationId);
+    return activeStore(state).furniture.some((f) => f.id === member.assignment!.stationId);
   }
 
   // --- Roster / layout / player churn ---
@@ -225,7 +225,7 @@ export class StaffSystem {
   rosterChanged(state: GameState, emit: Emit): void {
     for (let i = this.agentList.length - 1; i >= 0; i--) {
       const agent = this.agentList[i]!;
-      const member = state.store.staff.find((m) => m.id === agent.member.id);
+      const member = activeStore(state).staff.find((m) => m.id === agent.member.id);
       if (!member) {
         this.releaseTask(agent, emit);
         this.dropCounselor(agent.member.id);
@@ -234,7 +234,7 @@ export class StaffSystem {
         agent.member = member; // hydrated states carry fresh objects
       }
     }
-    for (const member of state.store.staff) {
+    for (const member of activeStore(state).staff) {
       if (this.agentList.some((a) => a.member.id === member.id)) continue;
       const door = this.doors[0]!;
       const agent: StaffAgent = {
@@ -271,10 +271,25 @@ export class StaffSystem {
    * indices meant different squares on the old column count.
    */
   gridChanged(state: GameState, emit: Emit): void {
-    const { cols, rows } = state.store.grid;
+    const { cols, rows } = activeStore(state).grid;
     if (cols === this.cols && rows === this.rows) return;
     this.resizeGrid(cols, rows);
     this.layoutChanged(state, emit);
+    this.agentList.forEach((agent, i) => this.placeAtBreak(agent, i, emit));
+  }
+
+  /**
+   * The active store itself changed (§19 morning switch): a different
+   * branch means a different floor *and* a different roster. Rebuild the
+   * cell-indexed world unconditionally — identical dimensions still cover
+   * different furniture — sync agents to the new store's staff, and settle
+   * whoever remains at the new break spots.
+   */
+  storeChanged(state: GameState, emit: Emit): void {
+    const { cols, rows } = activeStore(state).grid;
+    this.resizeGrid(cols, rows);
+    this.layoutChanged(state, emit);
+    this.rosterChanged(state, emit);
     this.agentList.forEach((agent, i) => this.placeAtBreak(agent, i, emit));
   }
 
@@ -282,7 +297,7 @@ export class StaffSystem {
   layoutChanged(state: GameState, emit: Emit): void {
     const { cols } = this;
     this.walk.fill(1);
-    for (const item of state.store.furniture) {
+    for (const item of activeStore(state).furniture) {
       const def = furnitureDef(item.defId);
       if (def.walkable) continue;
       const rect = footprintRect(def.cells, item.cellX, item.cellY, item.rot);
@@ -427,7 +442,7 @@ export class StaffSystem {
         agent.arrived &&
         state.workingStationId !== agent.targetId
       ) {
-        const post = state.store.furniture.find((f) => f.id === agent.targetId);
+        const post = activeStore(state).furniture.find((f) => f.id === agent.targetId);
         if (post?.defId === "vaccine_station" && this.customers.frontIsPaying(post.id)) {
           agent.idleIgm = 0;
           return;
@@ -514,7 +529,7 @@ export class StaffSystem {
     }
 
     if (agent.targetKind !== "post" || !agent.targetId) return;
-    const station = state.store.furniture.find((f) => f.id === agent.targetId);
+    const station = activeStore(state).furniture.find((f) => f.id === agent.targetId);
     if (!station) return;
 
     if (station.defId === "fill_bench" && member.role === "tech") {
@@ -571,7 +586,7 @@ export class StaffSystem {
 
   private assignedStation(state: GameState, member: StaffMember): PlacedFurniture | null {
     if (!member.assignment) return null;
-    return state.store.furniture.find((f) => f.id === member.assignment!.stationId) ?? null;
+    return activeStore(state).furniture.find((f) => f.id === member.assignment!.stationId) ?? null;
   }
 
   /** Customers or scripts waiting on this station's queue(s). Pickups count
@@ -614,11 +629,11 @@ export class StaffSystem {
       bestNeed = this.stationNeed(assigned);
       if (bestNeed > 0) best = assigned;
     }
-    for (const item of state.store.furniture) {
+    for (const item of activeStore(state).furniture) {
       if (!FRONT_DEFS.has(item.defId)) continue;
       if (item.id === assigned?.id) continue;
       if (item.id === state.workingStationId) continue;
-      const owned = state.store.staff.some(
+      const owned = activeStore(state).staff.some(
         (m) => m.id !== member.id && m.assignment?.stationId === item.id,
       );
       if (owned) continue;
@@ -648,11 +663,11 @@ export class StaffSystem {
   ): PlacedFurniture | null {
     let best: PlacedFurniture | null = null;
     let bestNeed = 0;
-    for (const item of state.store.furniture) {
+    for (const item of activeStore(state).furniture) {
       if (item.defId !== "vaccine_station") continue;
       if (item.id === state.workingStationId) continue;
       if (item.id !== assigned?.id) {
-        const owned = state.store.staff.some(
+        const owned = activeStore(state).staff.some(
           (m) => m.id !== member.id && m.assignment?.stationId === item.id,
         );
         if (owned) continue;
@@ -674,7 +689,7 @@ export class StaffSystem {
   private restockTarget(state: GameState, agent: StaffAgent): PlacedFurniture | null {
     let best: PlacedFurniture | null = null;
     let bestDist = Infinity;
-    for (const item of state.store.furniture) {
+    for (const item of activeStore(state).furniture) {
       if (!RESTOCK_DEFS.has(item.defId)) continue;
       const units = restockableUnits(state, item.id);
       if (units <= 0) continue;
@@ -862,7 +877,7 @@ export class StaffSystem {
   private settleFacing(state: GameState, agent: StaffAgent): void {
     const id = agent.targetId;
     if (!id) return;
-    const item = state.store.furniture.find((f) => f.id === id);
+    const item = activeStore(state).furniture.find((f) => f.id === id);
     if (!item) return;
     const [fx, fy] = FACING[item.rot]!;
     if (agent.targetKind === "shelf") agent.yaw = Math.atan2(-fx, -fy);

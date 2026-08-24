@@ -5,7 +5,7 @@
 
 import { DRUG_DEFS, type DrugDef } from "../data/drugs";
 import { hasFridge } from "./coldchain";
-import type { GameState } from "./state";
+import { networkStars, type GameState, type StoreState } from "./state";
 
 export interface LicenseDef {
   id: string;
@@ -95,12 +95,15 @@ export interface LicenseGate {
 export function licenseGates(state: GameState, def: LicenseDef): LicenseGate[] {
   const gates: LicenseGate[] = [];
   if (def.stars > 0) {
-    // repStars accumulates float deltas, so compare at the precision shown —
-    // a form must never read "you're at 2.0★" beside an unmet 2.0★ box.
-    const shown = Math.round(state.repStars * 10) / 10;
+    // The board judges the name by its best-known store (§19 local rep,
+    // networkStars). repStars accumulates float deltas, so compare at the
+    // precision shown — a form must never read "you're at 2.0★" beside an
+    // unmet 2.0★ box.
+    const stars = networkStars(state);
+    const shown = Math.round(stars * 10) / 10;
     gates.push({
       met: shown >= def.stars,
-      text: `${def.stars.toFixed(1)}★ standing — you're at ${state.repStars.toFixed(1)}★`,
+      text: `${def.stars.toFixed(1)}★ standing — you're at ${stars.toFixed(1)}★`,
     });
   }
   if (def.needsLicense) {
@@ -109,8 +112,11 @@ export function licenseGates(state: GameState, def: LicenseDef): LicenseGate[] {
     gates.push({ met, text: met ? `${name} — on the wall` : `${name} — not yet licensed` });
   }
   if (def.needsBranches !== undefined) {
-    // A second branch is a §19 purchase; until M14 the count is always one.
-    gates.push({ met: false, text: `${def.needsBranches} branches — you run 1` });
+    const count = state.stores.length;
+    gates.push({
+      met: count >= def.needsBranches,
+      text: `${def.needsBranches} branches — you run ${count}`,
+    });
   }
   const covered = state.cash >= def.cost;
   // Cash is exact to the cent; the shortfall reads in whole dollars.
@@ -134,22 +140,23 @@ export function canBuyLicense(state: GameState, def: LicenseDef): boolean {
 /**
  * Could this store fill a script for this drug today? Tier 2 needs L2; Tier 3
  * needs L3 and a controlled cabinet on the floor; refrigerated SKUs also need
- * a medical fridge to live in (§14). Vaccine doses are the §14 service's
- * stock, never script demand — no doctor writes a script for a flu shot.
+ * a medical fridge to live in (§14). Licenses are account-wide, equipment is
+ * per store (§12/§19) — so the store is named. Vaccine doses are the §14
+ * service's stock, never script demand — no doctor writes a script for a
+ * flu shot.
  */
-export function canFillDrug(state: GameState, def: DrugDef): boolean {
+export function canFillDrug(state: GameState, store: StoreState, def: DrugDef): boolean {
   if (def.category === "vaccines") return false;
-  if (def.refrigerated && !hasFridge(state)) return false;
+  if (def.refrigerated && !hasFridge(store)) return false;
   if (def.tier === 2) return ownsLicense(state, "L2");
   if (def.tier === 3) {
     return (
-      ownsLicense(state, "L3") &&
-      state.store.furniture.some((f) => f.defId === "cabinet_controlled")
+      ownsLicense(state, "L3") && store.furniture.some((f) => f.defId === "cabinet_controlled")
     );
   }
   return true;
 }
 
-export function fillableDrugs(state: GameState): DrugDef[] {
-  return DRUG_DEFS.filter((def) => canFillDrug(state, def));
+export function fillableDrugs(state: GameState, store: StoreState): DrugDef[] {
+  return DRUG_DEFS.filter((def) => canFillDrug(state, store, def));
 }
