@@ -287,37 +287,37 @@ export function planCityDay(state: GameState): CityDayPlan {
 
 /**
  * Weighted draw of one drug inside a routed category: each fillable SKU
- * pulls with its §25 demand weight. Pools are memoized on license coverage
- * (licenses owned + a cabinet or fridge on the floor) — the only inputs
- * that move a within-category weight; season and district scale whole
- * categories and cancel here. A mid-shift coverage change (cabinet sold,
- * license bought) still lands on the very next spawn. Null when the
+ * pulls with its §25 demand weight. Draw tables are memoized on license
+ * coverage (licenses owned + a cabinet or fridge on the floor) — the only
+ * inputs that move a within-category weight; season and district scale
+ * whole categories and cancel here. A mid-shift coverage change (cabinet
+ * sold, license bought) still lands on the very next spawn. Null when the
  * category has nothing fillable left — the caller degrades gracefully.
  */
-let poolKey = "";
-const categoryPools = new Map<string, { drugs: DrugDef[]; total: number }>();
+let drawKey = "";
+const categoryDraws = new Map<string, { drugs: DrugDef[]; total: number }>();
 
 export function drawScriptDrugIn(state: GameState, category: RxCategory): DrugDef | null {
   const cabinet = state.store.furniture.some((f) => f.defId === "cabinet_controlled");
   const key =
     state.licenses.join(",") + (cabinet ? "|cabinet" : "") + (hasFridge(state) ? "|fridge" : "");
-  if (key !== poolKey) {
-    poolKey = key;
-    categoryPools.clear();
+  if (key !== drawKey) {
+    drawKey = key;
+    categoryDraws.clear();
   }
-  let pool = categoryPools.get(category);
-  if (!pool) {
+  let draw = categoryDraws.get(category);
+  if (!draw) {
     const drugs = DRUG_DEFS.filter((def) => def.category === category && canFillDrug(state, def));
-    pool = { drugs, total: drugs.reduce((sum, def) => sum + def.demandWeight, 0) };
-    categoryPools.set(category, pool);
+    draw = { drugs, total: drugs.reduce((sum, def) => sum + def.demandWeight, 0) };
+    categoryDraws.set(category, draw);
   }
-  if (pool.drugs.length === 0) return null;
-  let u = Math.random() * pool.total;
-  for (const def of pool.drugs) {
+  if (draw.drugs.length === 0) return null;
+  let u = Math.random() * draw.total;
+  for (const def of draw.drugs) {
     u -= def.demandWeight;
     if (u <= 0) return def;
   }
-  return pool.drugs[0]!;
+  return draw.drugs[0]!;
 }
 
 // --- Observed-demand memory (§17 "learn your neighborhood") ---
