@@ -190,23 +190,20 @@ export function dcOrderTotal(state: GameState, lines: readonly OrderLine[]): num
   return round2(total);
 }
 
-/** §20 depot ordering gates: licenses are account-wide and apply as ever;
- *  the depot has no cabinet question (T3 stock sits boxed on its shelves),
- *  but the vans carry no cold chain — refrigerated SKUs order direct to
- *  each store's own fridge, where §14's capacity is enforced. */
+/** §20 depot ordering gates: the shared §12 license ladder, plus the one
+ *  depot-specific rule — the vans carry no cold chain, so refrigerated
+ *  SKUs order direct to each store's own fridge, where §14's capacity is
+ *  enforced. The controlled cabinet deliberately stays a *store* gate:
+ *  centrally-bought Tier-3 stock may land in a cabinet-less branch's
+ *  backroom, where it sits boxed and inert — canFillDrug keeps Tier-3
+ *  demand away from that store and nothing can shelve the units (the same
+ *  standing state clearControlled leaves). The depot is a warehouse, not
+ *  a dispensary. */
 export function dcSkuLock(state: GameState, skuId: string): string | null {
   const drug = DRUG_BY_ID.get(skuId);
   if (!drug) return null;
   if (drug.refrigerated) return "No cold chain on the vans — order direct to a store's fridge";
-  if (drug.category === "vaccines") {
-    if (!state.licenses.includes("L4")) return "Needs the Immunization Certification license";
-  } else if (drug.tier === 2 && !state.licenses.includes("L2")) {
-    return "Needs the Expanded Formulary license";
-  }
-  if (drug.tier === 3 && !state.licenses.includes("L3")) {
-    return "Needs the Controlled Substances license";
-  }
-  return null;
+  return licenseLock(state, drug);
 }
 
 // --- The wholesale catalog (§11, §12, §25) ---
@@ -251,20 +248,32 @@ export function categoryLabel(category: string): string {
   return CATEGORY_LABELS[category] ?? category;
 }
 
-/** §12/§14: Tier 2 needs L2; Tier 3 needs L3 and a cabinet *in this store*;
- *  refrigerated SKUs need a fridge here too, and the vaccine dose rides L4,
- *  not L2 (§25). Orders scope per branch (§19), so the store is named. */
-function rxLock(state: GameState, store: StoreState, def: DrugDef): string | null {
+/** The account-wide half of the §12 ordering gates: the license ladder
+ *  both the store form and the depot form climb (the vaccine dose rides
+ *  L4, not L2 — §25). One ladder on purpose: if a gate moved in only one
+ *  of the two, central purchasing would quietly sell what the store path
+ *  refuses. Per-store equipment stays with rxLock; the depot's own
+ *  no-cold-chain rule stays with dcSkuLock. */
+function licenseLock(state: GameState, def: DrugDef): string | null {
   if (def.category === "vaccines") {
     if (!state.licenses.includes("L4")) return "Needs the Immunization Certification license";
   } else if (def.tier === 2 && !state.licenses.includes("L2")) {
     return "Needs the Expanded Formulary license";
   }
-  if (def.tier === 3) {
-    if (!state.licenses.includes("L3")) return "Needs the Controlled Substances license";
-    if (!store.furniture.some((f) => f.defId === "cabinet_controlled")) {
-      return "Needs a controlled cabinet";
-    }
+  if (def.tier === 3 && !state.licenses.includes("L3")) {
+    return "Needs the Controlled Substances license";
+  }
+  return null;
+}
+
+/** §12/§14: the shared license ladder, then this store's own walls — Tier 3
+ *  needs a cabinet *here*, refrigerated SKUs a fridge *here*. Orders scope
+ *  per branch (§19), so the store is named. */
+function rxLock(state: GameState, store: StoreState, def: DrugDef): string | null {
+  const license = licenseLock(state, def);
+  if (license !== null) return license;
+  if (def.tier === 3 && !store.furniture.some((f) => f.defId === "cabinet_controlled")) {
+    return "Needs a controlled cabinet";
   }
   if (def.refrigerated && !hasFridge(store)) {
     return "Requires medical refrigeration";
