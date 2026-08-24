@@ -447,8 +447,11 @@ export function hydrate(file: SaveFile): GameState {
 // --- Validation: hand-edited and half-written files must be *refused*, with
 //     a sentence the player can act on, rather than crashing the game. ---
 
+// "doesn't carry X" reads correctly whether X arrives with an article ("a
+// store rating"), as a plural ("legacy moments") or bare ("settings") — the
+// old "it has no X" doubled up into "it has no a store rating".
 function reject(missing: string): never {
-  throw new Error(`That file isn't a PharmaSim save — it has no ${missing}.`);
+  throw new Error(`That file isn't a PharmaSim save — it doesn't carry ${missing}.`);
 }
 
 function requireObject(value: unknown, name: string): RawSave {
