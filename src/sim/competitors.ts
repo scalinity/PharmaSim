@@ -324,6 +324,12 @@ function pullScorePlayer(state: GameState): number {
  * transfer-in moment (§22).
  */
 function evaluatePools(state: GameState, emit: Emit): void {
+  // "Sustained" is literal: a full trailing week of fill rates must be on
+  // the books before a pool can be won. An empty or short history reads as
+  // availability 1.0 by benefit of the doubt (§17), and a run of dev-
+  // skipped days never plays a close — without this gate, skipping would
+  // score a store on a week it never worked.
+  if (state.store.fillRate7d.length < 7) return;
   const playerScore = pullScorePlayer(state);
   const candidates: { poolId: string; pool: PatientPool; gap: number }[] = [];
   for (const poolId of Object.keys(state.patientPools)) {
