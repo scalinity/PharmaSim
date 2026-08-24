@@ -71,6 +71,9 @@ export function createReportsPanel(sim: Sim, bus: EventBus<SimEvent>): ReportsPa
   // rep, home-district share — so "which branch needs me tomorrow" reads in
   // one glance. Hidden until a second store exists.
   const netList = h("div", { cls: "reports__net" });
+  // closeDay charges every roster in the network, but each panel's payroll
+  // chip is branch-scoped — this is the one surface with the total.
+  const netPayroll = h("p", { cls: "reports__foot" });
   const netSection = h("div", { cls: "reports__netwrap" }, [
     h("p", { cls: "reports__txhead" }, [h("span", { text: "The network" })]),
     h("div", { cls: "reports__nethead", attrs: { "aria-hidden": "true" } }, [
@@ -81,6 +84,7 @@ export function createReportsPanel(sim: Sim, bus: EventBus<SimEvent>): ReportsPa
       h("span", { cls: "reports__netcol", text: "home share" }),
     ]),
     netList,
+    netPayroll,
   ]);
   netSection.hidden = true;
 
@@ -150,6 +154,14 @@ export function createReportsPanel(sim: Sim, bus: EventBus<SimEvent>): ReportsPa
         (summary !== null && (summary.repDelta < 0 || summary.stockOuts > 0));
       refs.root.classList.toggle("reports__netrow--hurting", hurting);
     }
+    let payroll = 0;
+    for (const store of state.stores) {
+      for (const member of store.staff) payroll += member.dailyWage;
+    }
+    netPayroll.textContent =
+      payroll > 0
+        ? `Network payroll ${money(payroll)} a day, every roster included`
+        : "No payroll anywhere — every floor is yours";
   }
 
   // §18 "transfers in/out this week": named chronic regulars and the reason
