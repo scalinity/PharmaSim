@@ -20,6 +20,7 @@ import { startLoop } from "./core/loop";
 import { COMPETITOR_DEFS } from "./data/competitors";
 import { DEPOT_ID, DEPOT_SITE, DISTRICT_MAPS, DISTRICTS, STORE_SITE } from "./data/districts";
 import { createStorage } from "./platform/storage";
+import { verifyAssistOnline } from "./sim/aitech";
 import { CustomerSystem } from "./sim/customers";
 import type { SimEvent } from "./sim/events";
 import { hydrate, migrate, serialize, type SaveFile } from "./sim/save";
@@ -533,6 +534,8 @@ function updateOverlays(): void {
   const fillDepth = sim.workflow.fillDepth;
   const verifyDepth = sim.workflow.verifyDepth;
   const autoDepth = sim.workflow.autoFillDepth;
+  const assistDepth = sim.workflow.assistDepth;
+  const assistOn = verifyAssistOnline(state, activeStore(state));
 
   for (const item of activeStore(state).furniture) {
     if (item.defId === "counter_register") {
@@ -574,6 +577,13 @@ function updateOverlays(): void {
       consider(item.id, verifyDepth);
       const [wx, wz] = cellToWorld(cols, rows, item.cellX, item.cellY);
       stack(item.id, wx, wz, verifyDepth, "verify");
+      if (assistOn) {
+        // §21 legibility: the assistant's scans ride their own lane beside
+        // the desk — offset to the desk's local side (the dispenser's
+        // auto-fill stack pattern), so Tier-1/2 visibly skip the pharmacist.
+        const [fx, fy] = FACING[item.rot]!;
+        stack(`${item.id}#ai`, wx - fy * 0.9, wz + fx * 0.9, assistDepth, "AI verify");
+      }
     } else if (item.defId === "dispenser_robotic") {
       // The machine's own lane (§6): same card stack, same legibility.
       consider(item.id, autoDepth);
@@ -698,4 +708,14 @@ if (bootIntoPlay) {
   loopHooks,
   shell,
   storage,
+  // Dev-only fast-forward harness (milestone 16, README dev keys): runs a
+  // scratch 56-day arc off-screen on its own state — it never touches the
+  // running sim or the save. The dynamic import keeps every byte of it out
+  // of packaged builds.
+  ...(import.meta.env.DEV
+    ? {
+        harness: (seed = 1, days = 56) =>
+          import("./sim/harness").then((m) => m.runHarness(seed, days)),
+      }
+    : {}),
 };

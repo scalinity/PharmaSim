@@ -15,8 +15,9 @@ import { activeStore, type CityState, type CompetitorState, type GameState, type
 // --- §17 generation ---
 
 /** Total §25 demand weight per category — the pool a category's daily
- *  scripts spread across, licensed or not. */
-const CATEGORY_WEIGHT = {} as Record<RxCategory, number>;
+ *  scripts spread across, licensed or not. Exported for the §21 forecast,
+ *  which reads the same generator this file routes from. */
+export const CATEGORY_WEIGHT = {} as Record<RxCategory, number>;
 for (const def of DRUG_DEFS) {
   CATEGORY_WEIGHT[def.category] = (CATEGORY_WEIGHT[def.category] ?? 0) + def.demandWeight;
 }
@@ -32,8 +33,9 @@ function nursingBatchDay(day: number): boolean {
 
 /** One district's §17 daily script generation for one category:
  *  pop × prevalence, plus flat facility bonuses — the nursing home's
- *  arriving ×7 on batch day and not at all otherwise. */
-function categoryScripts(district: District, category: RxCategory, day: number): number {
+ *  arriving ×7 on batch day and not at all otherwise. Exported for the
+ *  §21 forecast (the "true generator" §26 names). */
+export function categoryScripts(district: District, category: RxCategory, day: number): number {
   let perDay = (district.population / 1000) * (district.prevalence[category] ?? 0);
   for (const facility of district.facilities) {
     const bonus = facility.bonus[category] ?? 0;
@@ -183,9 +185,13 @@ export function districtShares(state: GameState, districtId: string): DistrictSh
  * store at 2.5★ (A = 0.85 at home / 0.675 next door / 0.57 across town,
  * shares ≈.28 / .19–.24 / .15–.19 against the four §18 rivals) routes
  * ≈13 OTC + ≈7 Rx visitors a day — 20/day on the §7 mix, no cliff.
+ *
+ * M16 balancing: both +20% from the M13 0.125 / 0.3 — the launch revenue
+ * ceiling could not fund the §26 arc (docs/balance-notes.md). The §26
+ * baseline door reads ≈24/day now.
  */
-const CAPTURE_OTC = 0.125;
-const CAPTURE_RX = 0.3;
+export const CAPTURE_OTC = 0.15;
+export const CAPTURE_RX = 0.36;
 
 // --- The day plan (consumed by sim/customers.ts) ---
 

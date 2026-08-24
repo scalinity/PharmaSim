@@ -11,6 +11,7 @@
 import type { RxCategory } from "../data/districts";
 import { DRUG_DEFS, type DrugDef } from "../data/drugs";
 import { OTC_DEFS } from "../data/otc";
+import { assistCoversDrug, verifyAssistOnline } from "./aitech";
 import {
   OTC_TALLY_KEY,
   recordSeen,
@@ -227,10 +228,23 @@ export function resolveBranchDay(
 
   const crew = crewProfile(store);
 
-  // The §19 aggregate the receipt page quotes.
+  // §21: with the verification assistant on (owned + a desk standing),
+  // Tier-1/2 scripts don't spend the pharmacist's verifies — only the
+  // Tier-3/refrigerated stream still queues for them. Without it, every
+  // script needs all three stations, exactly as before.
+  const assist = verifyAssistOnline(state, store);
+
+  // The §19 aggregate the receipt page quotes: the main Rx stream's ceiling.
   const capacity =
-    Math.min(crew.fills, crew.verifies, crew.checkouts) * crew.managerFactor;
+    (assist
+      ? Math.min(crew.fills, crew.checkouts)
+      : Math.min(crew.fills, crew.verifies, crew.checkouts)) * crew.managerFactor;
   const rxBudget = Math.floor(capacity);
+  /** Scripts the pharmacist must still sign (everything, without an
+   *  assistant; Tier-3/refrigerated with one). */
+  const rxVerifiedBudget = assist
+    ? Math.floor(Math.min(crew.fills, crew.verifies, crew.checkouts) * crew.managerFactor)
+    : rxBudget;
   const checkoutBudget = Math.floor(crew.checkouts * crew.managerFactor);
 
   // Whole customers out of the routed expectations, shuffled so no district
@@ -276,6 +290,7 @@ export function resolveBranchDay(
     return drugs;
   };
 
+  let rxVerifiedServed = 0;
   for (const script of scripts) {
     recordSeen(state, script.districtId, script.category);
     if (rxServed >= rxBudget) {
@@ -287,11 +302,20 @@ export function resolveBranchDay(
       stockOuts++;
       continue;
     }
+    // §21: the assistant signs Tier-1/2 itself; a script it won't touch
+    // still needs the pharmacist's verify budget.
+    const assisted = assist && assistCoversDrug(drug);
+    if (!assisted && rxVerifiedServed >= rxVerifiedBudget) {
+      capacityMissed++; // the pharmacist's pile outlasted the day
+      continue;
+    }
     takeUnit(store, drug.id);
     recordSale(store, drug.id, 1);
     rxServed++;
+    if (!assisted) rxVerifiedServed++;
     gross += drug.reimbursement + COPAY;
-    if (Math.random() < incidentRate) {
+    // §26: AI assist catch 100 — an assisted script never reaches a bag wrong.
+    if (!assisted && Math.random() < incidentRate) {
       incidents++;
       refunds += drug.reimbursement + COPAY;
     }
@@ -383,7 +407,9 @@ export function resolveBranchDay(
     hadPharmacist: crew.hadPharmacist,
     // The Rx stream was zeroed while the register still ran — true with no
     // pharmacist to verify OR no tech to fill (§19), not the pharmacist
-    // alone: the receipt names the missing hands off hadPharmacist.
+    // alone: the receipt names the missing hands off hadPharmacist. With a
+    // §21 assistant the pharmacist drops out of the main stream's minimum —
+    // a tech-and-cashier crew honestly serves Tier-1/2.
     otcOnly: rxBudget === 0 && checkoutBudget > 0,
     underRenovation: false,
   };

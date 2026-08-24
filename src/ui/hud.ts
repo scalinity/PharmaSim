@@ -6,6 +6,7 @@
 
 import type { EventBus } from "../core/bus";
 import { DAYS_PER_SEASON, dayProgress, formatClock, seasonForDay, type Season } from "../core/clock";
+import { verifyAssistOfflineReason } from "../sim/aitech";
 import { competitorDef, driftHeadline } from "../data/competitors";
 import { districtById } from "../data/districts";
 import { drugDef } from "../data/drugs";
@@ -494,6 +495,14 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     const refund = Math.round(def.cost / 2);
     sim.dispatch({ type: "furniture.sell", id: selection.id });
     toast(`Sold the ${def.name.toLowerCase()} — $${refund.toLocaleString("en-US")} refunded`);
+    // §21: the assistant sees through the verify desk — selling the last
+    // one takes it offline, and the reason must be said where it happened.
+    if (def.id === "verify_desk") {
+      const reason = verifyAssistOfflineReason(sim.snapshot, activeStore(sim.snapshot));
+      if (reason !== null) {
+        toast(`AI verification assistant offline — ${reason.toLowerCase()}`, "error");
+      }
+    }
   }, { variant: "secondary", cls: "pill--small" });
   const contextCard = Panel({ cls: "context" }, [
     contextName,
@@ -1035,6 +1044,18 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
       } for ${to ? storeLabel(sim.snapshot, to) : e.toStoreId} in the morning`,
     );
   });
+  // --- AI endgame tech (§21, milestone 16) ---
+
+  bus.on("aitech.verifyAssistBought", (e) => {
+    const store = storeById(sim.snapshot, e.storeId);
+    toast(
+      `AI verification assistant installed${store ? ` at ${storeName(sim.snapshot, store)}` : ""} — Tier-1/2 scripts verify themselves`,
+    );
+  });
+  bus.on("aitech.forecastBought", () => {
+    toast("AI demand forecasting is live — Orders gains the forecast view");
+  });
+
   // truck.arrived stays off the toasts on purpose — the run's one line
   // rides the ticker (§20: quietly), and the morning already speaks.
   bus.on("reorder.unlocked", (e) => {

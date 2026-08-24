@@ -292,20 +292,20 @@ queueing system the player can watch and diagnose (pillar 2).
   the end-of-day receipt groups them (revenue: Rx reimbursements, OTC sales, copays, vaccines;
   costs: wholesale orders, wages, rent, utilities, loan interest, refunds).
 - **Rx money — fixed reimbursement**: each Rx SKU has `wholesale` and `reimbursement` (§25).
-  Margin = reimbursement − wholesale; the patient's flat $10 copay is *separate* revenue on top
+  Margin = reimbursement − wholesale; the patient's flat $12 copay is *separate* revenue on top
   of it. The *player never sets Rx prices* (insurer-set flavor; no claims system exists). Copay
   and reimbursement both credit at pickup (same-day settlement — no receivables).
   Shortages raise `wholesale` (§16) while reimbursement stays fixed → margins compress; a few
   SKUs can go *underwater* during shortages, and the ordering UI shows per-SKU margin so the
   player can choose not to restock money-losers (or eat the loss for reputation).
 - **OTC money**: player sets a price slider per SKU, 0.8×–1.5× of MSRP (default 1.0×). Wholesale
-  = 55% of MSRP. Bargain archetypes skip items >1.15×; all archetypes skip >1.35×. The store's
+  = 46% of MSRP. Bargain archetypes skip items >1.15×; all archetypes skip >1.35×. The store's
   **price index** (avg multiplier) feeds city attractiveness (§17).
-- **Fixed costs**: rent per store per day (district-dependent, §17; Old Town $80), utilities $20
+- **Fixed costs**: rent per store per day (district-dependent, §17; Old Town $64), utilities $20
   base + $6 per powered equipment (fridge, robotic dispenser, vaccine station, generator idle $2).
 - **Loans** (realistic, opt-in): the bank offers a credit line once rep ≥ 3.0★ — draw up to
-  20× trailing-7-day average gross (cap $50,000), interest 0.4%/day on balance, auto minimum
-  payment 2%/day. **Family loan** (soft-fail): if cash < $0 at close, Aunt Rosa covers to
+  24× trailing-7-day average gross (cap $60,000), interest 0.32%/day on balance, auto minimum
+  payment 1.6%/day. **Family loan** (soft-fail): if cash < $0 at close, Aunt Rosa covers to
   +$2,500 — interest-free, auto-repaid at 15% of daily profit, rep −0.3 ("word gets around"),
   no second loan until repaid. There is no bankruptcy/game-over.
 - **Starting money**: $12,000 cash, day 1, Old Town store with starting layout and a small
@@ -333,10 +333,10 @@ queueing system the player can watch and diagnose (pillar 2).
 |---|---|---|---|---|
 | L1 | Community Pharmacy | — | start | OTC retail + Tier-1 formulary |
 | L2 | Expanded Formulary | $8,000 | 2.0★ | Tier-2 Rx SKUs |
-| L3 | Controlled Substances | $20,000 | 3.0★ | Tier-3 SKUs (need cabinet per store) |
-| L4 | Immunization Certification | $12,000 | 2.5★ | vaccine station + service (§14) |
-| L5 | Multi-Branch Operation | $50,000 | 4.0★ | buying additional branches (§19) |
-| L6 | Distribution Operations | $40,000 | L5 + 2 branches | distribution center + trucks (§20) |
+| L3 | Controlled Substances | $16,000 | 3.0★ | Tier-3 SKUs (need cabinet per store) |
+| L4 | Immunization Certification | $9,600 | 2.5★ | vaccine station + service (§14) |
+| L5 | Multi-Branch Operation | $40,000 | 4.0★ | buying additional branches (§19) |
+| L6 | Distribution Operations | $32,000 | L5 + 2 branches | distribution center + trucks (§20) |
 
 Licenses are account-wide; per-store equipment (cabinet, fridge, station) is still needed locally.
 The license panel frames each as a certificate on the office wall (§28).
@@ -351,8 +351,8 @@ the rest of the current day (visible scaffolding, small drama, no revenue).
 |---|---|---|---|---|
 | Gen 1 | The Founding Store | start | walnut shelving, brass register, checkerboard floor, hand-painted sign | — |
 | Gen 2 | The Family Business | $6,000 | teal linoleum, fluorescent strips, chrome fixtures | — |
-| Gen 3 | The Retail Chain Era | $18,000 | gray-blue retail gondolas, drop ceiling, barcode registers (visual) | — |
-| Gen 4 | The Modern Clinic | $40,000 | mint + white + glass, wood accents, pendant lights | robotic dispenser, AI modules (§21) |
+| Gen 3 | The Retail Chain Era | $14,400 | gray-blue retail gondolas, drop ceiling, barcode registers (visual) | — |
+| Gen 4 | The Modern Clinic | $32,000 | mint + white + glass, wood accents, pendant lights | robotic dispenser, AI modules (§21) |
 
 Renovating the *first* store for the first time and reaching Gen 4 anywhere both trigger legacy
 moments (§22).
@@ -367,8 +367,8 @@ moments (§22).
   with a generator, nothing happens except the hum. The generator is pure insurance — exactly the
   memorable kind (pillar 1).
 - **Vaccinations** (L4 + fridge + vaccine_station + a pharmacist on duty): walk-in vaccine
-  customers (3–6/day; ×4 in flu season) queue at the station for a quick 15 igm service, net
-  +$22 each, +0.01 rep. If the pharmacist is busy verifying, vaccine queue waits — a real
+  customers (4–7/day; ×4 in flu season) queue at the station for a quick 15 igm service, net
+  +$27 each, +0.01 rep. If the pharmacist is busy verifying, vaccine queue waits — a real
   staffing tension between scripts and shots.
 
 ## §15 Reputation
@@ -407,12 +407,12 @@ onward (the store starts in Old Town with the city implicit; the map view arrive
 
 | district | pop | skew | prevalence highlights | facilities | daily rent |
 |---|---|---|---|---|---|
-| Old Town | 6,800 | older mixed | cardiovascular ↑, diabetes → | small clinic | $80 |
-| Riverside | 9,400 | young families | pediatric ↑, allergy ↑ | pediatric office | $110 |
-| University Heights | 11,200 | students | acute ↑, mental health → | campus urgent care | $120 |
-| Sunset Glen | 5,100 | retirees | chronic ↑↑ (cardio, diabetes, anticoag) | nursing home | $95 |
-| Medical District | 7,600 | mixed | specialty ↑, post-hospital scripts ↑ | hospital + specialists | $190 |
-| Downtown | 12,500 | working adults | OTC convenience ↑↑, GI/stress → | walk-in clinic | $240 |
+| Old Town | 6,800 | older mixed | cardiovascular ↑, diabetes → | small clinic | $64 |
+| Riverside | 9,400 | young families | pediatric ↑, allergy ↑ | pediatric office | $88 |
+| University Heights | 11,200 | students | acute ↑, mental health → | campus urgent care | $96 |
+| Sunset Glen | 5,100 | retirees | chronic ↑↑ (cardio, diabetes, anticoag) | nursing home | $76 |
+| Medical District | 7,600 | mixed | specialty ↑, post-hospital scripts ↑ | hospital + specialists | $152 |
+| Downtown | 12,500 | working adults | OTC convenience ↑↑, GI/stress → | walk-in clinic | $192 |
 
 - **Demand generation**: each district each day generates Rx scripts per category
   (`pop × prevalence[cat] × seasonMult × noise`) plus OTC visit intent. Facilities add flat
@@ -453,7 +453,7 @@ map with their own star ratings:
 ## §19 Multi-branch
 
 - With **L5**, empty lots in any district can be bought (site cost = 300× daily rent; e.g.
-  Old Town $24k, Downtown $72k) + $15,000 fit-out (starting layout, Gen 1). Each branch has its
+  Old Town $19.2k, Downtown $57.6k) + $12,000 fit-out (starting layout, Gen 1). Each branch has its
   own grid, stock, staff, era, and local reputation (starting 2.5★).
 - **Visited branch** = full 3D sim as normal. **Unvisited branches** resolve at day end:
   - `capacity = min(fills, verifies, checkouts)` from assigned staff throughput
@@ -469,10 +469,10 @@ map with their own star ratings:
 
 ## §20 Distribution and logistics
 
-- **L6 + Distribution Center** ($60,000 building on the city map): unlocks **central
+- **L6 + Distribution Center** ($48,000 building on the city map): unlocks **central
   purchasing** — one consolidated morning order at −12% wholesale, delivered to DC stock. The
   DC price *replaces* the reputation supplier-tier discount (§11); discounts never stack.
-- **Trucks** ($8,000 each, garage at the DC): each truck runs one morning route, capacity 400
+- **Trucks** ($6,400 each, garage at the DC): each truck runs one morning route, capacity 400
   units, visiting up to 3 stops. The player drafts routes (drag stores into a truck's list);
   goods arrive as the truck reaches each store — visible driving the city roads during the shift
   (flavor; arrival is guaranteed same-day).
@@ -625,7 +625,9 @@ members (grow as needed, keep names in this style): `customer.spawned`, `custome
 ## §25 Drug and OTC catalogs (content backbone)
 
 All names are real US generics (no brand names). Numbers are launch values — §26's balance bands
-govern; the M16 balancing pass may adjust ±20% freely. `w` = wholesale $, `r` = reimbursement $.
+govern; the M16 balancing pass may adjust ±20% freely, and it did: every `r` below runs +18%
+(rounded) in `data/drugs.ts`, which is authoritative (docs/balance-notes.md). `w` = wholesale $,
+`r` = reimbursement $.
 
 ### Tier 1 — Community Pharmacy license (start)
 
@@ -696,9 +698,9 @@ govern; the M16 balancing pass may adjust ±20% freely. `w` = wholesale $, `r` =
 | amphetamineXR20 | Amphetamine salts XR 20 mg | mentalHealth | 7 | 24 | 2 | — |
 | methylphenidate10 | Methylphenidate 10 mg | mentalHealth | 6 | 20 | 1 | — |
 
-49 Rx SKUs total. Balance bands by group: Tier 1 margin $4–10 · Tier 2 $7–16 · refrigerated
-$17–35 · Tier 3 $11–18. Confusable pairs are real look-alike/sound-alike pairs; every
-`confusableWith` id exists in the catalog.
+49 Rx SKUs total. Balance bands by group (post-M16): Tier 1 margin $5–14 · Tier 2 $8–22 ·
+refrigerated $27–57 · Tier 3 $14–21. Confusable pairs are real look-alike/sound-alike pairs;
+every `confusableWith` id exists in the catalog.
 
 ### OTC catalog (front store; player-priced, §10)
 
@@ -735,29 +737,29 @@ $17–35 · Tier 3 $11–18. Confusable pairs are real look-alike/sound-alike pa
 | sim tick | 100 ms scaled; speeds pause/1×/2× |
 | in-game day | 08:00–20:00 = 720 igm; 1 real s = 2.4 igm at 1× (~5 min/day) |
 | calendar | 7-day weeks · 14-day seasons · 56-day year |
-| starting cash / stock | $12,000 · starter stock worth $1,500 (T1 spread + top OTC) |
-| base visitors (Old Town, 2.5★) | 20/day; `repMult = 0.4 + 0.24 × stars`; concurrent NPC cap 40 |
+| starting cash / stock | $12,000 · starter stock ~$1,400 (T1 spread + top OTC) |
+| base visitors (Old Town, 2.5★) | ≈24/day; `repMult = 0.4 + 0.24 × stars`; concurrent NPC cap 40 |
 | customer mix | 60% OTC / 35% Rx / 5% vaccine (when unlocked) |
 | patience (igm) | Hurried 45 · Steady 90 · Bargain 90 · Chatty 150; seated ×0.5 drain |
 | task durations (igm) | fill 6 · verify 8 · checkout 4 · counsel 10 · vaccine 15; ×speed curve [1.4,1.2,1.0,0.85,0.7] |
 | tech fill error % by accuracy | 7.5 / 6.0 / 4.5 / 3.0 / 1.5 (player picks bins manually; Meticulous 0) |
 | pharmacist verify catch % by accuracy | 75 / 80 / 85 / 90 / 95; solo-owner implicit catch 90; AI assist 100 |
 | rep deltas | +0.02 serve · +0.03 counsel · +0.01 vaccine · −0.06 walkout (Hurried −0.09) · −0.08 stock-out script · −0.15 dispensed error · −0.3 family loan · 1%/day drift → 2.5 |
-| wages $/day | cashier 90 · tech 140 · pharmacist 280 · manager 220; pool 3/role, refresh Monday |
-| copay / OTC | copay $10 flat · OTC wholesale 55% MSRP · slider 0.8–1.5× · balk 1.15× (Bargain) / 1.35× (all) |
+| wages $/day | cashier 72 · tech 112 · pharmacist 224 · manager 176; pool 3/role, refresh Monday |
+| copay / OTC | copay $12 flat · OTC wholesale 46% MSRP · slider 0.8–1.5× · balk 1.15× (Bargain) / 1.35× (all) |
 | fixed costs | rent per district (§17) · utilities $20 + $6/powered equipment |
-| bank loan | unlock 3.0★ · max 20× 7-day avg gross (cap $50k) · 0.4%/day interest · 2%/day min payment |
+| bank loan | unlock 3.0★ · max 24× 7-day avg gross (cap $60k) · 0.32%/day interest · 1.6%/day min payment |
 | family loan | +$2,500 at cash<0 · repay 15% of daily profit · rep −0.3 |
 | supplier tiers | −4% wholesale at 2.0★ · −8% at 4.0★ · DC −12% (§20) |
 | expansions | $4k → 13×7 · $7k → 13×10 · $12k → 16×10 · $16k → 16×12 |
-| eras | Gen 2 $6k · Gen 3 $18k · Gen 4 $40k (per store; renovation closes store 1 day) |
-| licenses | L2 $8k/2.0★ · L3 $20k/3.0★ · L4 $12k/2.5★ · L5 $50k/4.0★ · L6 $40k/L5+2 branches |
-| branch purchase | site 300× district daily rent + $15k fit-out |
+| eras | Gen 2 $6k · Gen 3 $14.4k · Gen 4 $32k (per store; renovation closes store 1 day) |
+| licenses | L2 $8k/2.0★ · L3 $16k/3.0★ · L4 $9.6k/2.5★ · L5 $40k/4.0★ · L6 $32k/L5+2 branches |
+| branch purchase | site 300× district daily rent + $12k fit-out |
 | off-screen throughput /day | tech 35 fills · pharmacist 50 verifies · cashier 60 checkouts (×speed curve); managerFactor 0.6 / 0.9+0.02×statTotal |
-| DC / trucks | DC $60k · truck $8k · capacity 400 units · ≤3 stops/morning |
+| DC / trucks | DC $48k · truck $6.4k · capacity 400 units · ≤3 stops/morning |
 | fridge | $3,500 · 40 refrigerated units each |
 | events | rush ×1.6 (12–14, 17–19) · shortage 1–2/season, 4–8 days, wholesale ×1.5, fills capped 60% · storm 1–2/yr, outage 2–5 igh, visitors ×0.6 · flu: Rx resp+abx ×1.8, OTC coldflu ×3, vaccines ×4, visitors ×1.2 · spring allergy ×2.5 OTC allergy · fall pediatric abx ×1.4 · summer visitors ×0.9 |
-| vaccines | walk-ins 3–6/day · net +$22 (reimb $30 − dose $8) · 15 igm |
+| vaccines | walk-ins 4–7/day · net +$27 (reimb $35 − dose $8) · 15 igm |
 | transfers | 2 bad experiences move a chronic patient pool; weekly evaluation |
 | competitor drift | every 28 days, weakest rival improves one notch; shortage: reliability −0.15 |
 | AI forecast | requires 28 days history · ±10% noise on true generator · 7-day horizon |

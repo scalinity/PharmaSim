@@ -19,8 +19,9 @@ import {
 
 // --- §26 numbers ---
 
-export const DC_COST = 60_000;
-export const TRUCK_COST = 8_000;
+// M16 balancing: both −20% from the launch $60k/$8k (docs/balance-notes.md).
+export const DC_COST = 48_000;
+export const TRUCK_COST = 6_400;
 export const TRUCK_CAPACITY = 400;
 export const TRUCK_MAX_STOPS = 3;
 /** The garage's bays — the writer-side cap save validation bounds against.

@@ -6,6 +6,13 @@ import { DAY_START_IGM } from "../core/clock";
 import type { Rot } from "../core/grid";
 import { DISTRICTS } from "../data/districts";
 import { EXPANSIONS, furnitureDef } from "../data/furniture";
+import {
+  FORECAST_COST,
+  forecastLock,
+  hasVerifyAssist,
+  VERIFY_ASSIST_COST,
+  verifyAssistLock,
+} from "./aitech";
 import { coldClampUnits, hasFridge } from "./coldchain";
 import { advanceMarket } from "./competitors";
 import {
@@ -124,6 +131,11 @@ export type Command =
   /** Draft a §20 branch→branch move; it compiles onto the first van that
    *  can take it (pickup at source, drop at target, within capacity). */
   | { type: "transfer.create"; fromStoreId: string; toStoreId: string; skuId: string; units: number }
+  // --- AI endgame tech (§21; per-store and account-wide, like the deeds) ---
+  /** Buy the verification assistant for one Gen 4 store with a verify desk. */
+  | { type: "aitech.buyVerifyAssist"; storeId: string }
+  /** Buy account-wide demand forecasting (any Gen 4 store + 28 days history). */
+  | { type: "aitech.buyForecast" }
   // --- App shell (§23, §24) ---
   /** Reduced motion is the only live setting; volumes wait for milestone 17. */
   | { type: "settings.set"; reducedMotion: boolean }
@@ -680,6 +692,36 @@ export function handleCommand(
         units,
       });
       emit({ type: "truck.routeChanged", truckId: truck.id });
+      return;
+    }
+    case "aitech.buyVerifyAssist": {
+      if (state.phase === "close") return;
+      const store = scopedStore(state, command.storeId);
+      if (!store || hasVerifyAssist(state, store.id)) return;
+      // The same gates the module card reads (§21): Gen 4, a verify desk,
+      // and the fee — a refused purchase is a silent no-op like every other.
+      if (verifyAssistLock(state, store) !== null) return;
+      state.aitech.verifyAssist.push(store.id);
+      state.stats[`aitech.verify.${store.id}`] = state.day;
+      post(state, "aitech.purchase", -VERIFY_ASSIST_COST, emit);
+      // §22: the first AI module on the account is the moment.
+      recordMoment(state, "ai_modules", emit);
+      emit({
+        type: "aitech.verifyAssistBought",
+        storeId: store.id,
+        cost: VERIFY_ASSIST_COST,
+        day: state.day,
+      });
+      return;
+    }
+    case "aitech.buyForecast": {
+      if (state.phase === "close" || state.aitech.forecast) return;
+      if (forecastLock(state) !== null) return;
+      state.aitech.forecast = true;
+      state.stats["aitech.forecast"] = state.day;
+      post(state, "aitech.purchase", -FORECAST_COST, emit);
+      recordMoment(state, "ai_modules", emit);
+      emit({ type: "aitech.forecastBought", cost: FORECAST_COST, day: state.day });
       return;
     }
     case "settings.set": {

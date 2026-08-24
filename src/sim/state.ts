@@ -47,7 +47,8 @@ export interface BranchDaySummary {
   served: number;
   /** min(fills, verifies, checkouts) × managerFactor — the crew's ceiling
    *  on the *Rx stream*; OTC serves against the larger checkout budget, so
-   *  the receipt labels this "Rx capacity". */
+   *  the receipt labels this "Rx capacity". A §21 assistant takes verifies
+   *  out of the main stream's minimum (Tier-3/refrigerated still queue). */
   capacity: number;
   rxFills: number;
   otcUnits: number;
@@ -162,6 +163,21 @@ export function freshDc(): DcState {
 export interface LegacyEntry {
   id: string;
   day: number;
+}
+
+/** §21/§24 AI endgame tech (M16): which stores run the verification
+ *  assistant, and whether the account owns demand forecasting. Ownership
+ *  only — the live "is it working" checks (a verify desk still standing)
+ *  read the floor through sim/aitech.ts. */
+export interface AiTechState {
+  /** Store ids owning the per-store verification assistant. */
+  verifyAssist: string[];
+  /** The account-wide demand forecast is bought. */
+  forecast: boolean;
+}
+
+export function freshAiTech(): AiTechState {
+  return { verifyAssist: [], forecast: false };
 }
 
 /** One §16 regional shortage: an Rx category squeezed for a run of days
@@ -416,6 +432,8 @@ export interface GameState {
   stores: StoreState[];
   /** §20 distribution center, or null until the depot is bought (M15). */
   dc: DcState | null;
+  /** §21 AI modules owned (M16) — sim/aitech.ts owns the gates. */
+  aitech: AiTechState;
   /** The store the 3D sim is loaded into; the rest resolve at close (§19). */
   activeStoreId: string;
   /** This week's job applications, redrawn Monday mornings (§9). */
@@ -441,11 +459,12 @@ const STARTING_LAYOUT: [defId: string, cellX: number, cellY: number, rot: Rot][]
 ];
 
 /**
- * §26 starter stock — exactly $1,500 at wholesale, the way a founder actually
- * opens: eight OTC top sellers with 20 of each label's 24 slot units out front
- * ($869.00 at 55% of MSRP), and the Tier-1 spread deeper on the daily chronic
- * meds, thin on the $12 inhaler ($631.00). Everything starts out front; the
- * backroom fills up from the first wholesale order.
+ * §26 starter stock, the way a founder actually opens: eight OTC top
+ * sellers with 20 of each label's 24 slot units out front, and the Tier-1
+ * spread deeper on the daily chronic meds, thin on the $12 inhaler.
+ * Everything starts out front; the backroom fills up from the first
+ * wholesale order. (Launch value ~$1,500 at the launch 55% OTC wholesale;
+ * the M16 pass moved the wholesale share, not these units.)
  */
 const STARTER_SHELVES: readonly (readonly string[])[] = [
   ["acetaminophen", "ibuprofen", "dextromethorphan", "bandages"],
@@ -548,6 +567,9 @@ export function createGameState(): GameState {
   }
   for (const [skuId, units] of STARTER_RX) store.stock[skuId] = { backroom: 0, shelved: units };
 
+  // M16 balancing tried +20% here and reverted it: extra opening cash only
+  // pulled the L2 purchase to day 1, off its §26 window, while the late
+  // arc barely moved (docs/balance-notes.md).
   const cash = 12_000;
   return {
     day: 1,
@@ -568,6 +590,7 @@ export function createGameState(): GameState {
     stats: { "license.L1": 1 },
     stores: [store],
     dc: null,
+    aitech: freshAiTech(),
     activeStoreId: store.id,
     hiring: {
       seed: Math.floor(Math.random() * 0x7fffffff),

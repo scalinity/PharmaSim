@@ -143,6 +143,12 @@ export type SimEvent =
       pickedUp: number;
       day: number;
     }
+  // --- AI endgame tech (§21, milestone 16) ---
+  /** A store bought the verification assistant: Tier-1/2 scripts now verify
+   *  themselves there (§21/§26 AI catch 100%). */
+  | { type: "aitech.verifyAssistBought"; storeId: string; cost: number; day: number }
+  /** The account bought demand forecasting: Orders gains the forecast view. */
+  | { type: "aitech.forecastBought"; cost: number; day: number }
   /** A dev console command took effect; the message is toast-ready. */
   | { type: "dev.eventForced"; message: string }
   // --- App shell (§23, milestone 06) ---

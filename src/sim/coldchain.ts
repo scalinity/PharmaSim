@@ -12,11 +12,12 @@ import type { GameState, StoreState } from "./state";
 export const FRIDGE_CAPACITY = 40;
 
 /** §26 vaccination service: 15 igm a shot, the dose's §25 reimbursement
- *  credited per shot (net +$22 over its wholesale), 3–6 walk-ins a day once
- *  the service exists. */
+ *  credited per shot, 4–7 walk-ins a day once the service exists.
+ *  M16 balancing: walk-ins +1 from the launch 3–6, and the dose's +18%
+ *  reimbursement moves the net to +$27 (docs/balance-notes.md). */
 export const VACCINE_IGM = 15;
-export const VACCINE_WALKINS_MIN = 3;
-export const VACCINE_WALKINS_MAX = 6;
+export const VACCINE_WALKINS_MIN = 4;
+export const VACCINE_WALKINS_MAX = 7;
 export const VACCINE_DOSE_ID = "fluVaxDose";
 /** Derived from the catalog so the Orders panel's "insurer, fixed" column
  *  and the ledger can never quote two different numbers. */

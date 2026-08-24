@@ -50,11 +50,14 @@ export interface HiringPool {
 
 // --- §26 tables (authoritative) ---
 
+// M16 balancing: −20% from the launch 90/140/280/220 — at observed visit
+// volumes a staffed store ran at a loss, and wages were the dominant cost
+// (docs/balance-notes.md).
 export const WAGES: Record<StaffRole, number> = {
-  cashier: 90,
-  tech: 140,
-  pharmacist: 280,
-  manager: 220,
+  cashier: 72,
+  tech: 112,
+  pharmacist: 224,
+  manager: 176,
 };
 
 /** Task duration multiplier by speed stat 1–5. */

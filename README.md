@@ -35,6 +35,12 @@ builds (`npm run dev`) — `K` in particular rewrites the save, so packaged buil
 - `M` — schedule a storm for tomorrow; the forecast pins to tonight's receipt
 - `K` — from a morning, skip straight to the next one (no shift, no costs)
 
+Dev builds also expose a fast-forward balancing harness on the console:
+`await __pharmasim.harness(seed, days)` (defaults `1, 56`) runs a *scratch* seeded game
+off-screen — every store through the §19 resolver under a simple keep-stocked/hire/expand
+policy — and returns a report with the §26 arc-event days (`.summary` is printable). It never
+touches the running sim or the save, and the module stays out of packaged builds.
+
 ## Docs
 
 - [`SPEC.md`](SPEC.md) — the game bible: vision, architecture, systems, tuning constants
@@ -57,5 +63,5 @@ builds (`npm run dev`) — `K` in particular rewrites the save, so packaged buil
 - [x] 13 Competitors + market share
 - [x] 14 Multi-branch
 - [x] 15 Distribution + logistics
-- [ ] 16 AI endgame tech + balancing
+- [x] 16 AI endgame tech + balancing
 - [ ] 17 Audio + polish + packaging

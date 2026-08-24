@@ -1,5 +1,6 @@
 // OTC catalog (SPEC §25 front-store table, §24 OtcDef shape). The player sets
-// each SKU's price at 0.8–1.5× MSRP (§10); wholesale is 55% of MSRP.
+// each SKU's price at 0.8–1.5× MSRP (§10); wholesale is a share of MSRP
+// (sim/economy.ts OTC_WHOLESALE_SHARE).
 
 export type OtcCategory = "pain" | "allergy" | "coldflu" | "digestive" | "wellness" | "firstaid";
 

@@ -44,27 +44,50 @@ const VISITOR_SEASON_MULT: Record<Season, number> = {
 const STORM_VISITOR_MULT = 0.6; // §26: visitors ×0.6 on a storm day
 const FLU_VACCINE_MULT = 4; // §26: flu-season walk-ins ×4
 
-/** Season's pull on one Rx category's script generation (§16, §26). */
+/** Season's pull on one Rx category's script generation (§16, §26).
+ *  Day-parametric so the §21 forecast can read the calendar ahead — today's
+ *  reader below hands it the live day. */
+export function rxDemandMultOn(day: number, category: string): number {
+  return RX_SEASON_MULT[seasonForDay(day)][category] ?? 1;
+}
+
 export function rxDemandMult(state: GameState, category: string): number {
-  return RX_SEASON_MULT[seasonForDay(state.day)][category] ?? 1;
+  return rxDemandMultOn(state.day, category);
 }
 
 /** Season's pull on one OTC category's shelf picks (§16, §26). */
+export function otcDemandMultOn(day: number, category: string): number {
+  return OTC_SEASON_MULT[seasonForDay(day)][category] ?? 1;
+}
+
 export function otcDemandMult(state: GameState, category: string): number {
-  return OTC_SEASON_MULT[seasonForDay(state.day)][category] ?? 1;
+  return otcDemandMultOn(state.day, category);
+}
+
+/** The season's pull on the whole door, day-parametric for the §21
+ *  forecast — the calendar is public knowledge; a storm's ×0.6 is not
+ *  (§16: the forecast prints only the evening before), so the storm
+ *  factor stays in visitorMult below and off the AI's table. */
+export function seasonVisitorMultOn(day: number): number {
+  return VISITOR_SEASON_MULT[seasonForDay(day)];
 }
 
 /** What today does to the whole visitor schedule: the season's lull or
  *  crowd, and a storm day's thin floor — both, on a winter storm. */
 export function visitorMult(state: GameState): number {
-  let mult = VISITOR_SEASON_MULT[seasonForDay(state.day)];
+  let mult = seasonVisitorMultOn(state.day);
   if (stormToday(state)) mult *= STORM_VISITOR_MULT;
   return mult;
 }
 
-/** §14/§26: vaccine walk-ins quadruple through flu season. */
+/** §14/§26: vaccine walk-ins quadruple through flu season. Day-parametric
+ *  for the §21 forecast, like the demand multipliers above. */
+export function vaccineWalkinMultOn(day: number): number {
+  return seasonForDay(day) === "Winter" ? FLU_VACCINE_MULT : 1;
+}
+
 export function vaccineWalkinMult(state: GameState): number {
-  return seasonForDay(state.day) === "Winter" ? FLU_VACCINE_MULT : 1;
+  return vaccineWalkinMultOn(state.day);
 }
 
 /** §18/§26: is any regional shortage squeezing the city today? The rivals

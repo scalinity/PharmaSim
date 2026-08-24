@@ -40,17 +40,20 @@ export const LICENSE_DEFS: readonly LicenseDef[] = [
     stars: 2,
     unlocks: "Tier-2 Rx SKUs",
   },
+  // M16 balancing: L3–L6 are −20% from the launch 20k/12k/50k/40k — the
+  // late arc could not be funded on the year's earnings otherwise
+  // (docs/balance-notes.md). L1/L2 stand at launch.
   {
     id: "L3",
     name: "Controlled Substances",
-    cost: 20_000,
+    cost: 16_000,
     stars: 3,
     unlocks: "Tier-3 SKUs, kept in a locked cabinet",
   },
   {
     id: "L4",
     name: "Immunization Certification",
-    cost: 12_000,
+    cost: 9_600,
     stars: 2.5,
     unlocks: "The vaccination service",
     note: "The station and service arrive with the equipment.",
@@ -58,14 +61,14 @@ export const LICENSE_DEFS: readonly LicenseDef[] = [
   {
     id: "L5",
     name: "Multi-Branch Operation",
-    cost: 50_000,
+    cost: 40_000,
     stars: 4,
     unlocks: "Buying additional branches",
   },
   {
     id: "L6",
     name: "Distribution Operations",
-    cost: 40_000,
+    cost: 32_000,
     stars: 0,
     needsLicense: "L5",
     needsBranches: 2,

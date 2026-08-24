@@ -39,17 +39,19 @@ export const ERA_DEFS: readonly EraDef[] = [
     look: "Teal linoleum, chrome-edged shelves, fluorescent hum — the post-war store, proud of it.",
     gates: null,
   },
+  // M16 balancing: Gen 3/Gen 4 are −20% from the launch 18k/40k so the
+  // year can afford the whole lineage (docs/balance-notes.md).
   {
     era: 3,
     name: "The Retail Chain Era",
-    cost: 18_000,
+    cost: 14_400,
     look: "White gondolas on gray-blue steel, a drop ceiling, barcodes at the till.",
     gates: null,
   },
   {
     era: 4,
     name: "The Modern Clinic",
-    cost: 40_000,
+    cost: 32_000,
     look: "Mint and white, light oak and glass — a clinic with the family name on it.",
     gates: "Unlocks the robotic dispenser (and, in time, the AI modules).",
   },

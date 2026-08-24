@@ -104,9 +104,15 @@
 //    A v10 stop carries no flag and reads as player-drafted — the prune
 //    errs toward keeping a stop the player may have wanted.
 //
-//  §24's fuller schema (worldSeed, aitech) is not here because those
-//  systems do not exist yet. They arrive field-by-field with milestone 16,
-//  each with its own migrate step.
+//  Version 12 (milestone 16) adds the AI endgame tech:
+//    · aitech (§21/§24: the store ids running the verification assistant,
+//      and whether the account owns demand forecasting)               (M16)
+//    A pre-AI save simply hasn't bought the modules: the step seeds no
+//    assistants and no forecast, and the Gen 4 cards offer them as they
+//    would on a new run.
+//
+//  §24's worldSeed is not here because nothing reads it — the event seed
+//  (v6) and hiring seed (v2) carry every roll a reload must repeat.
 // ===========================================================================
 
 import { DAY_END_IGM, DAY_START_IGM } from "../core/clock";
@@ -139,10 +145,12 @@ import {
 } from "./staff";
 import {
   defaultSettings,
+  freshAiTech,
   freshCityState,
   freshCompetitors,
   freshMarketState,
   freshWorldEvents,
+  type AiTechState,
   type CityState,
   type CompetitorState,
   type DayPhase,
@@ -161,7 +169,7 @@ import {
   type WorldEventsState,
 } from "./state";
 
-export const SAVE_VERSION = 11;
+export const SAVE_VERSION = 12;
 
 export interface SaveFile {
   version: number;
@@ -180,6 +188,7 @@ export interface SaveFile {
   stats: Record<string, number>;
   stores: StoreState[];
   dc: DcState | null;
+  aitech: AiTechState;
   activeStoreId: string;
   hiring: HiringPool;
   dayStats: DayStats;
@@ -316,6 +325,13 @@ const MIGRATIONS: readonly ((file: RawSave) => RawSave)[] = [
   // its stops read as the player's and the morning prune errs toward
   // keeping them.
   (file) => file,
+  // 11 → 12 (milestone 16): the AI endgame tech. A pre-AI save simply
+  // hasn't bought the modules — no assistants, no forecast — and the Gen 4
+  // cards offer them exactly as they would on a new run.
+  (file) => {
+    file.aitech = freshAiTech();
+    return file;
+  },
 ];
 
 // --- Deep copies: a save must never alias live state, and a hydrated state
@@ -379,6 +395,10 @@ function copyDc(dc: DcState): DcState {
     inbound: dc.inbound.map((line) => ({ ...line })),
     trucks: dc.trucks.map(copyTruck),
   };
+}
+
+function copyAiTech(aitech: AiTechState): AiTechState {
+  return { verifyAssist: [...aitech.verifyAssist], forecast: aitech.forecast };
 }
 
 function copyHiring(hiring: HiringPool): HiringPool {
@@ -475,6 +495,7 @@ export function serialize(state: GameState): SaveFile {
     stats: { ...state.stats },
     stores: state.stores.map(copyStore),
     dc: state.dc === null ? null : copyDc(state.dc),
+    aitech: copyAiTech(state.aitech),
     activeStoreId: state.activeStoreId,
     hiring: copyHiring(state.hiring),
     dayStats: copyDayStats(state.dayStats),
@@ -502,6 +523,7 @@ export function hydrate(file: SaveFile): GameState {
     stats: { ...file.stats },
     stores: file.stores.map(copyStore),
     dc: file.dc === null ? null : copyDc(file.dc),
+    aitech: copyAiTech(file.aitech),
     activeStoreId: file.activeStoreId,
     hiring: copyHiring(file.hiring),
     workingStationId: null,
@@ -1064,6 +1086,23 @@ function validate(file: RawSave): SaveFile {
       }
     }
   }
+
+  // §21 AI modules (M16): every assistant entry must name a real store —
+  // the workflow's lane check and the module cards both resolve the id
+  // through the store list (the truck-stop pattern), and a stranger or a
+  // repeat would read as an assistant no floor can switch on.
+  const aitech = requireObject(file.aitech, "AI modules");
+  requireArray(aitech.verifyAssist, "AI assistants");
+  const assistIds = aitech.verifyAssist as unknown[];
+  if (assistIds.length > storeIds.size) reject("a sane AI assistant list");
+  const assistSeen = new Set<string>();
+  for (const id of assistIds) {
+    if (typeof id !== "string" || !storeIds.has(id) || assistSeen.has(id)) {
+      reject("readable AI assistants");
+    }
+    assistSeen.add(id);
+  }
+  if (typeof aitech.forecast !== "boolean") reject("an AI forecast flag");
 
   // The pointer must land on a real store, or the boot's scene build and
   // every activeStore read would fall back somewhere the file never meant.

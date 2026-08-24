@@ -9,6 +9,7 @@
 
 import { IGM_PER_TICK } from "../core/clock";
 import { DRUG_DEFS, drugDef, type DrugDef } from "../data/drugs";
+import { assistCoversDrug, verifyAssistOnline } from "./aitech";
 import type { SimEvent } from "./events";
 import { binFixtureFor, returnShelved, takeShelved } from "./inventory";
 import { fillableDrugs } from "./licenses";
@@ -42,6 +43,10 @@ export const VERIFY_IGM = 8;
 /** §6 robotic dispenser: brisker than any pair of hands, and it never
  *  mis-picks — its fills route through verification like everyone else's. */
 export const DISPENSER_FILL_IGM = 4;
+/** §21 AI verification: effectively instant — every script in the lane
+ *  scans at once (no queueing, the capability *removes* a queue), and the
+ *  short beat only exists so the lane reads on screen (§8 legibility). */
+export const ASSIST_VERIFY_IGM = 2;
 
 /** What the machine will touch (§6): Tier 1/2 only, never controlled stock
  *  and never the cold chain — those still go to a bench. */
@@ -184,6 +189,13 @@ export class RxWorkflow {
   /** True while a dispenser stands on the floor; kept current by
    *  syncDispenserLanes so lane routing never reads stale furniture. */
   private autoLaneOpen = false;
+  /** §21 AI verification lane: Tier-1/2 scripts mid-scan, each on its own
+   *  short timer — all in parallel, so the lane never queues. Keyed by
+   *  script id; kept current by syncAssistLane. */
+  private assistTasks = new Map<number, number>();
+  /** True while the active store's assistant is on (owned + a verify desk
+   *  standing) — the §21 routing gate, synced per tick like the dispenser. */
+  private assistLaneOpen = false;
   /** Player's fill in progress at the bench, or null. */
   private fillingId: number | null = null;
   /** <0 = waiting on a bin pick; ≥0 = igm left on the fill animation. */
@@ -231,11 +243,19 @@ export class RxWorkflow {
     return false;
   }
 
-  /** Scripts waiting for (or under) the verify desk's lamp. */
+  /** Scripts waiting for (or under) the verify desk's lamp. AI scans live
+   *  on the assistant's own lane, not the desk's pile. */
   get verifyDepth(): number {
     let n = this.verifyQueue.length;
-    for (const script of this.scripts.values()) if (script.stage === "verifying") n++;
+    for (const script of this.scripts.values()) {
+      if (script.stage === "verifying" && !this.assistTasks.has(script.id)) n++;
+    }
     return n;
+  }
+
+  /** Scripts mid-scan in the §21 AI verification lane. */
+  get assistDepth(): number {
+    return this.assistTasks.size;
   }
 
   get readyCount(): number {
@@ -305,8 +325,15 @@ export class RxWorkflow {
     if (!active) this.flushVerifyImplicit(state, emit);
   }
 
-  /** Filled script leaves a bench: to the desk, or the implicit check. */
+  /** Filled script leaves a bench: the §21 AI lane signs off Tier-1/2 on
+   *  the spot; the rest go to the desk, or the implicit check. */
   private routeFilled(state: GameState, script: RxScript, emit: Emit): void {
+    if (this.assistLaneOpen && assistCoversDrug(drugDef(script.drugId))) {
+      script.stage = "verifying";
+      this.assistTasks.set(script.id, ASSIST_VERIFY_IGM);
+      emit({ type: "rx.stageChanged", scriptId: script.id, stage: script.stage });
+      return;
+    }
     if (this.verifierActive) {
       script.stage = "verifyQueue";
       this.verifyQueue.push(script.id);
@@ -484,6 +511,70 @@ export class RxWorkflow {
     }
   }
 
+  // --- The §21 AI verification lane: no hands, no queue ---
+
+  /**
+   * Keep the assistant's lane consistent with the store (§21): it runs
+   * while the active store owns the module and a verify desk stands. When
+   * the desk goes, scans in flight drain to whoever verifies now — the
+   * desk's pile, or the owner's implicit glance; when it comes on, the
+   * desk pile's Tier-1/2 share walks over, order preserved.
+   */
+  private syncAssistLane(state: GameState, emit: Emit): void {
+    this.assistLaneOpen = verifyAssistOnline(state, activeStore(state));
+    if (!this.assistLaneOpen) {
+      if (this.assistTasks.size === 0) return;
+      const held = [...this.assistTasks.keys()];
+      this.assistTasks.clear();
+      for (const id of held) {
+        const script = this.scripts.get(id);
+        if (!script || script.stage !== "verifying") continue;
+        if (this.verifierActive) {
+          script.stage = "verifyQueue";
+          this.verifyQueue.push(id);
+          emit({ type: "rx.stageChanged", scriptId: id, stage: script.stage });
+        } else {
+          this.resolveVerdict(state, script, OWNER_CATCH_RATE, emit);
+        }
+      }
+      return;
+    }
+    let kept = 0;
+    for (const id of this.verifyQueue) {
+      const script = this.scripts.get(id);
+      if (script && assistCoversDrug(drugDef(script.drugId))) {
+        script.stage = "verifying";
+        this.assistTasks.set(id, ASSIST_VERIFY_IGM);
+        emit({ type: "rx.stageChanged", scriptId: id, stage: script.stage });
+      } else {
+        this.verifyQueue[kept++] = id;
+      }
+    }
+    this.verifyQueue.length = kept;
+  }
+
+  /** Advance every scan in the lane at once — parallel on purpose (§21:
+   *  the capability removes a queue, so nothing ever waits behind a scan). */
+  private tickAssist(state: GameState, emit: Emit): void {
+    if (this.assistTasks.size === 0) return;
+    for (const [id, left] of this.assistTasks) {
+      const script = this.scripts.get(id);
+      // A script can vanish mid-scan (walk-out): the lane just moves on.
+      if (!script || script.stage !== "verifying") {
+        this.assistTasks.delete(id);
+        continue;
+      }
+      const next = left - IGM_PER_TICK;
+      if (next > 0) {
+        this.assistTasks.set(id, next);
+        continue;
+      }
+      this.assistTasks.delete(id);
+      // §26: AI assist catch 100 — a wrong fill never leaves the lane.
+      this.resolveVerdict(state, script, 1, emit);
+    }
+  }
+
   // --- The player's own hands (§8) ---
 
   /** Reconcile the fill/verify interactions with wherever the player works. */
@@ -571,6 +662,8 @@ export class RxWorkflow {
     // furniture and 10 Hz the scan is free (§30).
     this.syncDispenserLanes(state, emit);
     this.tickDispensers(state, emit);
+    this.syncAssistLane(state, emit);
+    this.tickAssist(state, emit);
     this.tickPlayerFill(state, emit);
     this.tickPlayerVerify(state, emit);
   }
@@ -621,6 +714,7 @@ export class RxWorkflow {
     for (const [dispenserId, task] of this.dispenserTasks) {
       if (task.scriptId === scriptId) this.dispenserTasks.delete(dispenserId);
     }
+    this.assistTasks.delete(scriptId);
     const verifying = this.verifyQueue.indexOf(scriptId);
     if (verifying !== -1) this.verifyQueue.splice(verifying, 1);
     if (this.fillingId === scriptId) {

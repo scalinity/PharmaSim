@@ -53,6 +53,8 @@ export const LEDGER_REASONS = [
   /** §20: the depot building and the garage's vans (M15). */
   { id: "dc.purchase", group: "cost", label: "Distribution center" },
   { id: "truck.purchase", group: "cost", label: "Vans" },
+  /** §21: the two Gen 4 AI modules (M16). */
+  { id: "aitech.purchase", group: "cost", label: "AI modules" },
   { id: "renovation", group: "cost", label: "Renovation" },
   { id: "bank.draw", group: "financing", label: "Credit line draw" },
   { id: "bank.payment", group: "financing", label: "Credit line payment" },
@@ -101,8 +103,9 @@ export function ledgerNet(stats: DayStats): number {
 
 // --- Wholesale pricing (§10, §11, §26) ---
 
-/** §26 flat copay: what the patient pays on top of the insurer's part. */
-export const COPAY = 10;
+/** §26 flat copay: what the patient pays on top of the insurer's part.
+ *  M16 balancing: +20% from the launch $10 (docs/balance-notes.md). */
+export const COPAY = 12;
 
 /** §26 supplier tiers, best first: better contracts as reputation grows. */
 export const SUPPLIER_TIERS: readonly { stars: number; discount: number }[] = [
@@ -119,11 +122,15 @@ export function supplierDiscount(repStars: number): number {
 
 const DRUG_BY_ID = new Map<string, DrugDef>(DRUG_DEFS.map((def) => [def.id, def]));
 
-/** §10: OTC wholesale is 55% of MSRP; Rx wholesale is the §25 catalog value. */
+/** §10: OTC wholesale as a share of MSRP; Rx wholesale is the §25 catalog
+ *  value. M16 balancing: 46% from the launch 55% (−16%) — the front store's
+ *  margin carried too little of the arc (docs/balance-notes.md). */
+export const OTC_WHOLESALE_SHARE = 0.46;
+
 export function listWholesale(skuId: string): number {
   const drug = DRUG_BY_ID.get(skuId);
   if (drug) return drug.wholesale;
-  return round2(otcDef(skuId).msrp * 0.55);
+  return round2(otcDef(skuId).msrp * OTC_WHOLESALE_SHARE);
 }
 
 // --- §16 regional shortage: one Rx category squeezed at a time (§26) ---
@@ -353,7 +360,8 @@ export function rentCost(store: StoreState): number {
 // --- §19/§26 branch purchase: site 300× daily rent + $15,000 fit-out ---
 
 export const BRANCH_SITE_RENT_MULTIPLE = 300;
-export const BRANCH_FITOUT = 15_000;
+/** M16 balancing: −20% from the launch $15k (docs/balance-notes.md). */
+export const BRANCH_FITOUT = 12_000;
 
 export interface BranchPrice {
   site: number;
@@ -368,10 +376,14 @@ export function branchPrice(districtId: string): BranchPrice {
 }
 
 export const BANK_UNLOCK_STARS = 3;
-export const BANK_INTEREST = 0.004; // 0.4%/day on balance (§26)
-export const BANK_MIN_PAYMENT = 0.02; // 2%/day auto minimum (§26)
-export const BANK_CAP = 50_000;
-const BANK_GROSS_MULTIPLE = 20;
+// M16 balancing: the §26 launch loan terms (0.4%/day · 2%/day · $50k ·
+// 20×) each moved 20% in the borrower's favor — the credit line is the
+// arc's intended financing, and its own service was choking the late
+// capstones (docs/balance-notes.md).
+export const BANK_INTEREST = 0.0032; // %/day on balance (§26)
+export const BANK_MIN_PAYMENT = 0.016; // /day auto minimum (§26)
+export const BANK_CAP = 60_000;
+const BANK_GROSS_MULTIPLE = 24;
 export const FAMILY_LOAN_FLOOR = 2_500;
 export const FAMILY_REPAY_SHARE = 0.15;
 

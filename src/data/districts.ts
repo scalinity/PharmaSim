@@ -2,6 +2,10 @@
 // the demand engine from milestone 3 onward; only Old Town is consumed until
 // the city map arrives (M12). Prevalence = Rx scripts per 1k pop per day;
 // otcIntent = OTC visits per 1k pop per day.
+//
+// M16 balancing: every dailyRent is −20% from the §17 launch table
+// (80/110/120/95/190/240) — rent and the 300× site cost it feeds were
+// outpacing the arc (docs/balance-notes.md).
 
 export type RxCategory =
   | "cardiovascular"
@@ -47,7 +51,7 @@ export const DISTRICTS: readonly District[] = [
     id: "oldTown",
     name: "Old Town",
     population: 6_800,
-    dailyRent: 80,
+    dailyRent: 64,
     // Older mixed: cardiovascular ↑, diabetes →
     prevalence: {
       cardiovascular: 1.1,
@@ -69,7 +73,7 @@ export const DISTRICTS: readonly District[] = [
     id: "riverside",
     name: "Riverside",
     population: 9_400,
-    dailyRent: 110,
+    dailyRent: 88,
     // Young families: pediatric ↑, allergy ↑
     prevalence: {
       pediatric: 0.8,
@@ -91,7 +95,7 @@ export const DISTRICTS: readonly District[] = [
     id: "universityHeights",
     name: "University Heights",
     population: 11_200,
-    dailyRent: 120,
+    dailyRent: 96,
     // Students: acute ↑, mental health →
     prevalence: {
       antibiotics: 0.6,
@@ -113,7 +117,7 @@ export const DISTRICTS: readonly District[] = [
     id: "sunsetGlen",
     name: "Sunset Glen",
     population: 5_100,
-    dailyRent: 95,
+    dailyRent: 76,
     // Retirees: chronic ↑↑ (cardio, diabetes, anticoag)
     prevalence: {
       cardiovascular: 1.6,
@@ -137,7 +141,7 @@ export const DISTRICTS: readonly District[] = [
     id: "medicalDistrict",
     name: "Medical District",
     population: 7_600,
-    dailyRent: 190,
+    dailyRent: 152,
     // Mixed: specialty ↑, post-hospital scripts ↑
     prevalence: {
       cardiovascular: 0.6,
@@ -159,7 +163,7 @@ export const DISTRICTS: readonly District[] = [
     id: "downtown",
     name: "Downtown",
     population: 12_500,
-    dailyRent: 240,
+    dailyRent: 192,
     // Working adults: OTC convenience ↑↑, GI/stress →
     prevalence: {
       gi: 0.5,

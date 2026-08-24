@@ -8,6 +8,14 @@ import type { EventBus } from "../../core/bus";
 import { furnitureDef } from "../../data/furniture";
 import { otcDef } from "../../data/otc";
 import {
+  FORECAST_DAYS,
+  FORECAST_NOISE,
+  forecastCovered,
+  forecastNetwork,
+  forecastOrderDraft,
+  forecastStore,
+} from "../../sim/aitech";
+import {
   coldClampUnits,
   fridgeCapacity,
   refrigeratedHeld,
@@ -44,6 +52,7 @@ import { TransferDraft } from "../components/TransferDraft";
 import { Panel } from "../components/Panel";
 import { PillButton } from "../components/PillButton";
 import { PriceTag, type PriceTagHandle } from "../components/PriceTag";
+import { Tabs } from "../components/Tabs";
 import { h } from "../dom";
 import { money } from "../format";
 
@@ -71,7 +80,7 @@ const SECTIONS: readonly Section[] = [
   },
   {
     title: "Front store \u00b7 you set the price",
-    note: "Wholesale is 55% of MSRP. The ticks on each tag are where shoppers start walking past.",
+    note: "Wholesale is 46% of MSRP. The ticks on each tag are where shoppers start walking past.",
     keep: (e) => e.kind === "otc",
   },
   {
@@ -421,6 +430,199 @@ export function createOrdersPanel(sim: Sim, bus: EventBus<SimEvent>): OrdersPane
     });
   }
 
+  // --- \u00a721 forecast view (M16): the AI's 7-day table over the same form ---
+
+  /** Which leaf the folder is open to; the tabs only exist once the \u00a721
+   *  forecast is owned, so "forecast" implies ownership. */
+  let view: "catalog" | "forecast" = "catalog";
+  /** Rebuild key for the forecast table \u2014 scope, day, shortage edges. */
+  let fcastKey = "";
+  /** Live cells per SKU: the columns that move intra-day (stock does;
+   *  the prediction holds until tomorrow). */
+  const fcastLive = new Map<string, { total: number; covered: HTMLElement; toOrder: HTMLElement }>();
+
+  const viewTabs = Tabs(
+    [
+      { id: "catalog", label: "Catalog" },
+      { id: "forecast", label: "Forecast" },
+    ],
+    (id) => {
+      view = id === "forecast" ? "forecast" : "catalog";
+      fcastKey = ""; // fresh read on every open \u2014 shares move with the day
+      refreshAll();
+    },
+  );
+  viewTabs.root.classList.add("oform__tabs");
+  viewTabs.root.hidden = true;
+  viewTabs.setActive("catalog");
+
+  const fcastNote = h("p", { cls: "fcast__note" });
+  const orderToForecast = PillButton("Order to forecast", () => {
+    const state = sim.snapshot;
+    const draft = forecastOrderDraft(state, scopeIsDc() ? null : scopedStore());
+    setCart(draft);
+  }, { cls: "pill--small" });
+  const fcastHead = h("div", { cls: "fcast__head", attrs: { "aria-hidden": "true" } });
+  for (const label of ["item", "next 7 days", "vs last 7d", "on hand", "to order"]) {
+    fcastHead.append(h("span", { cls: "fcast__col", text: label }));
+  }
+  const fcastList = h("div", { cls: "fcast__list" });
+  const fcast = h("div", { cls: "fcast" }, [
+    h("div", { cls: "fcast__bar" }, [fcastNote, orderToForecast]),
+    fcastHead,
+    fcastList,
+  ]);
+  fcast.hidden = true;
+
+  /** The per-day shape as printer blocks \u2014 Monday batches and season turns
+   *  read as real spikes, not decoration. */
+  const SPARK_GLYPHS = "\u2581\u2582\u2583\u2584\u2585\u2586\u2587";
+  function sparkline(perDay: readonly number[]): string {
+    let max = 0;
+    for (const v of perDay) max = Math.max(max, v);
+    if (max <= 0) return SPARK_GLYPHS[0]!.repeat(FORECAST_DAYS);
+    let out = "";
+    for (const v of perDay) out += SPARK_GLYPHS[Math.min(6, Math.round((v / max) * 6))]!;
+    return out;
+  }
+
+  /** One SKU's week-over-week move, the \u00a721 flag riding a shortage. */
+  function trendCell(total: number, last7: number, capped: boolean): HTMLElement {
+    let text: string;
+    let cls = "fcast__trend";
+    if (last7 <= 0) {
+      text = total >= 1 ? "new" : "\u2014";
+    } else {
+      const pct = Math.round(((total - last7) / last7) * 100);
+      if (pct >= 10) {
+        text = `\u2191${pct}%`;
+        cls += " fcast__trend--up";
+      } else if (pct <= -10) {
+        text = `\u2193${Math.abs(pct)}%`;
+        cls += " fcast__trend--down";
+      } else {
+        text = "\u2192";
+      }
+    }
+    if (capped) {
+      text += " \u00b7 capped";
+      cls += " fcast__trend--capped";
+    }
+    return h("span", { cls, text });
+  }
+
+  function buildForecastTable(): void {
+    const state = sim.snapshot;
+    const isDc = scopeIsDc();
+    const store = scopedStore();
+    const forecast = isDc ? forecastNetwork(state) : forecastStore(state, store);
+    const entries = [...forecast.values()].sort((a, b) => b.total - a.total);
+    fcastLive.clear();
+    fcastList.replaceChildren();
+    fcastNote.textContent = isDc
+      ? "The network's next 7 days, every door summed \u2014 the depot orders against it."
+      : "This store's next 7 days, read from the city's own demand.";
+    const handCol = fcastHead.children[3];
+    if (handCol) handCol.textContent = isDc ? "in network" : "on hand";
+
+    let quiet = 0;
+    let stripe = false;
+    for (const entry of entries) {
+      const catalogRow = rows.get(entry.skuId);
+      if (!catalogRow) continue;
+      const covered = forecastCovered(state, isDc ? null : store, entry.skuId);
+      if (entry.total < 0.5 && covered === 0) {
+        quiet++;
+        continue;
+      }
+      const lock = isDc
+        ? dcSkuLock(state, entry.skuId)
+        : skuLock(state, store, entry.skuId);
+      const short = shortageActive(state, entry.skuId);
+      let last7 = 0;
+      if (isDc) {
+        for (const s of state.stores) last7 += sales7d(s, entry.skuId);
+      } else {
+        last7 = sales7d(store, entry.skuId);
+      }
+
+      const total = Math.round(entry.total);
+      const low = Math.floor(entry.total * (1 - FORECAST_NOISE));
+      const high = Math.ceil(entry.total * (1 + FORECAST_NOISE));
+      const toOrder = Math.max(0, Math.ceil(entry.total - 1e-9) - covered);
+
+      const coveredEl = h("span", { cls: "fcast__hand", text: String(covered) });
+      const toOrderEl = h("span", {
+        cls: `fcast__order${toOrder > 0 ? " fcast__order--due" : ""}`,
+        text: toOrder > 0 ? String(toOrder) : "\u2014",
+      });
+      fcastLive.set(entry.skuId, { total: entry.total, covered: coveredEl, toOrder: toOrderEl });
+
+      const row = h("div", { cls: `fcast__row${stripe ? " fcast__row--stripe" : ""}` }, [
+        h("span", { cls: "fcast__item" }, [
+          h("span", { cls: "fcast__name", text: catalogRow.entry.name }),
+          h("span", {
+            cls: `fcast__meta${short && lock === null ? " fcast__meta--shortage" : ""}`,
+            text:
+              lock ??
+              (short
+                ? `${categoryLabel(catalogRow.entry.category)} \u00b7 shortage \u2014 orders fill 60%`
+                : categoryLabel(catalogRow.entry.category)),
+          }),
+        ]),
+        h("span", { cls: "fcast__week" }, [
+          h("span", { cls: "fcast__spark", attrs: { "aria-hidden": "true" }, text: sparkline(entry.perDay) }),
+          h("span", { cls: "fcast__total", text: String(total) }),
+          h("span", { cls: "fcast__band", text: `${low}\u2013${high}` }),
+        ]),
+        trendCell(entry.total, last7, short),
+        coveredEl,
+        toOrderEl,
+      ]);
+      if (lock !== null) row.classList.add("fcast__row--locked");
+      stripe = !stripe;
+      fcastList.append(row);
+    }
+    if (quiet > 0) {
+      fcastList.append(
+        h("p", {
+          cls: "fcast__quiet",
+          text: `${quiet} quiet ${quiet === 1 ? "line" : "lines"} \u2014 nothing predicted, nothing held.`,
+        }),
+      );
+    }
+  }
+
+  /** Stock moved under the table: refresh the two live columns in place. */
+  function updateForecastLive(): void {
+    const state = sim.snapshot;
+    const isDc = scopeIsDc();
+    const store = scopedStore();
+    for (const [skuId, cells] of fcastLive) {
+      const covered = forecastCovered(state, isDc ? null : store, skuId);
+      const toOrder = Math.max(0, Math.ceil(cells.total - 1e-9) - covered);
+      cells.covered.textContent = String(covered);
+      cells.toOrder.textContent = toOrder > 0 ? String(toOrder) : "\u2014";
+      cells.toOrder.classList.toggle("fcast__order--due", toOrder > 0);
+    }
+  }
+
+  /** Keep the forecast leaf current (called from refreshAll while it is
+   *  the open view): a scope or day turn rebuilds; churn updates in place. */
+  function refreshForecast(): void {
+    const state = sim.snapshot;
+    const shortages = state.events.shortages
+      .map((s) => `${s.category}:${s.startDay}`)
+      .join(",");
+    const key = `${scope.current()}|${state.day}|${shortages}|${state.stores.length}`;
+    if (key !== fcastKey) {
+      fcastKey = key;
+      buildForecastTable();
+    } else {
+      updateForecastLive();
+    }
+  }
+
   const tierChip = h("span", { cls: "oform__tier" });
   const formEyebrow = h("p", { cls: "oform__eyebrow", text: "Hudson Valley Drug \u00b7 wholesale order" });
   // \u00a719 non-goal, said where players would look for it: no transfers yet.
@@ -435,9 +637,11 @@ export function createOrdersPanel(sim: Sim, bus: EventBus<SimEvent>): OrdersPane
       tierChip,
     ]),
     scope.root,
+    viewTabs.root,
     transferNote,
     head,
     list,
+    fcast,
   ]);
 
   // --- Right leaf: the carbon duplicate + the bank's card ---
@@ -492,7 +696,7 @@ export function createOrdersPanel(sim: Sim, bus: EventBus<SimEvent>): OrdersPane
     h("div", { cls: "bank__row" }, [h("span", { text: "Drawn" }), bankOwed]),
     h("div", { cls: "bank__row" }, [h("span", { text: "Available" }), bankOpen]),
     h("div", { cls: "bank__actions" }, [drawButton, repayButton]),
-    h("p", { cls: "bank__fine", text: "0.4% a day, 2% minimum payment at close." }),
+    h("p", { cls: "bank__fine", text: "0.32% a day, 1.6% minimum payment at close." }),
   ]);
   const familyNote = h("p", { cls: "bank__family" });
   const bank = h("div", { cls: "bank" }, [
@@ -692,6 +896,17 @@ export function createOrdersPanel(sim: Sim, bus: EventBus<SimEvent>): OrdersPane
     const store = scopedStore();
     const isDc = scopeIsDc();
     scope.refresh();
+    // §21: the folder grows its second leaf the day forecasting is bought.
+    viewTabs.root.hidden = !state.aitech.forecast;
+    if (!state.aitech.forecast && view === "forecast") {
+      view = "catalog";
+      viewTabs.setActive("catalog");
+    }
+    const forecastOn = view === "forecast";
+    head.hidden = forecastOn;
+    list.hidden = forecastOn;
+    fcast.hidden = !forecastOn;
+    if (forecastOn) refreshForecast();
     formEyebrow.textContent = isDc
       ? "Hudson Valley Drug \u00b7 depot order \u00b7 central purchasing"
       : state.stores.length > 1
@@ -798,6 +1013,9 @@ export function createOrdersPanel(sim: Sim, bus: EventBus<SimEvent>): OrdersPane
     }
     setCart(draft);
   });
+  // §21: the forecast tabs appear on purchase; the table itself rebuilds
+  // through refreshAll's key whenever the day or scope turns.
+  bus.on("aitech.forecastBought", invalidate);
   // A new branch joins the scope row; a morning switch re-anchors it.
   bus.on("branch.bought", invalidate);
   bus.on("branch.activeChanged", () => {
