@@ -549,9 +549,29 @@ export function isFoundingStore(state: GameState, store: StoreState): boolean {
   return state.stores[0] === store;
 }
 
-/** The name on the glass — and on the receipt header (§19/§28). */
-export function storeName(store: StoreState): string {
-  return `${districtById(store.districtId).name} Pharmacy`;
+/** Position among same-district siblings, or null standing alone. The
+ *  founding district's lot stays for sale (§19), so two stores can share a
+ *  district — and two identical "Old Town Pharmacy" labels would send a
+ *  real order to the wrong door. */
+function storeOrdinal(state: GameState, store: StoreState): number | null {
+  const siblings = state.stores.filter((s) => s.districtId === store.districtId);
+  if (siblings.length < 2) return null;
+  return siblings.indexOf(store) + 1;
+}
+
+/** The name on the glass — and on the receipt header (§19/§28). Carries an
+ *  ordinal once a second store shares the district. */
+export function storeName(state: GameState, store: StoreState): string {
+  const base = `${districtById(store.districtId).name} Pharmacy`;
+  const ordinal = storeOrdinal(state, store);
+  return ordinal === null ? base : `${base} ${ordinal}`;
+}
+
+/** Short chip/tab label (§28): the district name, same ordinal rule. */
+export function storeLabel(state: GameState, store: StoreState): string {
+  const name = districtById(store.districtId).name;
+  const ordinal = storeOrdinal(state, store);
+  return ordinal === null ? name : `${name} ${ordinal}`;
 }
 
 /**

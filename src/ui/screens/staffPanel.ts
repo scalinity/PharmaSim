@@ -279,7 +279,7 @@ export function createStaffPanel(sim: Sim, bus: EventBus<SimEvent>): StaffPanelH
         text:
           `Three applicants a role. A fresh batch lands Monday morning — day ${nextMonday}. ` +
           `Better word of mouth, better hands.` +
-          (state.stores.length > 1 ? ` Hires join ${storeName(store)}.` : ""),
+          (state.stores.length > 1 ? ` Hires join ${storeName(state, store)}.` : ""),
       }),
     );
     for (const role of HIREABLE_ROLES) {
@@ -321,7 +321,7 @@ export function createStaffPanel(sim: Sim, bus: EventBus<SimEvent>): StaffPanelH
 
   function refreshAll(): void {
     const store = scopedStore();
-    eyebrow.textContent = `${storeName(store)} · personnel`;
+    eyebrow.textContent = `${storeName(sim.snapshot, store)} · personnel`;
     scope.refresh();
     buildRoster();
     buildApps();

@@ -30,6 +30,7 @@ import { ROLE_LABELS } from "../sim/staff";
 import {
   activeStore,
   storeById,
+  storeLabel,
   storeName,
   type DayPhase,
   type GameSpeed,
@@ -319,7 +320,7 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
         },
         [
           h("span", { cls: "bstrip__cross", attrs: { "aria-hidden": "true" }, text: "✚" }),
-          districtById(store.districtId).name,
+          storeLabel(snap, store),
           h("span", { cls: "bstrip__stars", text: `${store.repStars.toFixed(1)}★` }),
         ],
       );
@@ -479,7 +480,7 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     const store = activeStore(state);
     const whereLine =
       state.stores.length > 1
-        ? [h("p", { cls: "panel__where", text: `${storeName(store)} · switch from the tabs or the city map` })]
+        ? [h("p", { cls: "panel__where", text: `${storeName(state, store)} · switch from the tabs or the city map` })]
         : [];
     if (store.pendingEra !== null) {
       const target = eraDef(store.pendingEra);
@@ -864,7 +865,7 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     const store = storeById(sim.snapshot, e.storeId);
     toast(
       store
-        ? `Deed signed — ${storeName(store)} is yours for ${money(e.cost)}. Empty shelves, 2.5★, day one.`
+        ? `Deed signed — ${storeName(sim.snapshot, store)} is yours for ${money(e.cost)}. Empty shelves, 2.5★, day one.`
         : `Branch bought — ${money(e.cost)}`,
     );
     refreshBranchStrip();
@@ -876,7 +877,7 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     refreshMorning();
     refreshTicker(); // the storm headline names the district you stand in
     palette.refresh(); // era gates and uniqueness follow the new floor
-    toast(`Good morning, ${storeName(store)}`);
+    toast(`Good morning, ${storeName(sim.snapshot, store)}`);
   });
   bus.on("furniture.placed", () => palette.refresh());
   bus.on("furniture.sold", (e) => {
@@ -935,7 +936,7 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
   function atBranch(storeId: string): string {
     if (storeId === sim.snapshot.activeStoreId) return "";
     const store = storeById(sim.snapshot, storeId);
-    return store ? ` at ${storeName(store)}` : "";
+    return store ? ` at ${storeName(sim.snapshot, store)}` : "";
   }
 
   bus.on("order.submitted", (e) => {

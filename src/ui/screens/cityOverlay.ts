@@ -98,22 +98,29 @@ export function createCityOverlay(sim: Sim, bus: EventBus<SimEvent>): CityOverla
   // frame loop can pin it over the marker cross. Rebuilt when the network
   // grows or a store's local rep moves.
   const branchStars = new Map<string, HTMLElement>();
+  const branchNames = new Map<string, HTMLElement>();
   function refreshBranchTags(): void {
     const state = sim.snapshot;
     for (const store of state.stores) {
       const key = `branch:${store.id}`;
       let tag = tags.get(key);
       if (!tag) {
+        const name = h("span", {});
         const stars = h("span", { cls: "cityui__rivalstars" });
         tag = h("div", { cls: "cityui__tag cityui__tag--mine" }, [
           h("span", { cls: "cityui__tagcross", text: "✚" }),
-          storeName(store),
+          name,
           stars,
         ]);
         tags.set(key, tag);
+        branchNames.set(key, name);
         branchStars.set(key, stars);
         tagHost.append(tag);
       }
+      // Re-written per refresh: a second store in the district ordinal-izes
+      // every sibling's label, the founding tag included.
+      const name = branchNames.get(key);
+      if (name) name.textContent = storeName(state, store);
       const stars = branchStars.get(key);
       if (stars) stars.textContent = `${store.repStars.toFixed(1)}★`;
     }
@@ -200,7 +207,7 @@ export function createCityOverlay(sim: Sim, bus: EventBus<SimEvent>): CityOverla
       const stars = store ? store.repStars : (rival?.repStars ?? 0);
       rows.push(
         h("div", { cls: store ? "cityui__pharmrow cityui__pharmrow--mine" : "cityui__pharmrow" }, [
-          h("span", { cls: "cityui__pharmname", text: store ? storeName(store) : def!.name }),
+          h("span", { cls: "cityui__pharmname", text: store ? storeName(state, store) : def!.name }),
           h("span", { cls: "cityui__pharmstars", text: `${stars.toFixed(1)}★` }),
           h("span", { cls: "cityui__barwrap" }, [bar]),
           h("span", { cls: "cityui__pharmpct", text: `${(entry.share * 100).toFixed(0)}%` }),
@@ -219,7 +226,7 @@ export function createCityOverlay(sim: Sim, bus: EventBus<SimEvent>): CityOverla
     const out: HTMLElement[] = [
       h("p", { cls: "cityui__storehead" }, [
         h("span", { cls: "cityui__tagcross", text: "✚" }),
-        storeName(store),
+        storeName(state, store),
       ]),
       h("p", { cls: "cityui__facts" }, [
         h("span", { text: `${store.repStars.toFixed(1)}★ local` }),

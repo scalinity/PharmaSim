@@ -86,6 +86,7 @@ export function createReportsPanel(sim: Sim, bus: EventBus<SimEvent>): ReportsPa
 
   interface NetRowRefs {
     root: HTMLElement;
+    name: HTMLElement;
     where: HTMLElement;
     take: HTMLElement;
     fill: HTMLElement;
@@ -101,6 +102,7 @@ export function createReportsPanel(sim: Sim, bus: EventBus<SimEvent>): ReportsPa
     for (const store of state.stores) {
       let refs = netRows.get(store.id);
       if (!refs) {
+        const name = h("span", {});
         const where = h("span", { cls: "reports__netwhere" });
         const take = h("span", { cls: "reports__num" });
         const fill = h("span", { cls: "reports__num" });
@@ -108,15 +110,13 @@ export function createReportsPanel(sim: Sim, bus: EventBus<SimEvent>): ReportsPa
         const share = h("span", { cls: "reports__num" });
         refs = {
           root: h("div", { cls: "reports__netrow" }, [
-            h("span", { cls: "reports__netname" }, [
-              h("span", { text: storeName(store) }),
-              where,
-            ]),
+            h("span", { cls: "reports__netname" }, [name, where]),
             take,
             fill,
             rep,
             share,
           ]),
+          name,
           where,
           take,
           fill,
@@ -126,6 +126,9 @@ export function createReportsPanel(sim: Sim, bus: EventBus<SimEvent>): ReportsPa
         netRows.set(store.id, refs);
         netList.append(refs.root);
       }
+      // Re-written per refresh: a second same-district store ordinal-izes
+      // every sibling's label.
+      refs.name.textContent = storeName(state, store);
       const here = store.id === state.activeStoreId;
       refs.where.textContent = here ? "you're here today" : "";
       const take = store.gross7d[0];

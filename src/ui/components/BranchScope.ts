@@ -3,8 +3,8 @@
 // branch, Orders buys per branch. Hidden while the network is one store;
 // opening a sheet always lands on the store the player is standing in.
 
-import { districtById } from "../../data/districts";
 import type { Sim } from "../../sim/sim";
+import { storeLabel } from "../../sim/state";
 import { h } from "../dom";
 
 export interface BranchScopeHandle {
@@ -44,7 +44,7 @@ export function BranchScope(sim: Sim, onChange: () => void): BranchScopeHandle {
         },
         [
           ...(here ? [h("span", { cls: "bscope__cross", attrs: { "aria-hidden": "true" }, text: "✚" })] : []),
-          districtById(store.districtId).name,
+          storeLabel(state, store),
         ],
       );
       chip.addEventListener("pointerdown", (e) => e.preventDefault());

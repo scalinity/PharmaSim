@@ -594,7 +594,7 @@ export function createOrdersPanel(sim: Sim, bus: EventBus<SimEvent>): OrdersPane
     scope.refresh();
     formEyebrow.textContent =
       state.stores.length > 1
-        ? `Hudson Valley Drug \u00b7 order for ${storeName(store)}`
+        ? `Hudson Valley Drug \u00b7 order for ${storeName(state, store)}`
         : "Hudson Valley Drug \u00b7 wholesale order";
     transferNote.hidden = state.stores.length < 2;
     for (const row of rows.values()) refreshRow(row);

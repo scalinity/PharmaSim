@@ -70,7 +70,7 @@ function buildVisitedSheet(sim: Sim): SheetRefs {
   const { items, item, line, rule, section } = sheetBuilder();
 
   // --- Header ---
-  item(h("div", { cls: "rcpt__store", text: storeName(store).toUpperCase() }));
+  item(h("div", { cls: "rcpt__store", text: storeName(state, store).toUpperCase() }));
   item(h("div", { cls: "rcpt__meta", text: `day ${state.day} · ${seasonForDay(state.day)}` }));
   // A renovation day closes when the last customer leaves, not at 20:00 (§13).
   item(
@@ -249,7 +249,7 @@ function buildBranchSheet(sim: Sim, store: StoreState): SheetRefs {
   const summary = store.daySummary;
   const { items, item, line, rule, section } = sheetBuilder();
 
-  item(h("div", { cls: "rcpt__store", text: storeName(store).toUpperCase() }));
+  item(h("div", { cls: "rcpt__store", text: storeName(state, store).toUpperCase() }));
   item(h("div", { cls: "rcpt__meta", text: `day ${state.day} · ${seasonForDay(state.day)}` }));
   item(h("div", { cls: "rcpt__meta", text: "resolved while you were away" }));
   rule();
@@ -312,7 +312,7 @@ function buildBranchSheet(sim: Sim, store: StoreState): SheetRefs {
 
   const sheet = h(
     "div",
-    { cls: "rcpt", attrs: { role: "status", "aria-label": `${storeName(store)} branch report` } },
+    { cls: "rcpt", attrs: { role: "status", "aria-label": `${storeName(state, store)} branch report` } },
     [h("div", { cls: "rcpt__body" }, items)],
   );
   return { sheet, items };
