@@ -4,9 +4,11 @@
 // pointer. The card reads only what the store has *seen* (sim/city.ts
 // observed memory): knowledge builds by playing, never from the generator.
 
+import type { EventBus } from "../../core/bus";
 import { DISTRICTS, districtById, type FacilityKind } from "../../data/districts";
 import { observedWindow, OTC_TALLY_KEY, shareTrend } from "../../sim/city";
 import { categoryLabel, STORE_DISTRICT_ID } from "../../sim/economy";
+import type { SimEvent } from "../../sim/events";
 import type { Sim } from "../../sim/sim";
 import { h } from "../dom";
 
@@ -41,7 +43,7 @@ export interface CityOverlayHandle {
   updateLabel(id: string, screenX: number, screenY: number): void;
 }
 
-export function createCityOverlay(sim: Sim): CityOverlayHandle {
+export function createCityOverlay(sim: Sim, bus: EventBus<SimEvent>): CityOverlayHandle {
   const tags = new Map<string, HTMLElement>();
   const tagHost = h("div", { cls: "cityui__tags", attrs: { "aria-hidden": "true" } });
   for (const district of DISTRICTS) {
@@ -175,6 +177,23 @@ export function createCityOverlay(sim: Sim): CityOverlayHandle {
       ]),
     );
   }
+
+  // A card held under the pointer keeps pace with the shift behind it —
+  // the same coalesced repaint the dock sheets use, live only while a
+  // district is actually up.
+  let pending = false;
+  function invalidate(): void {
+    if (root.hidden || card.hidden || cardId === null || pending) return;
+    pending = true;
+    requestAnimationFrame(() => {
+      pending = false;
+      if (!root.hidden && !card.hidden && cardId !== null) buildCard(cardId);
+    });
+  }
+  bus.on("customer.spawned", invalidate);
+  bus.on("rx.pickedUp", invalidate);
+  bus.on("sale.completed", invalidate);
+  bus.on("day.phaseChanged", invalidate);
 
   return {
     root,

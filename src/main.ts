@@ -192,7 +192,7 @@ hud.bindBuild(picking);
 // The same camera rig serves both scenes with its own clamps and saved
 // framing per side; a soft dip hides the cut (instant under reduced motion).
 
-const cityOverlay = createCityOverlay(sim);
+const cityOverlay = createCityOverlay(sim, bus);
 hudRoot.append(cityOverlay.root);
 
 // Between the canvas and the HUD in DOM order, so the dip covers the scene
