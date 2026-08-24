@@ -74,33 +74,84 @@ export function createReportsPanel(sim: Sim, bus: EventBus<SimEvent>): ReportsPa
   const root = h("div", { cls: "reportswrap" }, [sheet]);
   root.hidden = true;
 
-  function trendCell(line: ObservedLine, priorKnown: boolean): HTMLElement {
-    // Trends only exist once a full prior window is on the books, and only
-    // the weekly view has one (the log holds the §17 28-day window).
-    if (windowDays !== 7 || !priorKnown) {
-      return h("span", { cls: "reports__trend reports__trend--none", text: "—" });
-    }
-    if (line.priorAsked === 0) {
-      return h("span", { cls: "reports__trend reports__trend--new", text: "new" });
-    }
-    const ratio = line.asked / line.priorAsked;
-    if (ratio > 1.25) return h("span", { cls: "reports__trend reports__trend--up", text: "↑" });
-    if (ratio < 0.75) return h("span", { cls: "reports__trend reports__trend--down", text: "↓" });
-    return h("span", { cls: "reports__trend", text: "→" });
+  // The ledger's rows live for the panel's whole life and update through
+  // cached refs (§30) — refresh writes textContent and classes; nodes are
+  // made only when a category first shows up, and removed only when it
+  // ages out of the window. The rows host is its own wrapper so the
+  // green-bar striping counts data rows, not the district heading.
+  interface RowRefs {
+    root: HTMLElement;
+    asked: HTMLElement;
+    served: HTMLElement;
+    short: HTMLElement;
+    trend: HTMLElement;
   }
 
-  function row(label: string, line: ObservedLine, priorKnown: boolean, front: boolean): HTMLElement {
-    const short = Math.max(0, line.asked - line.served);
-    return h("div", { cls: front ? "reports__row reports__row--front" : "reports__row" }, [
+  interface DistrictBlock {
+    rowsHost: HTMLElement;
+    none: HTMLElement;
+    rows: Map<string, RowRefs>;
+  }
+
+  const blocks = new Map<string, DistrictBlock>();
+  for (const district of DISTRICTS) {
+    const swatch = h("span", { cls: "reports__swatch", attrs: { "aria-hidden": "true" } });
+    swatch.style.background = hex(DISTRICT_MAPS[district.id]!.tint);
+    const rowsHost = h("div", { cls: "reports__rows" });
+    const none = h("p", { cls: "reports__none", text: "Nothing seen from here yet." });
+    list.append(
+      h("section", { cls: "reports__district" }, [
+        h("h3", { cls: "reports__districtname" }, [swatch, district.name]),
+        rowsHost,
+        none,
+      ]),
+    );
+    blocks.set(district.id, { rowsHost, none, rows: new Map() });
+  }
+
+  function makeRow(label: string, front: boolean): RowRefs {
+    const asked = h("span", { cls: "reports__num" });
+    const served = h("span", { cls: "reports__num" });
+    const short = h("span", { cls: "reports__num" });
+    const trend = h("span", { cls: "reports__trend" });
+    const row = h("div", { cls: front ? "reports__row reports__row--front" : "reports__row" }, [
       h("span", { cls: "reports__name", text: label }),
-      h("span", { cls: "reports__num", text: String(line.asked) }),
-      h("span", { cls: "reports__num", text: String(line.served) }),
-      h("span", {
-        cls: short > 0 ? "reports__num reports__num--short" : "reports__num reports__num--zero",
-        text: short > 0 ? `short ${short}` : "·",
-      }),
-      trendCell(line, priorKnown),
+      asked,
+      served,
+      short,
+      trend,
     ]);
+    return { root: row, asked, served, short, trend };
+  }
+
+  function updateRow(refs: RowRefs, line: ObservedLine, priorKnown: boolean): void {
+    refs.asked.textContent = String(line.asked);
+    refs.served.textContent = String(line.served);
+    const short = Math.max(0, line.asked - line.served);
+    refs.short.textContent = short > 0 ? `short ${short}` : "·";
+    refs.short.className =
+      short > 0 ? "reports__num reports__num--short" : "reports__num reports__num--zero";
+    // Trends only exist once a full prior window is on the books, and only
+    // the weekly view can have one (the log holds the §17 28-day window).
+    if (windowDays !== 7 || !priorKnown) {
+      refs.trend.textContent = "—";
+      refs.trend.className = "reports__trend reports__trend--none";
+    } else if (line.priorAsked === 0) {
+      refs.trend.textContent = "new";
+      refs.trend.className = "reports__trend reports__trend--new";
+    } else {
+      const ratio = line.asked / line.priorAsked;
+      if (ratio > 1.25) {
+        refs.trend.textContent = "↑";
+        refs.trend.className = "reports__trend reports__trend--up";
+      } else if (ratio < 0.75) {
+        refs.trend.textContent = "↓";
+        refs.trend.className = "reports__trend reports__trend--down";
+      } else {
+        refs.trend.textContent = "→";
+        refs.trend.className = "reports__trend";
+      }
+    }
   }
 
   function refresh(): void {
@@ -112,31 +163,40 @@ export function createReportsPanel(sim: Sim, bus: EventBus<SimEvent>): ReportsPa
         ? "No routed days yet"
         : `City share ≈${(trend.current * 100).toFixed(1)}%`;
 
-    list.replaceChildren();
     for (const district of DISTRICTS) {
+      const block = blocks.get(district.id)!;
       const seen = observedWindow(state, district.id, windowDays);
-      const rx = seen.lines.filter((l) => l.key !== OTC_TALLY_KEY && (l.asked > 0 || l.served > 0));
-      const otc = seen.lines.find((l) => l.key === OTC_TALLY_KEY);
+      const live = new Set<string>();
 
-      const swatch = h("span", { cls: "reports__swatch", attrs: { "aria-hidden": "true" } });
-      swatch.style.background = hex(DISTRICT_MAPS[district.id]!.tint);
-      const block = h("section", { cls: "reports__district" }, [
-        h("h3", { cls: "reports__districtname" }, [swatch, district.name]),
-      ]);
-
-      if (rx.length === 0 && (!otc || otc.asked === 0)) {
-        block.append(
-          h("p", { cls: "reports__none", text: "Nothing seen from here yet." }),
-        );
-      } else {
-        for (const line of rx) {
-          block.append(row(categoryLabel(line.key), line, seen.priorKnown, false));
+      const upsert = (key: string, label: string, line: ObservedLine, front: boolean): void => {
+        live.add(key);
+        let refs = block.rows.get(key);
+        if (!refs) {
+          refs = makeRow(label, front);
+          block.rows.set(key, refs);
         }
-        if (otc && otc.asked > 0) {
-          block.append(row("front store", otc, seen.priorKnown, true));
+        updateRow(refs, line, seen.priorKnown);
+        // Ordered append: an already-parented node just moves, so the rows
+        // track the asked-desc sort with no allocation.
+        block.rowsHost.append(refs.root);
+      };
+
+      for (const line of seen.lines) {
+        if (line.key === OTC_TALLY_KEY || (line.asked === 0 && line.served === 0)) continue;
+        upsert(line.key, categoryLabel(line.key), line, false);
+      }
+      const otc = seen.lines.find((l) => l.key === OTC_TALLY_KEY);
+      if (otc && otc.asked > 0) upsert(OTC_TALLY_KEY, "front store", otc, true);
+
+      // Categories that aged out of this window come off the sheet — a
+      // hidden row would still count against the nth-child striping.
+      for (const [key, refs] of block.rows) {
+        if (!live.has(key)) {
+          refs.root.remove();
+          block.rows.delete(key);
         }
       }
-      list.append(block);
+      block.none.hidden = block.rows.size > 0;
     }
   }
 

@@ -3860,8 +3860,9 @@ html.app-shell .topbar {
   padding: 2px 20px;
 }
 
-/* Green-bar ledger striping, like the receipt's book (§28). */
-.reports__row:nth-child(odd) {
+/* Green-bar ledger striping, like the receipt's book (§28). The rows sit
+   in their own wrapper so the district heading doesn't shift the bands. */
+.reports__rows > .reports__row:nth-child(odd) {
   background: rgba(47, 107, 79, 0.05);
 }
 
