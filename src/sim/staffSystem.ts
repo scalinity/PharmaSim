@@ -623,17 +623,18 @@ export class StaffSystem {
     member: StaffMember,
     assigned: PlacedFurniture | null,
   ): PlacedFurniture | null {
+    const store = activeStore(state);
     let best: PlacedFurniture | null = null;
     let bestNeed = 0;
     if (assigned && FRONT_DEFS.has(assigned.defId)) {
       bestNeed = this.stationNeed(assigned);
       if (bestNeed > 0) best = assigned;
     }
-    for (const item of activeStore(state).furniture) {
+    for (const item of store.furniture) {
       if (!FRONT_DEFS.has(item.defId)) continue;
       if (item.id === assigned?.id) continue;
       if (item.id === state.workingStationId) continue;
-      const owned = activeStore(state).staff.some(
+      const owned = store.staff.some(
         (m) => m.id !== member.id && m.assignment?.stationId === item.id,
       );
       if (owned) continue;
@@ -661,13 +662,14 @@ export class StaffSystem {
     member: StaffMember,
     assigned: PlacedFurniture | null,
   ): PlacedFurniture | null {
+    const store = activeStore(state);
     let best: PlacedFurniture | null = null;
     let bestNeed = 0;
-    for (const item of activeStore(state).furniture) {
+    for (const item of store.furniture) {
       if (item.defId !== "vaccine_station") continue;
       if (item.id === state.workingStationId) continue;
       if (item.id !== assigned?.id) {
-        const owned = activeStore(state).staff.some(
+        const owned = store.staff.some(
           (m) => m.id !== member.id && m.assignment?.stationId === item.id,
         );
         if (owned) continue;
@@ -687,9 +689,10 @@ export class StaffSystem {
 
   /** Nearest shelf or bin worth a Stock Hawk's trip, uncontested. */
   private restockTarget(state: GameState, agent: StaffAgent): PlacedFurniture | null {
+    const store = activeStore(state);
     let best: PlacedFurniture | null = null;
     let bestDist = Infinity;
-    for (const item of activeStore(state).furniture) {
+    for (const item of store.furniture) {
       if (!RESTOCK_DEFS.has(item.defId)) continue;
       const units = restockableUnits(state, item.id);
       if (units <= 0) continue;
