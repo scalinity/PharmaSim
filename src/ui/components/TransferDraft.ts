@@ -167,6 +167,12 @@ export function TransferDraft(sim: Sim, options: TransferDraftOptions = {}): Tra
         });
         chip.addEventListener("pointerdown", (e) => e.preventDefault());
         chip.addEventListener("click", () => {
+          // A chip switch is structural: let go of any focused qty field
+          // first, or the mid-edit guard would swallow this repaint and
+          // the slip would keep drawing the old branch (the dispatch
+          // board's dropFocus rule).
+          const active = document.activeElement;
+          if (active instanceof HTMLElement) active.blur();
           pickedTarget = store.id;
           refresh();
         });
