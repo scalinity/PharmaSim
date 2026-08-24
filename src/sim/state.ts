@@ -2,7 +2,7 @@
 
 import { DAY_START_IGM } from "../core/clock";
 import type { Rot } from "../core/grid";
-import { COMPETITOR_DEFS, type DriftMove } from "../data/competitors";
+import { COMPETITOR_DEFS, type CounselLevel, type DriftMove } from "../data/competitors";
 import type { RxCategory } from "../data/districts";
 import type { HiringPool, StaffMember } from "./staff";
 
@@ -164,7 +164,7 @@ export interface CompetitorState {
   homeDistrictId: string;
   priceIndex: number;
   repStars: number;
-  counsel: "low" | "mid" | "high";
+  counsel: CounselLevel;
   stockReliability: number;
 }
 
