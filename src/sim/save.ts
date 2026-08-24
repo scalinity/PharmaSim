@@ -106,7 +106,13 @@ import { isLegacyMoment } from "../data/flavor";
 // back (a cycle would surface as a TDZ crash at module evaluation).
 import { DISTRICT_SHARE_LOG_DAYS, PLAYER_PHARMACY_ID } from "./city";
 import { CHRONIC_CATEGORIES, poolKeyOf, TRANSFER_CAP } from "./competitors";
-import type { HiringPool, StaffMember } from "./staff";
+import {
+  HIREABLE_ROLES,
+  POOL_PER_ROLE,
+  TRAIT_LABELS,
+  type HiringPool,
+  type StaffMember,
+} from "./staff";
 import {
   defaultSettings,
   freshCityState,
@@ -481,6 +487,33 @@ function isPoolId(id: string): boolean {
   return DISTRICT_IDS.has(id.slice(0, sep)) && CHRONIC_SET.has(id.slice(sep + 1));
 }
 
+// --- §9 roster validation vocabulary ---
+
+const STAFF_ROLES: ReadonlySet<string> = new Set(HIREABLE_ROLES);
+const STAFF_TRAITS: ReadonlySet<string> = new Set(Object.keys(TRAIT_LABELS));
+
+/** Shared shape of a roster member and a hiring candidate. §26's tables
+ *  index speed/accuracy/warmth as 1–5 directly (SPEED_CURVE[speed - 1]),
+ *  and the wage posts to cash — a hand-edited stat outside the range walks
+ *  NaN through the branch resolver's capacity into the validated
+ *  daySummary, and the *next* autosave is refused for a corruption written
+ *  a boot earlier (the header's exact failure mode). */
+function isReadableStaff(person: RawSave, wageKey: "dailyWage" | "wageAsked"): boolean {
+  if (typeof person.id !== "string" || person.id.length === 0) return false;
+  if (typeof person.name !== "string") return false;
+  if (typeof person.role !== "string" || !STAFF_ROLES.has(person.role)) return false;
+  for (const key of ["speed", "accuracy", "warmth"]) {
+    const value = person[key];
+    if (typeof value !== "number" || !Number.isInteger(value) || value < 1 || value > 5) {
+      return false;
+    }
+  }
+  if (typeof person.trait !== "string" || !STAFF_TRAITS.has(person.trait)) return false;
+  const wage = person[wageKey];
+  if (typeof wage !== "number" || !Number.isFinite(wage) || wage < 0) return false;
+  return true;
+}
+
 function validate(file: RawSave): SaveFile {
   // Finiteness matters as much as the type: JSON.parse happily yields
   // Infinity from "1e999", and NaN survives every typeof check.
@@ -800,6 +833,18 @@ function validate(file: RawSave): SaveFile {
     for (const value of store.fillRate7d as unknown[]) {
       if (typeof value !== "number" || !Number.isFinite(value)) reject("a readable fill rate");
     }
+    // The roster walks into crewProfile and its wages into closeDay — cap
+    // and check per row, like every other §24 array.
+    const roster = store.staff as unknown[];
+    if (roster.length > 64) reject("a sane roster");
+    for (const entry of roster) {
+      const member = requireObject(entry, "a staff member");
+      if (!isReadableStaff(member, "dailyWage")) reject("a readable staff member");
+      if (member.assignment !== undefined) {
+        const assignment = requireObject(member.assignment, "a staff assignment");
+        if (typeof assignment.stationId !== "string") reject("a staff assignment");
+      }
+    }
     // The §19 day summary renders straight onto the receipt's branch page.
     if (store.daySummary !== null) {
       const summary = requireObject(store.daySummary, "a branch day summary");
@@ -832,6 +877,16 @@ function validate(file: RawSave): SaveFile {
 
   const hiring = requireObject(file.hiring, "hiring pool");
   requireArray(hiring.candidates, "hiring candidates");
+  // The pool draws exactly POOL_PER_ROLE per hireable role (§9); anything
+  // larger is a corrupt file's rendered card pile. A candidate carries the
+  // same §26-indexed stats as a roster member, wageAsked in place of a wage.
+  if ((hiring.candidates as unknown[]).length > HIREABLE_ROLES.length * POOL_PER_ROLE) {
+    reject("a sane application pile");
+  }
+  for (const entry of hiring.candidates as unknown[]) {
+    const candidate = requireObject(entry, "hiring candidates");
+    if (!isReadableStaff(candidate, "wageAsked")) reject("readable job applications");
+  }
 
   const stats = requireObject(file.dayStats, "day totals");
   for (const key of ["ledger", "stockOuts", "balks", "repReasons"]) {
