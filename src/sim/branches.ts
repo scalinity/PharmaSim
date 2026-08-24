@@ -74,23 +74,20 @@ function takeUnit(store: StoreState, skuId: string): void {
   else if (line.backroom > 0) line.backroom--;
 }
 
-/** Weighted §25 draw among this category's in-stock, fillable SKUs. */
-function drawStockedDrug(
-  state: GameState,
-  store: StoreState,
-  category: RxCategory,
-): DrugDef | null {
+/** Weighted §25 draw among a category's fillable SKUs, in-stock only. The
+ *  caller memoizes the fillable list per category for the whole resolution
+ *  (licenses and equipment can't move mid-close); stock filters at draw
+ *  time, since every serve moves it. */
+function drawStockedDrug(store: StoreState, drugs: readonly DrugDef[]): DrugDef | null {
   let total = 0;
-  for (const def of DRUG_DEFS) {
-    if (def.category !== category) continue;
-    if (!canFillDrug(state, store, def) || onHand(store, def.id) <= 0) continue;
+  for (const def of drugs) {
+    if (onHand(store, def.id) <= 0) continue;
     total += def.demandWeight;
   }
   if (total <= 0) return null;
   let u = Math.random() * total;
-  for (const def of DRUG_DEFS) {
-    if (def.category !== category) continue;
-    if (!canFillDrug(state, store, def) || onHand(store, def.id) <= 0) continue;
+  for (const def of drugs) {
+    if (onHand(store, def.id) <= 0) continue;
     u -= def.demandWeight;
     if (u <= 0) return def;
   }
@@ -266,13 +263,26 @@ export function resolveBranchDay(
   // §26 accuracy: a mis-pick that slips past verification reaches a bag.
   const incidentRate = crew.errorRate * (1 - crew.catchRate);
 
+  // §25 draw tables, one canFillDrug × DRUG_DEFS walk per category for the
+  // whole resolution instead of two per script — city.ts's categoryDraws is
+  // the same shape for the visited floor.
+  const fillable = new Map<RxCategory, DrugDef[]>();
+  const fillableIn = (category: RxCategory): DrugDef[] => {
+    let drugs = fillable.get(category);
+    if (!drugs) {
+      drugs = DRUG_DEFS.filter((def) => def.category === category && canFillDrug(state, store, def));
+      fillable.set(category, drugs);
+    }
+    return drugs;
+  };
+
   for (const script of scripts) {
     recordSeen(state, script.districtId, script.category);
     if (rxServed >= rxBudget) {
       capacityMissed++; // the line outlasted the crew
       continue;
     }
-    const drug = drawStockedDrug(state, store, script.category);
+    const drug = drawStockedDrug(store, fillableIn(script.category));
     if (drug === null) {
       stockOuts++;
       continue;
