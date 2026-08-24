@@ -938,6 +938,10 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     ) {
       return;
     }
+    // Behind the title/pause/settings the shell already swallows every key
+    // in its capture handler — but the HUD shouldn't depend on that detail:
+    // while it is hidden, its keys are simply not bound.
+    if (root.hidden) return;
     if (e.code === "Space") {
       if (e.target instanceof HTMLElement) {
         const button = e.target.closest("button");
