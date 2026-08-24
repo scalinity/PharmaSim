@@ -22,8 +22,9 @@ export const PRICE_STEP = 0.05;
 export const BALK_BARGAIN = 1.15;
 export const BALK_ALL = 1.35;
 
-/** §11/§17 trailing windows. */
-const HISTORY_DAYS = 7;
+/** §11/§17 trailing windows. Exported so save validation bounds exactly
+ *  what pushHistory keeps (the same pattern as DISTRICT_SHARE_LOG_DAYS). */
+export const HISTORY_DAYS = 7;
 
 type Emit = (event: SimEvent) => void;
 

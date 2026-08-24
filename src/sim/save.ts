@@ -106,6 +106,7 @@ import { isLegacyMoment } from "../data/flavor";
 // back (a cycle would surface as a TDZ crash at module evaluation).
 import { DISTRICT_SHARE_LOG_DAYS, PLAYER_PHARMACY_ID } from "./city";
 import { CHRONIC_CATEGORIES, poolKeyOf, TRANSFER_CAP } from "./competitors";
+import { HISTORY_DAYS } from "./inventory";
 import {
   HIREABLE_ROLES,
   POOL_PER_ROLE,
@@ -782,7 +783,8 @@ function validate(file: RawSave): SaveFile {
   }
 
   // §19/§24 stores: at most one branch on each district's lot plus the
-  // founding store — eight is comfortably past any file the game can write.
+  // founding store — seven is the most the game can write; eight leaves a
+  // one-store margin.
   requireArray(file.stores, "stores");
   const storeList = file.stores as unknown[];
   if (storeList.length < 1 || storeList.length > 8) reject("a sane store list");
@@ -830,8 +832,23 @@ function validate(file: RawSave): SaveFile {
     if (typeof store.priceIndex !== "number" || !Number.isFinite(store.priceIndex)) {
       reject("a readable price index");
     }
+    // pushHistory truncates all three to the §11 window on every write, so
+    // anything longer is a corrupt file — and this loop walks per entry
+    // (the file's own cap-anything-walked-per-row rule).
+    if (
+      (store.fillRate7d as unknown[]).length > HISTORY_DAYS ||
+      (store.gross7d as unknown[]).length > HISTORY_DAYS ||
+      (store.salesLog as unknown[]).length > HISTORY_DAYS - 1
+    ) {
+      reject("a sane sales history");
+    }
     for (const value of store.fillRate7d as unknown[]) {
       if (typeof value !== "number" || !Number.isFinite(value)) reject("a readable fill rate");
+    }
+    // gross7d feeds bankStatus's credit line the same way fillRate7d feeds
+    // §17 routing — a NaN here becomes NaN loan math two boots later.
+    for (const value of store.gross7d as unknown[]) {
+      if (typeof value !== "number" || !Number.isFinite(value)) reject("a readable gross history");
     }
     // The roster walks into crewProfile and its wages into closeDay — cap
     // and check per row, like every other §24 array.
