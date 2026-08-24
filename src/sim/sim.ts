@@ -69,18 +69,25 @@ export class Sim {
     const { cols: colsBefore, rows: rowsBefore } = this.state.store.grid;
     const pendingEraBefore = this.state.pendingEra;
     const dayBefore = this.state.day;
+    const phaseBefore = this.state.phase;
     handleCommand(this.state, command, this.emit);
     switch (command.type) {
       case "store.open":
-        // A renovation morning opens onto scaffolding, not a shift: nobody is
-        // scheduled, and the empty floor closes the day on the first tick.
-        if (this.state.phase === "shift" && this.state.pendingEra === null) {
-          this.customers.beginDay(this.state);
-          this.dayPlanned = true;
-        }
-        // §16 rain bed for a storm day — a hook milestone 17's audio takes.
-        if (this.state.phase === "shift" && stormToday(this.state)) {
-          this.bus.emit({ type: "ambience.rain", on: true });
+        // Only when the handler actually opened (morning → shift) — a
+        // refused mid-shift dispatch still reads phase "shift", and a
+        // second beginDay would re-roll arrivals and double-log the day's
+        // routed share. A renovation morning opens onto scaffolding, not a
+        // shift: nobody is scheduled, and the empty floor closes the day
+        // on the first tick.
+        if (phaseBefore === "morning" && this.state.phase === "shift") {
+          if (this.state.pendingEra === null) {
+            this.customers.beginDay(this.state);
+            this.dayPlanned = true;
+          }
+          // §16 rain bed for a storm day — a hook milestone 17's audio takes.
+          if (stormToday(this.state)) {
+            this.bus.emit({ type: "ambience.rain", on: true });
+          }
         }
         break;
       case "era.renovate":
