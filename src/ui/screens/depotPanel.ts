@@ -22,6 +22,7 @@ import {
   TRUCK_COST,
   TRUCK_MAX_STOPS,
   truckLabel,
+  unallocatedUnits,
   validateTruckConfig,
 } from "../../sim/dc";
 import type { SimEvent } from "../../sim/events";
@@ -129,7 +130,7 @@ export function createDepotPanel(sim: Sim, bus: EventBus<SimEvent>): DepotPanelH
     }
     for (const skuId of skus) {
       const held = dc.stock[skuId]!;
-      const free = Math.max(0, held - allocatedUnits(dc, skuId));
+      const free = unallocatedUnits(dc, skuId);
       stockList.append(
         h("span", { cls: "depot__sku" }, [
           h("span", { cls: "depot__skuname", text: nameOf(skuId) }),
