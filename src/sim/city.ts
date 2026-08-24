@@ -244,11 +244,18 @@ export function drawScriptDrugIn(state: GameState, category: RxCategory): DrugDe
  *  categories — a visit is "asked", a completed checkout is "served". */
 export const OTC_TALLY_KEY = "otc";
 
+/** The only keys a tally may file under. The narrowing is load-bearing:
+ *  tallyFor `??=`-writes into save-hydrated objects, the read-then-assign
+ *  shape sim/inventory.ts guards against prototype-chain keys — here the
+ *  type keeps every caller on code-owned ids instead (M13's competitor
+ *  routing must not widen this back to `string`). */
+export type ObservedKey = RxCategory | typeof OTC_TALLY_KEY;
+
 /** Trailing days kept beside today — with it, the §17 28-day window. */
 const CITY_LOG_DAYS = 27;
 const SHARE_LOG_DAYS = 28;
 
-function tallyFor(city: CityState, districtId: string, key: string): [number, number] {
+function tallyFor(city: CityState, districtId: string, key: ObservedKey): [number, number] {
   const district = (city.today[districtId] ??= {});
   return (district[key] ??= [0, 0]);
 }
@@ -256,13 +263,13 @@ function tallyFor(city: CityState, districtId: string, key: string): [number, nu
 /** Demand walked through the door: an Rx patient's category, or an OTC
  *  shopper's visit. Recorded at spawn — a walk-out or refusal was still
  *  demand the player saw. */
-export function recordSeen(state: GameState, districtId: string, key: string): void {
+export function recordSeen(state: GameState, districtId: string, key: ObservedKey): void {
   tallyFor(state.city, districtId, key)[0] += 1;
 }
 
 /** Demand actually served: a script handed over at pickup, or an OTC
  *  checkout rung up. */
-export function recordServed(state: GameState, districtId: string, key: string): void {
+export function recordServed(state: GameState, districtId: string, key: ObservedKey): void {
   tallyFor(state.city, districtId, key)[1] += 1;
 }
 
