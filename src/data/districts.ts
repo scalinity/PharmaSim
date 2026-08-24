@@ -309,9 +309,11 @@ export const ROADS: readonly RoadDef[] = [
 export const DEPOT_ID = "depot";
 
 /** Where the §20 distribution center stands: open ground on the east edge
- *  of town, clear of every district plate, its spur meeting the
- *  medicalDistrict↔downtown road at the [20, 1] waypoint. */
-export const DEPOT_SITE: [x: number, z: number] = [30, 2];
+ *  of town, its yard and hover disc clear of every district plate (the
+ *  nearest, downtown's r=13 at [20,−14], passes ~13.8 from the apron's
+ *  closest corner), its spur meeting the medicalDistrict↔downtown road at
+ *  the [20, 1] waypoint. */
+export const DEPOT_SITE: [x: number, z: number] = [34, 2];
 
 /** Rough footprint radius — the map's hover hit area for the depot lot. */
 export const DEPOT_RADIUS = 6;
@@ -320,7 +322,7 @@ export const DEPOT_RADIUS = 6;
  *  than in it: ROADS is one ribbon per §17 adjacency edge, and the depot
  *  is a building, not a district. */
 export const DEPOT_SPUR: readonly [x: number, z: number][] = [
-  [30, 2],
+  [34, 2],
   [20, 1],
 ];
 
