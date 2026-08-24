@@ -468,6 +468,10 @@ function validate(file: RawSave): SaveFile {
     const record = requireObject(day, "observed demand");
     for (const tally of Object.values(record)) {
       const lines = requireObject(tally, "district tallies");
+      // Twelve §24 categories plus the OTC key is the real ceiling; every
+      // key beyond it is a corrupt file's rendered ledger row — refuse,
+      // don't crawl (same rule as the event schedules above).
+      if (Object.keys(lines).length > 16) reject("a sane district tally");
       for (const line of Object.values(lines)) {
         if (
           !Array.isArray(line) ||
