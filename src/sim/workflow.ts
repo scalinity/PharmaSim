@@ -11,6 +11,7 @@ import { IGM_PER_TICK } from "../core/clock";
 import { DRUG_DEFS, drugDef, type DrugDef } from "../data/drugs";
 import type { SimEvent } from "./events";
 import { binFixtureFor, returnShelved, takeShelved } from "./inventory";
+import { fillableDrugs } from "./licenses";
 import { OWNER_CATCH_RATE } from "./staff";
 import type { GameState } from "./state";
 
