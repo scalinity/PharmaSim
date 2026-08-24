@@ -252,7 +252,13 @@ export function recordPoolStrike(
   for (const entry of rivals) {
     if (best === null || entry.attractiveness > best.attractiveness) best = entry;
   }
-  if (best === null) return; // no rivals in a hand-edited save: nowhere to go
+  if (best === null) {
+    // Nowhere to go. Validation refuses a rival-less save today, but the
+    // strike book must still settle — an ever-growing array would be the
+    // one state the game can write and its own validator then refuses.
+    pool.strikes.length = 0;
+    return;
+  }
   const reason = reasonFromStrikes(pool.strikes);
   pool.pharmacyId = best.pharmacyId;
   pool.strikes.length = 0;
