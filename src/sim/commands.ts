@@ -633,6 +633,9 @@ export function handleCommand(
       return;
     }
     case "truck.setRoute": {
+      // No close-phase guard on purpose, unlike its purchase siblings: a
+      // manifest edit moves no cash and touches nothing until the next
+      // morning — the same standing-draft rule as reorder.setRule.
       if (state.dc === null) return;
       const truck = state.dc.trucks.find((t) => t.id === command.truckId);
       if (!truck) return;
