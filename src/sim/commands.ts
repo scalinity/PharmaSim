@@ -481,7 +481,17 @@ export function handleCommand(
       if (lotTaken) return;
       const price = branchPrice(districtId);
       if (state.cash < price.total) return;
-      const store = freshStore(`s${state.stores.length + 1}`, districtId);
+      // Count past the highest suffix actually present, not the array
+      // length: validate() accepts any unique ids, so an imported
+      // ["s1","s3"] file is legal — length + 1 would mint a second "s3",
+      // alias every lookup onto the first, and the next autosave would be
+      // refused for duplicate ids at the following boot.
+      let suffix = 0;
+      for (const s of state.stores) {
+        const match = /^s(\d+)$/.exec(s.id);
+        if (match) suffix = Math.max(suffix, Number(match[1]));
+      }
+      const store = freshStore(`s${suffix + 1}`, districtId);
       state.stores.push(store);
       state.stats[`branch.${districtId}`] = state.day;
       post(state, "branch.purchase", -price.total, emit);
