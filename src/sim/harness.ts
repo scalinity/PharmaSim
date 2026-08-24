@@ -455,6 +455,12 @@ export function runHarness(seed = 1, days = 56): HarnessReport {
         bank: Math.round(state.loans.bank),
         bankLimit: bankStatus(state).limit,
       });
+      // Deliberate step around the phase machine: the real close is Sim's
+      // tick loop (customers drained, drift, rollHistory) and the harness
+      // just resolved that day off-screen above — this write only satisfies
+      // day.advance's phase guard so beginMorning runs the true turnover.
+      // If day.advance ever gains a precondition beyond the phase check,
+      // this line must learn it too.
       state.phase = "close";
       handleCommand(state, { type: "day.advance" }, noop);
     }
