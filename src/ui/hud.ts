@@ -1030,6 +1030,10 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     },
     setCityActive: (on) => {
       cityActive = on;
+      // Whatever sheet was on the counter goes down with the swap — the
+      // map arrives clean, and Escape means "back to the store", not
+      // "close the sheet first". Reports reopens over the map with R.
+      if (on) setPanel(null);
       cityPill.classList.toggle("pill--primary", on);
       cityPill.classList.toggle("pill--secondary", !on);
       cityPill.setAttribute("aria-pressed", String(on));
