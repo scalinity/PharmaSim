@@ -11,7 +11,13 @@
 import type { RxCategory } from "../data/districts";
 import { DRUG_DEFS, type DrugDef } from "../data/drugs";
 import { OTC_DEFS } from "../data/otc";
-import { OTC_TALLY_KEY, recordSeen, recordServed, routedBranchDay } from "./city";
+import {
+  OTC_TALLY_KEY,
+  recordSeen,
+  recordServed,
+  routedBranchDay,
+  type BranchDemand,
+} from "./city";
 import { COPAY, post, round2 } from "./economy";
 import type { SimEvent } from "./events";
 import { onHand, otcPrice, pushHistory, recordSale } from "./inventory";
@@ -194,10 +200,20 @@ function crewProfile(store: StoreState): CrewProfile {
  * money as one "Branch sales" line, and the §26 accuracy tables roll real
  * dispensing errors — refunded on the spot, itemized on the branch's
  * receipt page.
+ *
+ * `demand` is routed by the caller before *any* branch resolves (null for a
+ * scaffolding day): each resolution moves repStars and fillRate7d, which
+ * districtShares reads live — scored one at a time, the same network would
+ * close differently depending on purchase order.
  */
-export function resolveBranchDay(state: GameState, store: StoreState, emit: Emit): void {
+export function resolveBranchDay(
+  state: GameState,
+  store: StoreState,
+  demand: BranchDemand | null,
+  emit: Emit,
+): void {
   // §13: a branch under scaffolding is closed — nothing to resolve.
-  if (store.pendingEra !== null) {
+  if (store.pendingEra !== null || demand === null) {
     store.daySummary = {
       day: state.day,
       demand: 0,
@@ -219,7 +235,6 @@ export function resolveBranchDay(state: GameState, store: StoreState, emit: Emit
   }
 
   const crew = crewProfile(store);
-  const demand = routedBranchDay(state, store);
 
   // The §19 aggregate the receipt page quotes.
   const capacity =
@@ -350,14 +365,24 @@ export function resolveBranchDay(state: GameState, store: StoreState, emit: Emit
  * their neighborhoods).
  */
 export function resolveUnvisitedBranches(state: GameState, emit: Emit): number {
-  let resolved = 0;
+  // Snapshot first, resolve second: every branch's routed demand is scored
+  // against the same pre-close books, so the array order can't change what
+  // the same network serves on the same day.
+  const days: { store: StoreState; demand: BranchDemand | null }[] = [];
   for (const store of state.stores) {
     if (store.id === state.activeStoreId) {
       // The visited day speaks for itself on the itemized receipt.
       store.daySummary = null;
       continue;
     }
-    resolveBranchDay(state, store, emit);
+    days.push({
+      store,
+      demand: store.pendingEra !== null ? null : routedBranchDay(state, store),
+    });
+  }
+  let resolved = 0;
+  for (const { store, demand } of days) {
+    resolveBranchDay(state, store, demand, emit);
     resolved++;
   }
   return resolved;
