@@ -6,13 +6,13 @@
 
 import type { EventBus } from "../core/bus";
 import { DAYS_PER_SEASON, dayProgress, formatClock, seasonForDay, type Season } from "../core/clock";
-import { verifyAssistOfflineReason } from "../sim/aitech";
 import { competitorDef, driftHeadline } from "../data/competitors";
 import { districtById } from "../data/districts";
 import { drugDef } from "../data/drugs";
 import { legacyMomentDef } from "../data/flavor";
 import { furnitureDef, STATION_NAMES } from "../data/furniture";
 import { otcDef } from "../data/otc";
+import { verifyAssistOfflineReason } from "../sim/aitech";
 import {
   fridgeCapacity,
   fridgeCount,
