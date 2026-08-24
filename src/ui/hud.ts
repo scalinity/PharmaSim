@@ -959,6 +959,9 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     } else if (e.code === "KeyB" && !e.repeat && cityActive) {
       // The store's own B handler (render/picking.ts) sleeps under the map;
       // from here the key walks back inside and opens the build sheet.
+      // build.enter lands ~180 ms before the scene returns, deliberately:
+      // the fade's opaque dip covers that window, so the palette is already
+      // in place when the store appears instead of popping in after it.
       city?.toggle();
       sim.dispatch({ type: "build.enter" });
     } else if (e.code === "KeyO" && !e.repeat) {
