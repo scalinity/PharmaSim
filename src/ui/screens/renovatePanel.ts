@@ -137,6 +137,9 @@ export function createRenovatePanel(sim: Sim, bus: EventBus<SimEvent>): Renovate
     title: string;
     scopeLine: string;
     capability: string;
+    /** Ownership decides the card's face; the day only decorates the
+     *  stamp — a save missing the stat must never re-offer the buy pill. */
+    owned: boolean;
     ownedDay: number | null;
     offlineReason: string | null;
     ownedNote: string;
@@ -154,9 +157,12 @@ export function createRenovatePanel(sim: Sim, bus: EventBus<SimEvent>): Renovate
       h("p", { cls: "aimod__scope", text: options.scopeLine }),
       h("p", { cls: "reno__look", text: options.capability }),
     ];
-    if (options.ownedDay !== null) {
+    if (options.owned) {
       const foot = h("div", { cls: "reno__foot" }, [
-        h("span", { cls: "reno__stamp", text: `Installed · day ${options.ownedDay}` }),
+        h("span", {
+          cls: "reno__stamp",
+          text: options.ownedDay !== null ? `Installed · day ${options.ownedDay}` : "Installed",
+        }),
       ]);
       body.push(foot);
       body.push(
@@ -177,10 +183,9 @@ export function createRenovatePanel(sim: Sim, bus: EventBus<SimEvent>): Renovate
       options.bind(buy, note);
       body.push(h("div", { cls: "reno__foot reno__foot--buy" }, [buy, note]));
     }
-    const owned = options.ownedDay !== null;
-    return h("article", { cls: `reno__card aimod reno__card--${owned ? "current" : "next"}` }, [
+    return h("article", { cls: `reno__card aimod reno__card--${options.owned ? "current" : "next"}` }, [
       h("span", {
-        cls: `reno__dot reno__dot--${owned ? "current" : "next"}`,
+        cls: `reno__dot reno__dot--${options.owned ? "current" : "next"}`,
         attrs: { "aria-hidden": "true" },
       }),
       h("div", { cls: "reno__paper" }, body),
@@ -204,6 +209,7 @@ export function createRenovatePanel(sim: Sim, bus: EventBus<SimEvent>): Renovate
         capability:
           "Auto-verifies Tier-1/2 scripts on the spot and catches every fill error. " +
           "Tier 3 and the cold chain still see the pharmacist — whose day turns to counsel and shots.",
+        owned,
         ownedDay: owned ? (state.stats[`aitech.verify.${store.id}`] ?? null) : null,
         offlineReason: verifyAssistOfflineReason(state, store),
         ownedNote: "Watching the verify desk — Tier-1/2 scripts skip the pharmacist.",
@@ -222,6 +228,7 @@ export function createRenovatePanel(sim: Sim, bus: EventBus<SimEvent>): Renovate
         capability:
           "Orders gains a 7-day per-SKU forecast read from the city's own demand — " +
           "trend arrows, a ±10% confidence band, and one-click drafting to it.",
+        owned: state.aitech.forecast,
         ownedDay: state.aitech.forecast ? (state.stats["aitech.forecast"] ?? null) : null,
         offlineReason: null,
         ownedNote: "Feeding the Orders panel's forecast view.",
