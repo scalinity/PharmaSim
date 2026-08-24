@@ -33,6 +33,10 @@ export class Sim {
   private state: GameState;
   private lastEmittedMinute: number;
   private emit: (event: SimEvent) => void;
+  /** §17: today was actually planned (beginDay ran). A renovation morning
+   *  opens onto scaffolding with no plan, and its close must not roll an
+   *  empty day into the observed log — "four weeks" means 28 played days. */
+  private dayPlanned = false;
 
   /** `initial` comes from a hydrated save (§23); omit it for a new run. */
   constructor(
@@ -72,6 +76,7 @@ export class Sim {
         // scheduled, and the empty floor closes the day on the first tick.
         if (this.state.phase === "shift" && this.state.pendingEra === null) {
           this.customers.beginDay(this.state);
+          this.dayPlanned = true;
         }
         // §16 rain bed for a storm day — a hook milestone 17's audio takes.
         if (this.state.phase === "shift" && stormToday(this.state)) {
@@ -242,8 +247,11 @@ export class Sim {
         recordMoment(this.state, "first_profit", this.emit);
       }
       rollHistory(this.state, gross);
-      // §17: today's observed neighborhood demand joins the 28-day window.
-      rollCityDay(this.state);
+      // §17: a played day's observed demand joins the 28-day window. An
+      // unplanned day (renovation scaffolding) saw nothing and stays out,
+      // matching the share log's one-entry-per-played-day rule.
+      if (this.dayPlanned) rollCityDay(this.state);
+      this.dayPlanned = false;
       this.state.phase = "close";
       this.bus.emit({ type: "day.phaseChanged", phase: this.state.phase, day: this.state.day });
     }
