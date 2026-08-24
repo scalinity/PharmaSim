@@ -498,6 +498,16 @@ function validate(file: RawSave): SaveFile {
   for (const key of ["furniture", "inbound", "salesLog", "fillRate7d", "gross7d", "staff"]) {
     requireArray(store[key], `store ${key}`);
   }
+  // Both feed §17 routing (M12): a NaN here would flow through the share
+  // math into the validated share history — the *next* save would then be
+  // refused for a corruption written two boots earlier. Refuse it at the
+  // door instead, while the message can still name the real culprit.
+  if (typeof store.priceIndex !== "number" || !Number.isFinite(store.priceIndex)) {
+    reject("a readable price index");
+  }
+  for (const value of store.fillRate7d as unknown[]) {
+    if (typeof value !== "number" || !Number.isFinite(value)) reject("a readable fill rate");
+  }
 
   const hiring = requireObject(file.hiring, "hiring pool");
   requireArray(hiring.candidates, "hiring candidates");
