@@ -181,7 +181,10 @@ export function forecastStore(state: GameState, store: StoreState): Map<string, 
   const visited = store.id === state.activeStoreId;
   const repMult = visited ? REP_MULT_BASE + REP_MULT_PER_STAR * store.repStars : 1;
   const fillable = DRUG_DEFS.filter((def) => canFillDrug(state, store, def));
-  const vaccines = vaccinationUnlocked(state, store);
+  // Shots only happen on a played floor — the §19 resolver models no
+  // off-screen vaccinations, so a branch's dose forecast would fill its
+  // fridge with stock no service ever draws down.
+  const vaccines = visited && vaccinationUnlocked(state, store);
 
   for (let t = 0; t < FORECAST_DAYS; t++) {
     const day = state.day + t;
@@ -208,8 +211,9 @@ export function forecastStore(state: GameState, store: StoreState): Map<string, 
       line(OTC_VISITS_KEY).perDay[t]! += intent * share * CAPTURE_OTC * doorMult;
     }
 
-    // §14 vaccine doses: the walk-in stream consumes them, 3–6 a day ×4 in
-    // flu season — only where the service actually runs.
+    // §14 vaccine doses: the walk-in stream consumes them — the §26
+    // min–max walk-ins' mean, ×4 in flu season, only where the service
+    // actually runs.
     if (vaccines) {
       line(VACCINE_DOSE_ID).perDay[t]! +=
         ((VACCINE_WALKINS_MIN + VACCINE_WALKINS_MAX) / 2) * vaccineWalkinMultOn(day);
