@@ -287,7 +287,9 @@ export interface ObservedLine {
 
 export interface ObservedWindow {
   lines: ObservedLine[];
-  /** The prior window has at least one recorded day behind it. */
+  /** A *full* prior window is on the books — comparing this window's sums
+   *  against a partial prior would inflate every trend (a 7-day asked over
+   *  a 1-day prior reads ×7 on nothing). */
   priorKnown: boolean;
 }
 
@@ -324,14 +326,16 @@ export function observedWindow(state: GameState, districtId: string, days: numbe
     add(log[i]![districtId], i >= days - 1);
   }
   const sorted = [...lines.values()].sort((a, b) => b.asked - a.asked);
-  return { lines: sorted, priorKnown: log.length >= days };
+  return { lines: sorted, priorKnown: log.length >= days * 2 - 1 };
 }
 
 export interface ShareTrend {
   /** Mean routed share over the last up-to-7 played days, or null before
    *  the first played day. */
   current: number | null;
-  /** Mean over the 7 played days before those, or null while unknown. */
+  /** Mean over the full 7 played days before those, or null until that
+   *  whole week is on the books — a one-day "last week" would let a single
+   *  day's drift wear a trend arrow. */
   prior: number | null;
 }
 
@@ -346,5 +350,5 @@ export function shareTrend(state: GameState): ShareTrend {
     for (let i = from; i < end; i++) sum += log[i]!;
     return sum / (end - from);
   };
-  return { current: mean(0, 7), prior: log.length > 7 ? mean(7, 14) : null };
+  return { current: mean(0, 7), prior: log.length >= 14 ? mean(7, 14) : null };
 }
