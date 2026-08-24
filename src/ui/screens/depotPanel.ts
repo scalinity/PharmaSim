@@ -12,6 +12,8 @@ import { DRUG_DEFS } from "../../data/drugs";
 import { OTC_DEFS } from "../../data/otc";
 import {
   allocatedUnits,
+  copyRoute,
+  copyTransfers,
   dcHeldUnits,
   dcStockOf,
   MAX_TRUCKS,
@@ -107,17 +109,6 @@ export function createDepotPanel(sim: Sim, bus: EventBus<SimEvent>): DepotPanelH
     if (active instanceof HTMLElement) active.blur();
   }
 
-  function copyRoute(truck: Truck): TruckStop[] {
-    return truck.route.map((stop) => ({
-      storeId: stop.storeId,
-      lines: stop.lines.map((line) => ({ ...line })),
-    }));
-  }
-
-  function copyTransfers(truck: Truck): TruckTransfer[] {
-    return truck.transfers.map((t) => ({ ...t }));
-  }
-
   // --- The stock strip: what central purchasing has landed ---
 
   function refreshStock(): void {
@@ -197,7 +188,7 @@ export function createDepotPanel(sim: Sim, bus: EventBus<SimEvent>): DepotPanelH
     const status = h("span", { cls: "van__status" });
 
     const commit = (units: number): void => {
-      const route = copyRoute(truck);
+      const route = copyRoute(truck.route);
       if (units <= 0) route[stopIndex]!.lines.splice(lineIndex, 1);
       else route[stopIndex]!.lines[lineIndex]!.units = units;
       const reason = validateTruckConfig(state, route, truck.transfers);
@@ -208,7 +199,7 @@ export function createDepotPanel(sim: Sim, bus: EventBus<SimEvent>): DepotPanelH
       }
       status.textContent = "";
       field.classList.remove("van__qty--over");
-      dispatchManifest(truck, route, copyTransfers(truck));
+      dispatchManifest(truck, route, copyTransfers(truck.transfers));
       // The full rebuild waits for blur while a field is held; the meter
       // and the stock strip must not (§20 draft-time feedback).
       onLoadChanged();
@@ -296,13 +287,13 @@ export function createDepotPanel(sim: Sim, bus: EventBus<SimEvent>): DepotPanelH
       // Adding a line is atomic — let go of the keyboard so the mid-edit
       // guard lets the rebuilt manifest show the new row at once.
       dropFocus();
-      const route = copyRoute(truck);
+      const route = copyRoute(truck.route);
       route[stopIndex]!.lines.push({ skuId, units: STEP_UNITS });
       if (validateTruckConfig(state, route, truck.transfers) !== null) {
         select.value = "";
         return;
       }
-      dispatchManifest(truck, route, copyTransfers(truck));
+      dispatchManifest(truck, route, copyTransfers(truck.transfers));
     });
     return h("div", { cls: "van__addline" }, [select]);
   }
@@ -323,10 +314,10 @@ export function createDepotPanel(sim: Sim, bus: EventBus<SimEvent>): DepotPanelH
     remove.addEventListener("pointerdown", (e) => e.preventDefault());
     remove.addEventListener("click", () => {
       dropFocus();
-      const route = copyRoute(truck);
+      const route = copyRoute(truck.route);
       route.splice(stopIndex, 1);
       // A transfer loses its stop, it comes off the manifest with it.
-      const transfers = copyTransfers(truck).filter(
+      const transfers = copyTransfers(truck.transfers).filter(
         (t) => t.fromStoreId !== stop.storeId && t.toStoreId !== stop.storeId,
       );
       dispatchManifest(truck, route, transfers);
@@ -357,9 +348,9 @@ export function createDepotPanel(sim: Sim, bus: EventBus<SimEvent>): DepotPanelH
         const index = i;
         cancel.addEventListener("click", () => {
           dropFocus();
-          const transfers = copyTransfers(truck);
+          const transfers = copyTransfers(truck.transfers);
           transfers.splice(index, 1);
-          dispatchManifest(truck, copyRoute(truck), transfers);
+          dispatchManifest(truck, copyRoute(truck.route), transfers);
         });
         rows.push(
           h("div", { cls: "van__transfer" }, [
@@ -417,9 +408,9 @@ export function createDepotPanel(sim: Sim, bus: EventBus<SimEvent>): DepotPanelH
         chip.addEventListener("pointerdown", (e) => e.preventDefault());
         chip.addEventListener("click", () => {
           dropFocus();
-          const route = copyRoute(truck);
+          const route = copyRoute(truck.route);
           route.push({ storeId: store.id, lines: [] });
-          dispatchManifest(truck, route, copyTransfers(truck));
+          dispatchManifest(truck, route, copyTransfers(truck.transfers));
         });
         addStop.append(chip);
       }

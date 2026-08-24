@@ -114,6 +114,8 @@ import { isLegacyMoment } from "../data/flavor";
 import { DISTRICT_SHARE_LOG_DAYS, PLAYER_PHARMACY_ID } from "./city";
 import { CHRONIC_CATEGORIES, poolKeyOf, TRANSFER_CAP } from "./competitors";
 import {
+  copyRoute,
+  copyTransfers,
   isTruckSku,
   MAX_TRUCKS,
   plannedPeakLoad,
@@ -354,11 +356,8 @@ function copyTruck(truck: Truck): Truck {
   return {
     id: truck.id,
     lastRunDay: truck.lastRunDay,
-    route: truck.route.map((stop) => ({
-      storeId: stop.storeId,
-      lines: stop.lines.map((line) => ({ ...line })),
-    })),
-    transfers: truck.transfers.map((t) => ({ ...t })),
+    route: copyRoute(truck.route),
+    transfers: copyTransfers(truck.transfers),
   };
 }
 

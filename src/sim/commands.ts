@@ -9,6 +9,8 @@ import { EXPANSIONS, furnitureDef } from "../data/furniture";
 import { coldClampUnits, hasFridge } from "./coldchain";
 import { advanceMarket } from "./competitors";
 import {
+  copyRoute,
+  copyTransfers,
   DC_COST,
   isTruckSku,
   MAX_TRUCKS,
@@ -643,11 +645,8 @@ export function handleCommand(
       // manifest is a silent no-op like every other command.
       if (validateTruckConfig(state, command.route, command.transfers) !== null) return;
       // Deep copies — a persisted manifest must never alias the payload.
-      truck.route = command.route.map((stop) => ({
-        storeId: stop.storeId,
-        lines: stop.lines.map((line) => ({ skuId: line.skuId, units: line.units })),
-      }));
-      truck.transfers = command.transfers.map((t) => ({ ...t }));
+      truck.route = copyRoute(command.route);
+      truck.transfers = copyTransfers(command.transfers);
       emit({ type: "truck.routeChanged", truckId: truck.id });
       return;
     }

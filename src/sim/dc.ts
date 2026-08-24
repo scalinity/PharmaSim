@@ -185,11 +185,19 @@ export type TransferPlan =
   | { ok: true; truckId: string; route: TruckStop[]; transfers: TruckTransfer[] }
   | { ok: false; reason: string };
 
-function copyRoute(route: readonly TruckStop[]): TruckStop[] {
+/** Deep copies of a manifest's two halves — the one shape every writer
+ *  shares (the setRoute command, the drafting UI, planTransfer, the save
+ *  file's copyTruck): a persisted route must never alias a payload or a
+ *  live draft, and a new TruckStop field has one place to be remembered. */
+export function copyRoute(route: readonly TruckStop[]): TruckStop[] {
   return route.map((stop) => ({
     storeId: stop.storeId,
     lines: stop.lines.map((line) => ({ ...line })),
   }));
+}
+
+export function copyTransfers(transfers: readonly TruckTransfer[]): TruckTransfer[] {
+  return transfers.map((t) => ({ ...t }));
 }
 
 /**
@@ -212,7 +220,7 @@ export function planTransfer(
   }
   for (const truck of dc.trucks) {
     const route = copyRoute(truck.route);
-    const transfers = truck.transfers.map((t) => ({ ...t }));
+    const transfers = copyTransfers(truck.transfers);
     let fromIdx = route.findIndex((stop) => stop.storeId === fromStoreId);
     let toIdx = route.findIndex((stop) => stop.storeId === toStoreId);
     if (fromIdx !== -1 && toIdx !== -1 && fromIdx >= toIdx) continue; // wrong way round
