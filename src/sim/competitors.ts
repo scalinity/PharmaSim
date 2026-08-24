@@ -78,13 +78,41 @@ function hashString(text: string): number {
   return h >>> 0;
 }
 
-/** The pool's recognizable patient (§18 "same name, same drug") — a stable
- *  draw from the data/names.ts pools, keyed on the pool id alone. */
+/** Pool id → unique patient name, built once over the whole pool universe
+ *  (every district × chronic category — exactly the ids save validation's
+ *  isPoolId admits). Each pool claims the first free name combination on
+ *  its hash's probe walk, so no two chronic regulars in the city ever
+ *  share a name — the ticker and transfer rows identify a person by name
+ *  alone, and a collision would read as one patient in two districts. */
+let POOL_NAMES: Map<string, string> | null = null;
+
+function poolNames(): Map<string, string> {
+  if (POOL_NAMES) return POOL_NAMES;
+  POOL_NAMES = new Map();
+  const combos = FIRST_NAMES.length * LAST_NAMES.length;
+  const taken = new Set<number>();
+  for (const district of DISTRICTS) {
+    for (const category of CHRONIC_CATEGORIES) {
+      const poolId = poolKeyOf(district.id, category);
+      let slot = hashString(poolId) % combos;
+      while (taken.has(slot)) slot = (slot + 1) % combos;
+      taken.add(slot);
+      const first = FIRST_NAMES[slot % FIRST_NAMES.length]!;
+      const last = LAST_NAMES[Math.floor(slot / FIRST_NAMES.length)]!;
+      POOL_NAMES.set(poolId, `${first} ${last}`);
+    }
+  }
+  return POOL_NAMES;
+}
+
+/** The pool's recognizable patient (§18 "same name, same drug"). */
 export function poolPatientName(poolId: string): string {
+  const name = poolNames().get(poolId);
+  if (name !== undefined) return name;
+  // Unreachable for validated data (the map covers isPoolId's universe);
+  // a stray id still reads as a stable name rather than throwing mid-render.
   const h = hashString(poolId);
-  const first = FIRST_NAMES[h % FIRST_NAMES.length]!;
-  const last = LAST_NAMES[Math.floor(h / FIRST_NAMES.length) % LAST_NAMES.length]!;
-  return `${first} ${last}`;
+  return `${FIRST_NAMES[h % FIRST_NAMES.length]!} ${LAST_NAMES[Math.floor(h / FIRST_NAMES.length) % LAST_NAMES.length]!}`;
 }
 
 /** Memo for poolDrug — the pick is pure in (poolId, §25 catalog), and the
