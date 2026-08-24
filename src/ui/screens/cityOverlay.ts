@@ -257,6 +257,10 @@ export function createCityOverlay(sim: Sim, bus: EventBus<SimEvent>): CityOverla
   bus.on("rx.pickedUp", invalidate);
   bus.on("sale.completed", invalidate);
   bus.on("day.phaseChanged", invalidate);
+  // §18: a shortage edge moves every rival's availability, so an open
+  // card's share bars must follow the same morning's headline.
+  bus.on("shortage.started", invalidate);
+  bus.on("shortage.ended", invalidate);
 
   return {
     root,
