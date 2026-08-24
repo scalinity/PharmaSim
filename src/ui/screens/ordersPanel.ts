@@ -12,7 +12,6 @@ import {
   FORECAST_NOISE,
   forecastCovered,
   forecastNetwork,
-  forecastOrderDraft,
   forecastStore,
 } from "../../sim/aitech";
 import {
@@ -438,8 +437,15 @@ export function createOrdersPanel(sim: Sim, bus: EventBus<SimEvent>): OrdersPane
   /** Rebuild key for the forecast table \u2014 scope, day, shortage edges. */
   let fcastKey = "";
   /** Live cells per SKU: the columns that move intra-day (stock does;
-   *  the prediction holds until tomorrow). */
-  const fcastLive = new Map<string, { total: number; covered: HTMLElement; toOrder: HTMLElement }>();
+   *  the prediction holds until tomorrow). Locked rows keep their em-dash. */
+  const fcastLive = new Map<
+    string,
+    { total: number; locked: boolean; covered: HTMLElement; toOrder: HTMLElement }
+  >();
+  /** Exactly the lines the table rendered — the draft's source, so the
+   *  cart is always what the player just read (quiet lines and locked
+   *  rows included by their absence). */
+  let fcastRows: { skuId: string; total: number; locked: boolean }[] = [];
 
   const viewTabs = Tabs(
     [
@@ -459,7 +465,26 @@ export function createOrdersPanel(sim: Sim, bus: EventBus<SimEvent>): OrdersPane
   const fcastNote = h("p", { cls: "fcast__note" });
   const orderToForecast = PillButton("Order to forecast", () => {
     const state = sim.snapshot;
-    const draft = forecastOrderDraft(state, scopeIsDc() ? null : scopedStore());
+    const isDc = scopeIsDc();
+    const store = scopedStore();
+    // The table is the contract: bring it current, then draft exactly the
+    // lines it shows — never a fresh forecast the player hasn't read.
+    refreshForecast();
+    // Locks may have moved while the catalog leaf slept (§30: its rows
+    // don't repaint under this view) — re-derive before drafting, the
+    // morning-draft precedent.
+    for (const row of rows.values()) {
+      row.entry.lock = isDc
+        ? dcSkuLock(state, row.entry.skuId)
+        : skuLock(state, store, row.entry.skuId);
+    }
+    const draft: Record<string, number> = {};
+    for (const line of fcastRows) {
+      if (line.locked) continue;
+      const covered = forecastCovered(state, isDc ? null : store, line.skuId);
+      const want = Math.ceil(line.total - 1e-9) - covered;
+      if (want > 0) draft[line.skuId] = want;
+    }
     setCart(draft);
   }, { cls: "pill--small" });
   const fcastHead = h("div", { cls: "fcast__head", attrs: { "aria-hidden": "true" } });
@@ -518,6 +543,7 @@ export function createOrdersPanel(sim: Sim, bus: EventBus<SimEvent>): OrdersPane
     const forecast = isDc ? forecastNetwork(state) : forecastStore(state, store);
     const entries = [...forecast.values()].sort((a, b) => b.total - a.total);
     fcastLive.clear();
+    fcastRows = [];
     fcastList.replaceChildren();
     fcastNote.textContent = isDc
       ? "The network's next 7 days, every door summed \u2014 the depot orders against it."
@@ -549,14 +575,19 @@ export function createOrdersPanel(sim: Sim, bus: EventBus<SimEvent>): OrdersPane
       const total = Math.round(entry.total);
       const low = Math.floor(entry.total * (1 - FORECAST_NOISE));
       const high = Math.ceil(entry.total * (1 + FORECAST_NOISE));
-      const toOrder = Math.max(0, Math.ceil(entry.total - 1e-9) - covered);
+      const locked = lock !== null;
+      // A locked line has nothing to order \u2014 the meta line already carries
+      // the reason, and the draft skips it, so the column must not promise
+      // units the button would silently drop.
+      const toOrder = locked ? 0 : Math.max(0, Math.ceil(entry.total - 1e-9) - covered);
 
       const coveredEl = h("span", { cls: "fcast__hand", text: String(covered) });
       const toOrderEl = h("span", {
         cls: `fcast__order${toOrder > 0 ? " fcast__order--due" : ""}`,
         text: toOrder > 0 ? String(toOrder) : "\u2014",
       });
-      fcastLive.set(entry.skuId, { total: entry.total, covered: coveredEl, toOrder: toOrderEl });
+      fcastLive.set(entry.skuId, { total: entry.total, locked, covered: coveredEl, toOrder: toOrderEl });
+      fcastRows.push({ skuId: entry.skuId, total: entry.total, locked });
 
       const row = h("div", { cls: `fcast__row${stripe ? " fcast__row--stripe" : ""}` }, [
         h("span", { cls: "fcast__item" }, [
@@ -593,15 +624,17 @@ export function createOrdersPanel(sim: Sim, bus: EventBus<SimEvent>): OrdersPane
     }
   }
 
-  /** Stock moved under the table: refresh the two live columns in place. */
+  /** Stock moved under the table: refresh the two live columns in place.
+   *  Locked rows keep their em-dash \u2014 the draft skips them. */
   function updateForecastLive(): void {
     const state = sim.snapshot;
     const isDc = scopeIsDc();
     const store = scopedStore();
     for (const [skuId, cells] of fcastLive) {
       const covered = forecastCovered(state, isDc ? null : store, skuId);
-      const toOrder = Math.max(0, Math.ceil(cells.total - 1e-9) - covered);
       cells.covered.textContent = String(covered);
+      if (cells.locked) continue;
+      const toOrder = Math.max(0, Math.ceil(cells.total - 1e-9) - covered);
       cells.toOrder.textContent = toOrder > 0 ? String(toOrder) : "\u2014";
       cells.toOrder.classList.toggle("fcast__order--due", toOrder > 0);
     }
@@ -956,7 +989,9 @@ export function createOrdersPanel(sim: Sim, bus: EventBus<SimEvent>): OrdersPane
       if (!row || row.entry.lock !== null) continue;
       // The draft obeys the same §14 cold clamp typed input does — the stub
       // must never total units (or block on cash) the command would trim.
-      const capped = row.entry.refrigerated
+      // Store scope only, like commit's: under the depot scope every cold
+      // row is dcSkuLock-blocked above, and scopedStore() is meaningless.
+      const capped = !scopeIsDc() && row.entry.refrigerated
         ? coldClampUnits(scopedStore(), units, coldClaimedElsewhere(skuId))
         : units;
       if (capped <= 0) continue;

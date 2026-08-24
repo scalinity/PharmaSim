@@ -300,22 +300,3 @@ export function forecastCovered(state: GameState, store: StoreState | null, skuI
   return units;
 }
 
-/**
- * §21 "Order to forecast": a cart sized to predicted demand minus what the
- * scope already holds or expects (`store` null = the depot's network scope).
- * Whole units, never negative; the Orders panel drafts it through the same
- * setCart path as the reorder rules, so the §14 cold clamp, §12 locks and
- * §16 fill caps all still apply before anything is signed.
- */
-export function forecastOrderDraft(
-  state: GameState,
-  store: StoreState | null,
-): Record<string, number> {
-  const forecast = store !== null ? forecastStore(state, store) : forecastNetwork(state);
-  const draft: Record<string, number> = {};
-  for (const entry of forecast.values()) {
-    const want = Math.ceil(entry.total - 1e-9) - forecastCovered(state, store, entry.skuId);
-    if (want > 0) draft[entry.skuId] = want;
-  }
-  return draft;
-}
