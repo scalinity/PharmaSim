@@ -313,6 +313,9 @@ export function createDepotPanel(sim: Sim, bus: EventBus<SimEvent>): DepotPanelH
       const route = copyRoute(truck.route);
       const stopCopy = route.find((s) => s.storeId === stop.storeId);
       if (!stopCopy) return;
+      // A hand-added line claims the stop: a transfer waypoint the player
+      // builds on becomes a standing stop and outlives its transfer.
+      delete stopCopy.forTransfer;
       stopCopy.lines.push({ skuId, units: STEP_UNITS });
       if (validateTruckConfig(state, route, truck.transfers) !== null) {
         select.value = "";

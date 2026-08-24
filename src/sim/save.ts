@@ -97,6 +97,13 @@
 //    null, and the map's freight lot stands for sale exactly as it would
 //    on a new run.
 //
+//  Version 11 (milestone 15 review pass) marks transfer-made stops:
+//    · TruckStop.forTransfer (§20: the compile flags the stops it adds,
+//      so the morning prune takes exactly those and never a stop the
+//      player drafted)                                                 (M15)
+//    A v10 stop carries no flag and reads as player-drafted — the prune
+//    errs toward keeping a stop the player may have wanted.
+//
 //  §24's fuller schema (worldSeed, aitech) is not here because those
 //  systems do not exist yet. They arrive field-by-field with milestone 16,
 //  each with its own migrate step.
@@ -154,7 +161,7 @@ import {
   type WorldEventsState,
 } from "./state";
 
-export const SAVE_VERSION = 10;
+export const SAVE_VERSION = 11;
 
 export interface SaveFile {
   version: number;
@@ -304,6 +311,11 @@ const MIGRATIONS: readonly ((file: RawSave) => RawSave)[] = [
     file.dc = null;
     return file;
   },
+  // 10 → 11 (milestone 15 review pass): TruckStop.forTransfer is optional
+  // and absent means player-drafted, so a v10 route needs nothing written —
+  // its stops read as the player's and the morning prune errs toward
+  // keeping them.
+  (file) => file,
 ];
 
 // --- Deep copies: a save must never alias live state, and a hydrated state
@@ -997,6 +1009,11 @@ function validate(file: RawSave): SaveFile {
           reject("a truck stop");
         }
         stopOrder.push(stop.storeId);
+        // The transfer-compile flag is optional and only ever `true` —
+        // hydrate would carry any other value into the prune's comparison.
+        if (stop.forTransfer !== undefined && stop.forTransfer !== true) {
+          reject("a truck stop");
+        }
         requireArray(stop.lines, "a picking list");
         const lineSkus = new Set<string>();
         for (const lineEntry of stop.lines as unknown[]) {

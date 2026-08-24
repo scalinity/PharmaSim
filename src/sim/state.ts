@@ -118,6 +118,11 @@ export interface TruckStop {
   storeId: string;
   /** Picking list: units per SKU, drawn from DC stock at the depot. */
   lines: OrderLine[];
+  /** Set by the transfer compile on stops it creates (§20): the stop
+   *  exists for a pickup or drop and leaves with the morning run, unless
+   *  a picking line added by hand has made it a standing stop (adding one
+   *  clears the flag). Player-drafted stops never carry it. */
+  forTransfer?: true;
 }
 
 /** One §20 branch→branch transfer riding a truck: picked up at the source

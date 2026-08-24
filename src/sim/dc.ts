@@ -193,6 +193,7 @@ export function copyRoute(route: readonly TruckStop[]): TruckStop[] {
   return route.map((stop) => ({
     storeId: stop.storeId,
     lines: stop.lines.map((line) => ({ ...line })),
+    ...(stop.forTransfer === true ? { forTransfer: true as const } : {}),
   }));
 }
 
@@ -224,17 +225,19 @@ export function planTransfer(
     let fromIdx = route.findIndex((stop) => stop.storeId === fromStoreId);
     let toIdx = route.findIndex((stop) => stop.storeId === toStoreId);
     if (fromIdx !== -1 && toIdx !== -1 && fromIdx >= toIdx) continue; // wrong way round
+    // Stops the compile itself creates are flagged as the transfer's own
+    // (§20): the morning prune takes exactly these, never a player's.
     if (fromIdx === -1 && toIdx !== -1) {
-      route.splice(toIdx, 0, { storeId: fromStoreId, lines: [] });
+      route.splice(toIdx, 0, { storeId: fromStoreId, lines: [], forTransfer: true });
       fromIdx = toIdx;
       toIdx += 1;
     } else {
       if (fromIdx === -1) {
-        route.push({ storeId: fromStoreId, lines: [] });
+        route.push({ storeId: fromStoreId, lines: [], forTransfer: true });
         fromIdx = route.length - 1;
       }
       if (toIdx === -1) {
-        route.push({ storeId: toStoreId, lines: [] });
+        route.push({ storeId: toStoreId, lines: [], forTransfer: true });
         toIdx = route.length - 1;
       }
     }
@@ -351,18 +354,15 @@ export function runTruckRoutes(
 
     truck.lastRunDay = state.day;
     // Transfers are one-shot corrections, not standing orders — the run
-    // takes them off the manifest, and a line-less stop that existed for a
-    // transfer's pickup or drop goes with them. A stop the player drafted
-    // keeps its place even before it carries a picking line: the manifest
-    // is the player's standing draft, and the morning must not eat it.
-    const transferStops = new Set<string>();
-    for (const t of truck.transfers) {
-      transferStops.add(t.fromStoreId);
-      transferStops.add(t.toStoreId);
-    }
+    // takes them off the manifest, and the stops the compile created for
+    // them (forTransfer, whether or not their transfer still exists — a
+    // cancelled draft's waypoint is litter too) go with them. A stop the
+    // player drafted keeps its place even before it carries a picking
+    // line: the manifest is the player's standing draft, and the morning
+    // must not eat it.
     truck.transfers = [];
     truck.route = truck.route.filter(
-      (stop) => stop.lines.length > 0 || !transferStops.has(stop.storeId),
+      (stop) => stop.lines.length > 0 || stop.forTransfer !== true,
     );
   }
 
