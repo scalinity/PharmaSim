@@ -65,19 +65,13 @@ function shuffle<T>(items: T[]): T[] {
 
 /** Take one unit from wherever the store holds it — the manager's crew
  *  works backroom and shelf as one pool while nobody is watching the floor
- *  (the §11 restock trip is assumed, not simulated). */
-function takeUnit(store: StoreState, skuId: string): boolean {
+ *  (the §11 restock trip is assumed, not simulated). Only ever called after
+ *  a draw proved onHand > 0, so there is no failure to report. */
+function takeUnit(store: StoreState, skuId: string): void {
   const line = store.stock[skuId];
-  if (!line) return false;
-  if (line.shelved > 0) {
-    line.shelved--;
-    return true;
-  }
-  if (line.backroom > 0) {
-    line.backroom--;
-    return true;
-  }
-  return false;
+  if (!line) return;
+  if (line.shelved > 0) line.shelved--;
+  else if (line.backroom > 0) line.backroom--;
 }
 
 /** Weighted §25 draw among this category's in-stock, fillable SKUs. */
