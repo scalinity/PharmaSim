@@ -263,6 +263,8 @@ export function resolveBranchDay(
   let otcVisitsServed = 0;
   let otcUnits = 0;
   let stockOuts = 0;
+  /** Demand the crew never got to — the line outlasted the day's budgets. */
+  let capacityMissed = 0;
   let incidents = 0;
   let gross = 0;
   let refunds = 0;
@@ -272,7 +274,10 @@ export function resolveBranchDay(
 
   for (const script of scripts) {
     recordSeen(state, script.districtId, script.category);
-    if (rxServed >= rxBudget) continue; // the line outlasted the crew
+    if (rxServed >= rxBudget) {
+      capacityMissed++; // the line outlasted the crew
+      continue;
+    }
     const drug = drawStockedDrug(state, store, script.category);
     if (drug === null) {
       stockOuts++;
@@ -292,7 +297,10 @@ export function resolveBranchDay(
   const otcBudget = Math.max(0, checkoutBudget - rxServed);
   for (const districtId of visits) {
     recordSeen(state, districtId, OTC_TALLY_KEY);
-    if (otcVisitsServed >= otcBudget) continue;
+    if (otcVisitsServed >= otcBudget) {
+      capacityMissed++;
+      continue;
+    }
     const first = drawStockedOtc(store);
     if (first === null) {
       stockOuts++;
@@ -334,9 +342,14 @@ export function resolveBranchDay(
   }
 
   // §17/§19: the day joins the branch's own trailing books — stock-outs
-  // feed its fill rate, gross feeds the bank's network line.
+  // AND the customers the crew never got to count against its fill rate
+  // (rollHistory counts refusals the same way on the visited floor, and
+  // served counts units exactly as it does), gross feeds the bank's
+  // network line. A staffed-by-nobody day is missed demand, not a clean
+  // sheet: without capacityMissed it would bank a perfect 1.0.
   const served = rxServed + otcUnits;
-  const rate = served + stockOuts === 0 ? 1 : served / (served + stockOuts);
+  const missed = stockOuts + capacityMissed;
+  const rate = served + missed === 0 ? 1 : served / (served + missed);
   pushHistory(store, rate, gross);
 
   store.daySummary = {

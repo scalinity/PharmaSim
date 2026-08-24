@@ -282,7 +282,11 @@ export class Sim {
       if (operatingProfit(this.state.dayStats) > 0) {
         recordMoment(this.state, "first_profit", this.emit);
       }
-      rollHistory(this.state, gross);
+      // A scaffolding day is not a trading day: the branch resolver skips
+      // its window entry (§13), and the visited store's books must agree —
+      // an unplanned close would otherwise bank a perfect fill rate and a
+      // $0 gross into the 7-day windows the §17 routing reads.
+      if (this.dayPlanned) rollHistory(this.state, gross);
       // §17: a played day's observed demand joins the 28-day window. An
       // unplanned day (renovation scaffolding) saw nothing on the active
       // floor — but resolved branches still saw their neighborhoods, so a
