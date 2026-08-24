@@ -649,9 +649,9 @@ export function createOrdersPanel(sim: Sim, bus: EventBus<SimEvent>): OrdersPane
    *  Everything else updates in place. */
   function refreshForecast(): void {
     const state = sim.snapshot;
-    const shortages = state.events.shortages
-      .map((s) => `${s.category}:${s.startDay}`)
-      .join(",");
+    // Plain concat, no intermediate array — this runs per coalesced repaint.
+    let shortages = "";
+    for (const s of state.events.shortages) shortages += `${s.category}:${s.startDay},`;
     let furniture = 0;
     if (scopeIsDc()) {
       for (const s of state.stores) furniture += s.furniture.length;
@@ -962,7 +962,11 @@ export function createOrdersPanel(sim: Sim, bus: EventBus<SimEvent>): OrdersPane
     if (priceHead) priceHead.textContent = isDc ? "list price" : "your price";
     const handHead = headCols.get("on hand");
     if (handHead) handHead.textContent = isDc ? "at depot" : "on hand";
-    for (const row of rows.values()) refreshRow(row);
+    // The catalog rows sleep while the forecast leaf hides them (§30 —
+    // ~70 refreshRow passes per repaint, thrown away). The tab handler
+    // re-runs this with the leaf closed before they show again, and the
+    // draft re-derives its own locks.
+    if (!forecastOn) for (const row of rows.values()) refreshRow(row);
     refreshFridgeMeter();
     refreshStub();
     refreshBank();
