@@ -89,8 +89,8 @@ import { DAY_END_IGM, DAY_START_IGM } from "../core/clock";
 import { COMPETITOR_DEFS, isCompetitorId } from "../data/competitors";
 import { DISTRICTS, type RxCategory } from "../data/districts";
 import { isLegacyMoment } from "../data/flavor";
-import { PLAYER_PHARMACY_ID } from "./city";
-import { CHRONIC_CATEGORIES, poolKeyOf } from "./competitors";
+import { DISTRICT_SHARE_LOG_DAYS, PLAYER_PHARMACY_ID } from "./city";
+import { CHRONIC_CATEGORIES, poolKeyOf, TRANSFER_CAP } from "./competitors";
 import type { HiringPool, StaffMember } from "./staff";
 import {
   defaultSettings,
@@ -571,7 +571,9 @@ function validate(file: RawSave): SaveFile {
   // The per-district share memory (M13): two entries at most, each a small
   // district → share record — the receipt's market note reads these raw.
   requireArray(city.districtShareLog, "district share history");
-  if ((city.districtShareLog as unknown[]).length > 2) reject("a sane district share history");
+  if ((city.districtShareLog as unknown[]).length > DISTRICT_SHARE_LOG_DAYS) {
+    reject("a sane district share history");
+  }
   for (const day of city.districtShareLog as unknown[]) {
     const record = requireObject(day, "district share history");
     if (Object.keys(record).length > 8) reject("a sane district share history");
@@ -672,7 +674,7 @@ function validate(file: RawSave): SaveFile {
   // then every field the copy is built from.
   const market = requireObject(file.market, "market records");
   requireArray(market.transfers, "transfer records");
-  if ((market.transfers as unknown[]).length > 64) reject("a sane transfer log");
+  if ((market.transfers as unknown[]).length > TRANSFER_CAP) reject("a sane transfer log");
   for (const entry of market.transfers as unknown[]) {
     const record = requireObject(entry, "transfer records");
     if (

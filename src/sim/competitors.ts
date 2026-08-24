@@ -38,7 +38,10 @@ const PULL_MARGIN = 0.15;
 const PULLS_PER_WEEK = 3;
 /** Transfer log retention: this week + last (reports + the net-in check). */
 const TRANSFER_KEEP_DAYS = 14;
-const TRANSFER_CAP = 64;
+/** Hard bound on the persisted log — exported so save validation refuses
+ *  exactly what the writer can no longer produce; raising it here raises
+ *  both sides together. */
+export const TRANSFER_CAP = 64;
 
 /** §18 drift notches and their caps — a rival improves, never past sanity. */
 const DRIFT_PRICE_STEP = 0.05;

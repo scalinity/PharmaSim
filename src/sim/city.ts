@@ -336,8 +336,9 @@ export type ObservedKey = RxCategory | typeof OTC_TALLY_KEY;
 /** Trailing days kept beside today — with it, the §17 28-day window. */
 const CITY_LOG_DAYS = 27;
 const SHARE_LOG_DAYS = 28;
-/** Today beside the last played day — the receipt's market note (M13). */
-const DISTRICT_SHARE_LOG_DAYS = 2;
+/** Today beside the last played day — the receipt's market note (M13).
+ *  Exported so save validation bounds exactly what this writer keeps. */
+export const DISTRICT_SHARE_LOG_DAYS = 2;
 
 function tallyFor(city: CityState, districtId: string, key: ObservedKey): [number, number] {
   const district = (city.today[districtId] ??= {});
