@@ -189,10 +189,12 @@ export function createReportsPanel(sim: Sim, bus: EventBus<SimEvent>): ReportsPa
       if (record.direction === "in") inCount++;
       const key = `${record.day}:${record.poolId}:${record.direction}`;
       live.add(key);
-      let row = txRows.get(key);
-      if (!row) {
+      // Append on creation only: the week's records are append-only, so an
+      // already-parented row is already in order — re-appending would move
+      // live nodes for nothing (§30).
+      if (!txRows.has(key)) {
         const out = record.direction === "out";
-        row = h("p", { cls: out ? "reports__txrow reports__txrow--out" : "reports__txrow" }, [
+        const row = h("p", { cls: out ? "reports__txrow reports__txrow--out" : "reports__txrow" }, [
           h("span", { cls: "reports__txday", text: `Day ${record.day}` }),
           h("span", {
             cls: "reports__txwho",
@@ -200,8 +202,8 @@ export function createReportsPanel(sim: Sim, bus: EventBus<SimEvent>): ReportsPa
           }),
         ]);
         txRows.set(key, row);
+        txList.append(row);
       }
-      txList.append(row);
     }
     for (const [key, row] of txRows) {
       if (!live.has(key)) {
