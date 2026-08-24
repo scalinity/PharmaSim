@@ -9,9 +9,21 @@ import { EXPANSIONS, furnitureDef } from "../data/furniture";
 import { coldClampUnits, hasFridge } from "./coldchain";
 import { advanceMarket } from "./competitors";
 import {
+  DC_COST,
+  isTruckSku,
+  MAX_TRUCKS,
+  planTransfer,
+  receiveDcDeliveries,
+  runTruckRoutes,
+  TRUCK_COST,
+  validateTruckConfig,
+} from "./dc";
+import {
   bankStatus,
   branchPrice,
   catalog,
+  dcOrderTotal,
+  dcSkuLock,
   orderTotal,
   post,
   round2,
@@ -25,6 +37,7 @@ import {
   clearRefrigerated,
   clearShelf,
   isOtc,
+  onHand,
   queueDelivery,
   receiveDeliveries,
   refreshPriceIndex,
@@ -38,6 +51,7 @@ import { refreshHiringPool, ROLE_STATIONS, type StaffMember } from "./staff";
 import {
   activeStore,
   emptyDayStats,
+  freshDc,
   freshStore,
   isFoundingStore,
   storeById,
@@ -46,6 +60,9 @@ import {
   type OrderLine,
   type PlacedFurniture,
   type StoreState,
+  type Truck,
+  type TruckStop,
+  type TruckTransfer,
 } from "./state";
 
 export type Command =
@@ -91,6 +108,19 @@ export type Command =
   | { type: "branch.buy"; districtId: string }
   /** Morning only: choose the store the day's 3D sim loads into. */
   | { type: "branch.setActive"; storeId: string }
+  // --- Distribution + logistics (§20; the DC is named by the command
+  //     itself, transfers name both stores — no active-store defaults) ---
+  /** Buy the freight depot: L6 + $60k puts the gray building on the map. */
+  | { type: "dc.buy" }
+  /** Buy a van for the garage — $8,000, capacity 400 (§26). */
+  | { type: "truck.buy" }
+  /** Central purchasing (§11/§20): the catalog at −12%, into DC stock. */
+  | { type: "dc.order"; lines: OrderLine[] }
+  /** Replace a van's whole manifest — stops, picking lists, transfers. */
+  | { type: "truck.setRoute"; truckId: string; route: TruckStop[]; transfers: TruckTransfer[] }
+  /** Draft a §20 branch→branch move; it compiles onto the first van that
+   *  can take it (pickup at source, drop at target, within capacity). */
+  | { type: "transfer.create"; fromStoreId: string; toStoreId: string; skuId: string; units: number }
   // --- App shell (§23, §24) ---
   /** Reduced motion is the only live setting; volumes wait for milestone 17. */
   | { type: "settings.set"; reducedMotion: boolean }
@@ -162,6 +192,25 @@ function acceptableLines(
   return out;
 }
 
+/** §20 depot order lines: drop empties, unknowns, cold-chain SKUs and
+ *  license-locked rows, and cap a shorted category's fills to 60% (§16) —
+ *  once for the whole network, which is exactly the point of central
+ *  purchasing during a squeeze. */
+function acceptableDcLines(state: GameState, lines: readonly OrderLine[]): OrderLine[] {
+  const out: OrderLine[] = [];
+  const seen = new Set<string>();
+  for (const l of lines) {
+    let units = Math.floor(l.units);
+    if (units <= 0 || seen.has(l.skuId)) continue;
+    if (!isTruckSku(l.skuId) || dcSkuLock(state, l.skuId) !== null) continue;
+    units = shortageFillCap(state, l.skuId, units);
+    if (units <= 0) continue;
+    seen.add(l.skuId);
+    out.push({ skuId: l.skuId, units });
+  }
+  return out;
+}
+
 /** Morning turnover, shared by day.advance and the dev day skip: the new
  *  day begins, every store's van unloads (§19: deliveries arrive wherever
  *  ordered), the crews finish (§13), the world plans and announces its
@@ -177,6 +226,12 @@ function beginMorning(state: GameState, emit: (event: SimEvent) => void): void {
     storeId: store.id,
     ...receiveDeliveries(store),
   }));
+  // §20: dawn at the depot — the −12% order lands on its shelves, then the
+  // vans run their standing routes. Both before the phase change goes out,
+  // so the autosave and the day's demand see goods where the trucks left
+  // them (arrivals are morning-guaranteed; the map animation is flavor).
+  const dcDelivery = state.dc ? receiveDcDeliveries(state.dc) : null;
+  const truckArrivals = runTruckRoutes(state, emit);
   // Mondays put a fresh stack of applications on the counter (§9).
   const refreshed = refreshHiringPool(state);
   completeRenovation(state, emit);
@@ -188,6 +243,12 @@ function beginMorning(state: GameState, emit: (event: SimEvent) => void): void {
   emit({ type: "clock.minute", igm: state.clockIgm });
   for (const delivery of deliveries) {
     if (delivery.units > 0) emit({ type: "order.delivered", ...delivery });
+  }
+  if (dcDelivery !== null && dcDelivery.units > 0) {
+    emit({ type: "dc.delivered", ...dcDelivery });
+  }
+  for (const arrival of truckArrivals) {
+    emit({ type: "truck.arrived", ...arrival, day: state.day });
   }
   if (refreshed) emit({ type: "staff.poolRefreshed", day: state.day });
 }
@@ -524,6 +585,92 @@ export function handleCommand(
       }
       state.activeStoreId = command.storeId;
       emit({ type: "branch.activeChanged", storeId: command.storeId });
+      return;
+    }
+    case "dc.buy": {
+      if (state.phase === "close" || state.dc !== null) return;
+      if (!ownsLicense(state, "L6") || state.cash < DC_COST) return;
+      state.dc = freshDc();
+      state.stats["dc.built"] = state.day;
+      post(state, "dc.purchase", -DC_COST, emit);
+      // §22: a whole building with no counter in it is a moment.
+      recordMoment(state, "dc_open", emit);
+      emit({ type: "dc.bought", cost: DC_COST, day: state.day });
+      return;
+    }
+    case "truck.buy": {
+      if (state.phase === "close" || state.dc === null) return;
+      if (state.dc.trucks.length >= MAX_TRUCKS || state.cash < TRUCK_COST) return;
+      // Count past the highest suffix present, not the array length — the
+      // same rule branch.buy follows (validate() accepts any unique ids).
+      let suffix = 0;
+      for (const t of state.dc.trucks) {
+        const match = /^t(\d+)$/.exec(t.id);
+        if (match) suffix = Math.max(suffix, Number(match[1]));
+      }
+      const truck: Truck = { id: `t${suffix + 1}`, lastRunDay: 0, route: [], transfers: [] };
+      state.dc.trucks.push(truck);
+      post(state, "truck.purchase", -TRUCK_COST, emit);
+      emit({ type: "truck.bought", truckId: truck.id, cost: TRUCK_COST });
+      return;
+    }
+    case "dc.order": {
+      if (state.phase === "close" || state.dc === null) return;
+      const lines = acceptableDcLines(state, command.lines);
+      if (lines.length === 0) return;
+      const total = dcOrderTotal(state, lines);
+      if (total > state.cash) return;
+      // Merge into the depot's inbound per SKU, the queueDelivery way.
+      for (const l of lines) {
+        const existing = state.dc.inbound.find((i) => i.skuId === l.skuId);
+        if (existing) existing.units += l.units;
+        else state.dc.inbound.push({ skuId: l.skuId, units: l.units });
+      }
+      post(state, "order", -total, emit);
+      const units = lines.reduce((sum, l) => sum + l.units, 0);
+      emit({ type: "dc.orderSubmitted", units, total });
+      return;
+    }
+    case "truck.setRoute": {
+      if (state.dc === null) return;
+      const truck = state.dc.trucks.find((t) => t.id === command.truckId);
+      if (!truck) return;
+      // The drafting UI surfaces the same check's sentence; a refused
+      // manifest is a silent no-op like every other command.
+      if (validateTruckConfig(state, command.route, command.transfers) !== null) return;
+      // Deep copies — a persisted manifest must never alias the payload.
+      truck.route = command.route.map((stop) => ({
+        storeId: stop.storeId,
+        lines: stop.lines.map((line) => ({ skuId: line.skuId, units: line.units })),
+      }));
+      truck.transfers = command.transfers.map((t) => ({ ...t }));
+      emit({ type: "truck.routeChanged", truckId: truck.id });
+      return;
+    }
+    case "transfer.create": {
+      if (state.phase === "close" || state.dc === null) return;
+      const source = storeById(state, command.fromStoreId);
+      if (!source || storeById(state, command.toStoreId) === null) return;
+      if (!isTruckSku(command.skuId)) return;
+      // Move what the source can actually give — draft-time honesty; the
+      // morning pickup clamps again against that morning's shelves.
+      const units = Math.min(Math.floor(command.units), onHand(source, command.skuId));
+      if (units < 1) return;
+      const plan = planTransfer(state, command.fromStoreId, command.toStoreId, command.skuId, units);
+      if (!plan.ok) return;
+      const truck = state.dc.trucks.find((t) => t.id === plan.truckId);
+      if (!truck) return;
+      truck.route = plan.route;
+      truck.transfers = plan.transfers;
+      emit({
+        type: "transfer.drafted",
+        truckId: truck.id,
+        fromStoreId: command.fromStoreId,
+        toStoreId: command.toStoreId,
+        skuId: command.skuId,
+        units,
+      });
+      emit({ type: "truck.routeChanged", truckId: truck.id });
       return;
     }
     case "settings.set": {

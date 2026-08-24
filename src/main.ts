@@ -18,15 +18,15 @@ import { seasonForDay } from "./core/clock";
 import { cellToWorld, FACING } from "./core/grid";
 import { startLoop } from "./core/loop";
 import { COMPETITOR_DEFS } from "./data/competitors";
-import { DISTRICT_MAPS, DISTRICTS, STORE_SITE } from "./data/districts";
+import { DEPOT_ID, DEPOT_SITE, DISTRICT_MAPS, DISTRICTS, STORE_SITE } from "./data/districts";
 import { createStorage } from "./platform/storage";
 import { CustomerSystem } from "./sim/customers";
 import type { SimEvent } from "./sim/events";
 import { hydrate, migrate, serialize, type SaveFile } from "./sim/save";
 import { Sim } from "./sim/sim";
-import { activeStore, createGameState, isFoundingStore } from "./sim/state";
+import { activeStore, createGameState, isFoundingStore, storeById } from "./sim/state";
 import { CameraRig, type CameraPose } from "./render/cameraRig";
-import { CityScene } from "./render/cityScene";
+import { CityScene, type TruckRunStop } from "./render/cityScene";
 import { Lighting } from "./render/lighting";
 import { NpcView } from "./render/npcView";
 import { Picking } from "./render/picking";
@@ -106,15 +106,20 @@ bus.on("era.changed", (e) => {
 
 // §19/§27 map ownership: the pine cross stands on every bought lot. The
 // founding store keeps its own site marker; branches (stores past the
-// first) claim their district's lot.
+// first) claim their district's lot. The depot and its vans follow the
+// same rule (§20/M15): geometry rebuilds on purchase, never per frame.
 function refreshCityOwnership(): void {
   const state = sim.snapshot;
   city.setBranches(
     state.stores.filter((store) => !isFoundingStore(state, store)).map((store) => store.districtId),
   );
+  city.setDepot(state.dc !== null);
+  city.setTruckCount(state.dc?.trucks.length ?? 0);
 }
 refreshCityOwnership();
 bus.on("branch.bought", refreshCityOwnership);
+bus.on("dc.bought", refreshCityOwnership);
+bus.on("truck.bought", refreshCityOwnership);
 
 // §19 morning switch: the store scene rebuilt itself off the same event
 // (render/storeScene.ts); the shadow box and paper tint follow here.
@@ -195,6 +200,34 @@ bus.on("outage.changed", (e) => {
   cityLighting.setOutage(e.on);
 });
 
+// §20 flavor: today's van runs, accumulated from the morning's arrival
+// events (sim truth — the goods already moved) and handed to the map when
+// the shift opens. A reload mid-shift replays the saved morning without
+// these events, so that day's vans sit parked — the deliveries stand
+// either way. Registered behind the saves block like every render-layer
+// day.phaseChanged listener (§23: nothing may starve the autosave).
+const todayRuns = new Map<string, TruckRunStop[]>();
+bus.on("truck.arrived", (e) => {
+  const state = sim.snapshot;
+  const store = storeById(state, e.storeId);
+  if (!store) return;
+  const site = isFoundingStore(state, store)
+    ? STORE_SITE
+    : DISTRICT_MAPS[store.districtId]!.lot;
+  const stops = todayRuns.get(e.truckId) ?? [];
+  stops.push({ districtId: store.districtId, site });
+  todayRuns.set(e.truckId, stops);
+});
+bus.on("day.phaseChanged", (e) => {
+  if (e.phase === "morning") {
+    todayRuns.clear();
+    return;
+  }
+  if (e.phase !== "shift") return;
+  const dc = sim.snapshot.dc;
+  if (dc) city.setTruckRuns(dc.trucks.map((truck) => todayRuns.get(truck.id) ?? []));
+});
+
 const hud = createHud(hudRoot, sim, bus);
 const binBoard = new RxBinBoard();
 store.scene.add(binBoard.group);
@@ -213,7 +246,14 @@ hud.bindBuild(picking);
 // The same camera rig serves both scenes with its own clamps and saved
 // framing per side; a soft dip hides the cut (instant under reduced motion).
 
-const cityOverlay = createCityOverlay(sim, bus);
+const cityOverlay = createCityOverlay(sim, bus, {
+  // The dispatch board is a dock sheet (§28): walk back inside first, the
+  // same order the B key uses — the fade covers the hand-off.
+  openDepot: () => {
+    setCityShown(false);
+    hud.openDepot();
+  },
+});
 hudRoot.append(cityOverlay.root);
 
 // Between the canvas and the HUD in DOM order, so the dip covers the scene
@@ -422,6 +462,11 @@ function updateOverlays(): void {
       const [sx, sy] = project(rival.site[0], 3.9, rival.site[1]);
       cityOverlay.updateLabel(rival.id, sx, sy);
     }
+    {
+      // The freight lot's tag (§20) — pinned like a street tag.
+      const [sx, sy] = project(DEPOT_SITE[0], 3.4, DEPOT_SITE[1]);
+      cityOverlay.updateLabel(DEPOT_ID, sx, sy);
+    }
     const snap = sim.snapshot;
     for (const store of snap.stores) {
       const site = isFoundingStore(snap, store) ? STORE_SITE : DISTRICT_MAPS[store.districtId]!.lot;
@@ -616,7 +661,13 @@ const loopHooks = {
   render: (dtMs: number, alpha: number) => {
     rig.update(dtMs);
     if (cityShown) {
-      city.update(dtMs);
+      // The clock drives the vans (§20 flavor): paused holds them still,
+      // 2× doubles them, reduced motion parks them.
+      city.update(
+        dtMs,
+        sim.snapshot.clockIgm,
+        sim.snapshot.phase === "shift" && !motionReduced(),
+      );
     } else {
       store.update(rig.camera, dtMs);
       npcs.update(alpha);

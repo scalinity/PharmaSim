@@ -23,6 +23,7 @@ import type { Sim } from "../../sim/sim";
 import { storeName } from "../../sim/state";
 import { Panel } from "../components/Panel";
 import { Tabs } from "../components/Tabs";
+import { TransferDraft } from "../components/TransferDraft";
 import { h } from "../dom";
 import { money } from "../format";
 
@@ -178,6 +179,10 @@ export function createReportsPanel(sim: Sim, bus: EventBus<SimEvent>): ReportsPa
   });
   const txSection = h("div", { cls: "reports__tx" }, [txHead, txList, txNone]);
 
+  // §20 (M15): the shortage slip sits under the rollup — the rose rows
+  // above are exactly what it answers. Its own chips pick the receiver.
+  const transferSlip = TransferDraft(sim);
+
   const sheet = Panel({ cls: "reports" }, [
     h("div", { cls: "reports__top" }, [
       h("div", {}, [
@@ -187,6 +192,7 @@ export function createReportsPanel(sim: Sim, bus: EventBus<SimEvent>): ReportsPa
       shareChip,
     ]),
     netSection,
+    transferSlip.root,
     txSection,
     tabs.root,
     head,
@@ -327,6 +333,7 @@ export function createReportsPanel(sim: Sim, bus: EventBus<SimEvent>): ReportsPa
         : `City share ≈${(trend.current * 100).toFixed(1)}%`;
 
     refreshNetwork();
+    transferSlip.refresh();
     refreshTransfers();
 
     for (const district of DISTRICTS) {
@@ -387,6 +394,11 @@ export function createReportsPanel(sim: Sim, bus: EventBus<SimEvent>): ReportsPa
   bus.on("branch.bought", invalidate);
   bus.on("branch.daySummary", invalidate);
   bus.on("branch.activeChanged", invalidate);
+  // §20 (M15): the depot and its vans open and close the shortage slip.
+  bus.on("dc.bought", invalidate);
+  bus.on("truck.bought", invalidate);
+  bus.on("truck.routeChanged", invalidate);
+  bus.on("transfer.drafted", invalidate);
 
   return {
     root,

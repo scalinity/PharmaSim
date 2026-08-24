@@ -109,6 +109,50 @@ export interface StoreState {
   staff: StaffMember[];
 }
 
+// --- §20 distribution: the DC's stock pool, its trucks, their routes (M15) ---
+
+/** One stop on a truck's morning route (§20/§24): the store it calls at and
+ *  the picking list — DC stock allocated to come off the truck here. A
+ *  transfer's pickup/drop halves live on the truck, keyed by store id. */
+export interface TruckStop {
+  storeId: string;
+  /** Picking list: units per SKU, drawn from DC stock at the depot. */
+  lines: OrderLine[];
+}
+
+/** One §20 branch→branch transfer riding a truck: picked up at the source
+ *  stop, dropped at the target stop (source before target in route order).
+ *  One-shot — the morning run that executes it takes it off the manifest. */
+export interface TruckTransfer {
+  fromStoreId: string;
+  toStoreId: string;
+  skuId: string;
+  units: number;
+}
+
+/** One §26 truck: capacity 400 units, one morning route of ≤3 stops. The
+ *  route is a standing order — it persists and runs every morning (§20). */
+export interface Truck {
+  id: string;
+  /** Day of the last morning this truck drove a stop; 0 = never. */
+  lastRunDay: number;
+  route: TruckStop[];
+  transfers: TruckTransfer[];
+}
+
+/** §20/§24 distribution center: its own stock pool (units per SKU — the
+ *  depot has no shelf/backroom split), the −12% orders landing at dawn, and
+ *  the garage's truck list. Null on GameState until the building is bought. */
+export interface DcState {
+  stock: Record<string, number>;
+  inbound: OrderLine[];
+  trucks: Truck[];
+}
+
+export function freshDc(): DcState {
+  return { stock: {}, inbound: [], trucks: [] };
+}
+
 /** One achieved §22 legacy moment (§24): the id keys data/flavor.ts. */
 export interface LegacyEntry {
   id: string;
@@ -365,6 +409,8 @@ export interface GameState {
   stats: Record<string, number>;
   /** Every store the network runs (§19/§24) — the founding store first. */
   stores: StoreState[];
+  /** §20 distribution center, or null until the depot is bought (M15). */
+  dc: DcState | null;
   /** The store the 3D sim is loaded into; the rest resolve at close (§19). */
   activeStoreId: string;
   /** This week's job applications, redrawn Monday mornings (§9). */
@@ -516,6 +562,7 @@ export function createGameState(): GameState {
     market: freshMarketState(),
     stats: { "license.L1": 1 },
     stores: [store],
+    dc: null,
     activeStoreId: store.id,
     hiring: {
       seed: Math.floor(Math.random() * 0x7fffffff),

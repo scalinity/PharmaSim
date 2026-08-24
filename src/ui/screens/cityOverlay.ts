@@ -13,14 +13,15 @@
 
 import type { EventBus } from "../../core/bus";
 import { COMPETITOR_DEFS, competitorDef } from "../../data/competitors";
-import { DISTRICTS, districtById, type FacilityKind } from "../../data/districts";
+import { DEPOT_ID, DISTRICTS, districtById, type FacilityKind } from "../../data/districts";
 import {
   districtShares,
   observedWindow,
   OTC_TALLY_KEY,
   shareTrend,
 } from "../../sim/city";
-import { branchPrice, categoryLabel } from "../../sim/economy";
+import { DC_COST, dcHeldUnits, truckLabel } from "../../sim/dc";
+import { branchPrice, categoryLabel, DC_DISCOUNT } from "../../sim/economy";
 import type { SimEvent } from "../../sim/events";
 import { ownsLicense } from "../../sim/licenses";
 import type { Sim } from "../../sim/sim";
@@ -57,14 +58,25 @@ const MIX_LINES = 5;
 export interface CityOverlayHandle {
   root: HTMLElement;
   setActive(on: boolean): void;
-  /** District under the pointer (render-side pick), or null. */
+  /** District under the pointer (render-side pick), DEPOT_ID, or null. */
   hoverDistrict(id: string | null): void;
   /** Screen-space anchor for a district's street tag, a rival's shop tag,
-   *  or a player branch's pine tag (`branch:<storeId>`), per frame. */
+   *  a player branch's pine tag (`branch:<storeId>`) or the depot's tag,
+   *  per frame. */
   updateLabel(id: string, screenX: number, screenY: number): void;
 }
 
-export function createCityOverlay(sim: Sim, bus: EventBus<SimEvent>): CityOverlayHandle {
+export interface CityOverlayOptions {
+  /** Walk back inside and open the dispatch board (§20 — the sheet lives
+   *  on the dock; main.ts owns the scene swap). */
+  openDepot(): void;
+}
+
+export function createCityOverlay(
+  sim: Sim,
+  bus: EventBus<SimEvent>,
+  options: CityOverlayOptions,
+): CityOverlayHandle {
   const tags = new Map<string, HTMLElement>();
   const tagHost = h("div", { cls: "cityui__tags", attrs: { "aria-hidden": "true" } });
   for (const district of DISTRICTS) {
@@ -72,6 +84,15 @@ export function createCityOverlay(sim: Sim, bus: EventBus<SimEvent>): CityOverla
     tags.set(district.id, tag);
     tagHost.append(tag);
   }
+  // §20: the freight lot gets a street tag too — "for sale" until bought.
+  const depotTag = h("div", { cls: "cityui__tag cityui__tag--depot", text: "Freight lot · for sale" });
+  tags.set(DEPOT_ID, depotTag);
+  tagHost.append(depotTag);
+  function refreshDepotTag(): void {
+    depotTag.textContent = sim.snapshot.dc === null ? "Freight lot · for sale" : "Depot";
+  }
+  refreshDepotTag();
+  bus.on("dc.bought", refreshDepotTag);
 
   // §18: the rivals' shop tags — name and live star rating, in their §27
   // accent, pinned to their markers the way street tags pin to plates.
@@ -321,7 +342,107 @@ export function createCityOverlay(sim: Sim, bus: EventBus<SimEvent>): CityOverla
     ];
   }
 
+  /** §20 the freight depot's card: the for-sale deed gated the way a
+   *  license application is (L6, then the till), or — once bought — the
+   *  yard's summary and the door to the dispatch board. */
+  function buildDepotCard(): void {
+    const state = sim.snapshot;
+    const body: HTMLElement[] = [
+      h("p", { cls: "cityui__eyebrow", text: "freight file" }),
+      h("p", {
+        cls: "cityui__character",
+        text:
+          state.dc === null
+            ? "Docks, shelving and a garage on the east road — one consolidated morning order for the whole name."
+            : "The family's own supply chain — central purchasing at 12% off list, vans out at dawn.",
+      }),
+    ];
+
+    if (state.dc === null) {
+      const hasL6 = ownsLicense(state, "L6");
+      const covered = state.cash >= DC_COST;
+      const gate = (met: boolean, text: string): HTMLElement =>
+        h("p", { cls: met ? "cityui__gate cityui__gate--met" : "cityui__gate" }, [
+          h("span", { cls: "cityui__gateglyph", attrs: { "aria-hidden": "true" }, text: met ? "✓" : "◻" }),
+          h("span", { text }),
+        ]);
+      const buy = h("button", {
+        cls: "pill pill--primary pill--small cityui__act",
+        text: `Buy the depot — ${money(DC_COST)}`,
+        attrs: { type: "button" },
+      });
+      buy.disabled = !hasL6 || !covered || state.phase === "close";
+      buy.addEventListener("pointerdown", (e) => e.preventDefault());
+      buy.addEventListener("click", () => sim.dispatch({ type: "dc.buy" }));
+      body.push(
+        h("div", { cls: "cityui__deed" }, [
+          h("p", { cls: "cityui__deedeyebrow", text: "For sale · the freight lot" }),
+          h("div", { cls: "cityui__deedrow cityui__deedrow--total" }, [
+            h("span", { text: "building, docks and garage" }),
+            h("span", { cls: "cityui__deeddots" }),
+            h("span", { cls: "cityui__deednum", text: money(DC_COST) }),
+          ]),
+          gate(
+            hasL6,
+            hasL6
+              ? "Distribution Operations — on the wall"
+              : "Needs the Distribution Operations license",
+          ),
+          gate(covered, covered ? "The till covers it" : `Short ${money(DC_COST - state.cash)}`),
+          buy,
+          h("p", {
+            cls: "cityui__deednote",
+            text: `Opens the Depot scope in Orders — the catalog at ${(DC_DISCOUNT * 100).toFixed(0)}% off list, replacing the supplier tier.`,
+          }),
+        ]),
+      );
+    } else {
+      const dc = state.dc;
+      body.push(
+        h("p", { cls: "cityui__facts" }, [
+          h("span", { text: `${dcHeldUnits(dc)} units on the shelves` }),
+          h("span", { cls: "cityui__dot", text: "·" }),
+          h("span", { text: `${dc.trucks.length} ${dc.trucks.length === 1 ? "van" : "vans"}` }),
+        ]),
+      );
+      for (const truck of dc.trucks) {
+        const stops = truck.route.length;
+        body.push(
+          h("p", { cls: "cityui__sharenote" }, [
+            h("span", {
+              text:
+                stops === 0
+                  ? `${truckLabel(truck.id)} — parked in the garage`
+                  : `${truckLabel(truck.id)} — ${stops} ${stops === 1 ? "stop" : "stops"}${truck.lastRunDay === state.day ? " · ran this morning" : ""}`,
+            }),
+          ]),
+        );
+      }
+      const open = h("button", {
+        cls: "pill pill--primary pill--small",
+        text: "Open the dispatch board",
+        attrs: { type: "button" },
+      });
+      open.addEventListener("pointerdown", (e) => e.preventDefault());
+      open.addEventListener("click", () => options.openDepot());
+      // Wrapped: the card body paints its direct children paper, which
+      // would strip a bare pill of its pine (same reason the deed nests).
+      body.push(h("div", { cls: "cityui__yarddoor" }, [open]));
+    }
+
+    card.replaceChildren(
+      h("div", { cls: "cityui__tab" }, [
+        h("span", { cls: "cityui__tabname", text: "Freight Depot" }),
+      ]),
+      h("div", { cls: "cityui__body" }, body),
+    );
+  }
+
   function buildCard(id: string): void {
+    if (id === DEPOT_ID) {
+      buildDepotCard();
+      return;
+    }
     const district = districtById(id);
     const state = sim.snapshot;
     const seen = observedWindow(state, id, 28);
@@ -416,14 +537,24 @@ export function createCityOverlay(sim: Sim, bus: EventBus<SimEvent>): CityOverla
   bus.on("branch.activeChanged", invalidate);
   // Cash only moves the deed's "Short $X" gate line and its buy pill —
   // rebuild for it just while a deed is actually on the card, not three
-  // times per completed sale for as long as the map is open.
+  // times per completed sale for as long as the map is open. The depot's
+  // deed gets the same treatment; its built card doesn't read the till.
   bus.on("cash.changed", () => {
     if (cardId === null) return;
     const state = sim.snapshot;
+    if (cardId === DEPOT_ID) {
+      if (state.dc === null) invalidate();
+      return;
+    }
     if (!state.stores.some((s) => !isFoundingStore(state, s) && s.districtId === cardId)) {
       invalidate();
     }
   });
+  // §20: the purchase flips the deed into the yard card on the spot, and
+  // the garage's lines follow the vans.
+  bus.on("dc.bought", invalidate);
+  bus.on("truck.bought", invalidate);
+  bus.on("truck.routeChanged", invalidate);
 
   return {
     root,

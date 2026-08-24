@@ -24,8 +24,13 @@ import {
   type Raycaster,
   Plane,
 } from "three";
+import { DAY_START_IGM } from "../core/clock";
 import { COMPETITOR_DEFS } from "../data/competitors";
 import {
+  DEPOT_ID,
+  DEPOT_RADIUS,
+  DEPOT_SITE,
+  DEPOT_SPUR,
   DISTRICT_MAPS,
   DISTRICTS,
   RIVER,
@@ -54,6 +59,17 @@ const ROAD_Y = 0.05;
 const ROAD_HALF = 0.9;
 const RIVER_HALF = 1.8;
 
+// §27 depot grays: concrete walls, a darker roof band, amber garage doors.
+const DEPOT_GRAY = 0xb0b2ac;
+const DEPOT_ROOF = 0x83898a;
+const DEPOT_APRON = 0xc4bfb2;
+
+/** §26 flavor pace: world units per in-game minute — slow enough that a
+ *  cross-town run stays visible for a good stretch of the shift. */
+const TRUCK_SPEED = 0.35;
+/** Vans leave the yard a few minutes apart, not as one convoy. */
+const TRUCK_DEPART_STAGGER_IGM = 20;
+
 /** mulberry32 — deterministic scatter, so the city never reshuffles. */
 function mulberry32(seed: number): () => number {
   let a = seed | 0;
@@ -63,6 +79,135 @@ function mulberry32(seed: number): () => number {
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
+}
+
+// --- The road graph the vans drive (M15, §27): waypoints from the ROADS
+//     polylines plus the depot spur, edges between consecutive points.
+//     Store sites hang off their district's center, which every road
+//     already starts or ends on. Built once at module load. ---
+
+type XZ = readonly [number, number];
+
+function nodeKey(p: XZ): string {
+  return `${p[0]},${p[1]}`;
+}
+
+const GRAPH_NODES = new Map<string, XZ>();
+const GRAPH_EDGES = new Map<string, { to: string; length: number }[]>();
+
+function edgesOf(key: string): { to: string; length: number }[] {
+  let edges = GRAPH_EDGES.get(key);
+  if (!edges) {
+    edges = [];
+    GRAPH_EDGES.set(key, edges);
+  }
+  return edges;
+}
+
+function addGraphEdge(a: XZ, b: XZ): void {
+  const ka = nodeKey(a);
+  const kb = nodeKey(b);
+  GRAPH_NODES.set(ka, a);
+  GRAPH_NODES.set(kb, b);
+  const length = Math.hypot(b[0] - a[0], b[1] - a[1]);
+  if (length < 1e-4) return;
+  edgesOf(ka).push({ to: kb, length });
+  edgesOf(kb).push({ to: ka, length });
+}
+
+for (const road of ROADS) {
+  for (let i = 0; i < road.points.length - 1; i++) {
+    addGraphEdge(road.points[i]!, road.points[i + 1]!);
+  }
+}
+for (let i = 0; i < DEPOT_SPUR.length - 1; i++) {
+  addGraphEdge(DEPOT_SPUR[i]!, DEPOT_SPUR[i + 1]!);
+}
+
+/** Dijkstra over the tiny waypoint graph (~20 nodes — a plain scan beats
+ *  a heap here). Returns the waypoint list from → to, inclusive. */
+function roadPath(fromKey: string, toKey: string): XZ[] {
+  if (fromKey === toKey) return [GRAPH_NODES.get(fromKey)!];
+  const dist = new Map<string, number>([[fromKey, 0]]);
+  const prev = new Map<string, string>();
+  const open = new Set<string>([fromKey]);
+  while (open.size > 0) {
+    let bestKey: string | null = null;
+    let best = Infinity;
+    for (const key of open) {
+      const d = dist.get(key)!;
+      if (d < best) {
+        best = d;
+        bestKey = key;
+      }
+    }
+    if (bestKey === null) break;
+    open.delete(bestKey);
+    if (bestKey === toKey) break;
+    for (const edge of GRAPH_EDGES.get(bestKey) ?? []) {
+      const next = best + edge.length;
+      if (next < (dist.get(edge.to) ?? Infinity)) {
+        dist.set(edge.to, next);
+        prev.set(edge.to, bestKey);
+        open.add(edge.to);
+      }
+    }
+  }
+  const path: XZ[] = [];
+  let cursor: string | undefined = toKey;
+  while (cursor !== undefined) {
+    const node = GRAPH_NODES.get(cursor);
+    if (!node) return [GRAPH_NODES.get(fromKey)!];
+    path.unshift(node);
+    if (cursor === fromKey) return path;
+    cursor = prev.get(cursor);
+  }
+  return [GRAPH_NODES.get(fromKey)!];
+}
+
+/** One stop of a van's animated run: the district whose center anchors the
+ *  road path, and the exact site (store cross or lot) to swing past. */
+export interface TruckRunStop {
+  districtId: string;
+  site: XZ;
+}
+
+interface TruckPathPlan {
+  points: XZ[];
+  /** Cumulative distance at each point; [0] = 0. */
+  cum: number[];
+  total: number;
+}
+
+const DEPOT_KEY = nodeKey(DEPOT_SITE);
+/** Vans ride just proud of the road ribbon. */
+const VAN_Y = 0.1;
+
+/** The whole day's drive: depot → each stop's district center by road, a
+ *  swing through the plaza to the store site and back, then home. */
+function buildRunPath(stops: readonly TruckRunStop[]): TruckPathPlan {
+  const points: XZ[] = [DEPOT_SITE];
+  let currentKey = DEPOT_KEY;
+  for (const stop of stops) {
+    const map = DISTRICT_MAPS[stop.districtId];
+    if (!map) continue;
+    const center: XZ = map.center;
+    const centerKey = nodeKey(center);
+    const leg = roadPath(currentKey, centerKey);
+    for (let i = 1; i < leg.length; i++) points.push(leg[i]!);
+    points.push(stop.site);
+    points.push(center);
+    currentKey = centerKey;
+  }
+  const home = roadPath(currentKey, DEPOT_KEY);
+  for (let i = 1; i < home.length; i++) points.push(home[i]!);
+  const cum: number[] = [0];
+  for (let i = 1; i < points.length; i++) {
+    const [ax, az] = points[i - 1]!;
+    const [bx, bz] = points[i]!;
+    cum.push(cum[i - 1]! + Math.hypot(bx - ax, bz - az));
+  }
+  return { points, cum, total: cum[cum.length - 1]! };
 }
 
 /** Flat ribbon along a polyline: one quad per segment, a small disc rounding
@@ -109,6 +254,14 @@ export class CityScene {
   private lotLayer: Mesh | null = null;
   private lotMaterial!: MeshLambertMaterial;
 
+  /** The §20 depot layer: the for-sale freight lot, or the gray depot with
+   *  its garage. Rebuilt once on purchase — never per frame. */
+  private depotLayer: Mesh | null = null;
+  /** One merged two-box van mesh per truck owned (§27). */
+  private truckMeshes: Mesh[] = [];
+  /** Today's animated run per truck index, or null for a parked van. */
+  private truckRuns: (TruckPathPlan | null)[] = [];
+
   constructor() {
     const flat = new MeshLambertMaterial({ vertexColors: true, flatShading: true });
 
@@ -119,9 +272,11 @@ export class CityScene {
     ground.rotation.x = -Math.PI / 2;
     this.scene.add(ground);
 
-    // Roads under the plates: full centerlines, visible in the gaps.
+    // Roads under the plates: full centerlines, visible in the gaps. The
+    // depot spur joins them — the ribbon the vans drive out on (M15).
     const roads = new PartsBuilder();
     for (const road of ROADS) addRibbon(roads, road.points, ROAD_HALF, ROAD_Y, ROAD);
+    addRibbon(roads, DEPOT_SPUR, ROAD_HALF, ROAD_Y, ROAD);
     this.scene.add(new Mesh(roads.build(), flat));
 
     const river = new PartsBuilder();
@@ -152,8 +307,10 @@ export class CityScene {
     this.buildStoreMarker(flat);
     this.buildRivalMarkers(flat);
     this.lotMaterial = flat;
-    // Until main.ts reports ownership, every lot shows its for-sale post.
+    // Until main.ts reports ownership, every lot shows its for-sale post
+    // and the freight lot stands for sale too.
     this.setBranches([]);
+    this.setDepot(false);
 
     const ring = new RingGeometry(0.88, 1, 48);
     ring.rotateX(-Math.PI / 2);
@@ -368,9 +525,96 @@ export class CityScene {
     this.scene.add(this.lotLayer);
   }
 
-  /** District plate under the pointer's ground hit, or null. */
+  /**
+   * §20/§27 depot ownership: the freight lot's for-sale post until the DC
+   * is bought, then the gray depot — long concrete walls, a west loading
+   * dock, the garage wing with amber doors, the family cross on a pole by
+   * the gate. Called on boot and on dc.bought — never per frame.
+   */
+  setDepot(built: boolean): void {
+    if (this.depotLayer) {
+      this.scene.remove(this.depotLayer);
+      this.depotLayer.geometry.dispose();
+      this.depotLayer = null;
+    }
+    const [dx, dz] = DEPOT_SITE;
+    const b = new PartsBuilder();
+    if (!built) {
+      b.add(new BoxGeometry(7, 0.05, 5), DEPOT_APRON, dx, 0.03, dz);
+      b.add(new BoxGeometry(0.12, 0.9, 0.12), LOT_POST, dx + 1.2, 0.45, dz + 1.4);
+      b.add(new BoxGeometry(0.85, 0.5, 0.06), LOT_POST, dx + 1.2, 0.95, dz + 1.4);
+    } else {
+      // The yard.
+      b.add(new BoxGeometry(12, 0.06, 9.5), DEPOT_APRON, dx, 0.03, dz);
+      // The warehouse: gray walls, darker roof band, a west loading dock.
+      b.add(new BoxGeometry(5.6, 2.4, 4.2), DEPOT_GRAY, dx + 2, 1.26, dz - 1.4);
+      b.add(new BoxGeometry(6.0, 0.16, 4.6), DEPOT_ROOF, dx + 2, 2.54, dz - 1.4);
+      b.add(new BoxGeometry(0.8, 0.8, 3.2), DEPOT_ROOF, dx - 1.1, 0.46, dz - 1.4);
+      // The garage wing, doors facing the yard.
+      b.add(new BoxGeometry(3.6, 1.6, 2.4), DEPOT_GRAY, dx + 0.8, 0.86, dz + 2.9);
+      b.add(new BoxGeometry(3.9, 0.14, 2.6), DEPOT_ROOF, dx + 0.8, 1.7, dz + 2.9);
+      for (let door = 0; door < 3; door++) {
+        b.add(new BoxGeometry(0.06, 1.05, 0.8), AMBER, dx - 1.02, 0.6, dz + 2.05 + door * 0.9);
+      }
+      // The family cross by the gate — the name on the side of the yard.
+      b.add(new BoxGeometry(0.14, 2.3, 0.14), 0x4a5a50, dx - 4.2, 1.15, dz - 2.6);
+      b.add(new BoxGeometry(0.95, 0.32, 0.24), PINE, dx - 4.2, 2.7, dz - 2.6);
+      b.add(new BoxGeometry(0.32, 0.95, 0.24), PINE, dx - 4.2, 2.7, dz - 2.6);
+    }
+    this.depotLayer = new Mesh(b.build(), this.lotMaterial);
+    this.scene.add(this.depotLayer);
+  }
+
+  /** Garage bay for van `index`: a row along the yard's west edge. */
+  private parkVan(mesh: Mesh, index: number): void {
+    mesh.position.set(DEPOT_SITE[0] - 3.4, VAN_Y, DEPOT_SITE[1] - 2.6 + index * 1.15);
+    mesh.rotation.y = Math.PI;
+  }
+
+  /** §27 two-box van: cream cargo box behind a pine cab on a dark runner,
+   *  built along +X so yaw follows the road direction. One merged mesh —
+   *  one draw call per van. */
+  private makeVan(): Mesh {
+    const b = new PartsBuilder();
+    b.add(new BoxGeometry(1.3, 0.14, 0.56), 0x3a423e, 0, 0.12, 0);
+    b.add(new BoxGeometry(0.85, 0.6, 0.6), LOT_CREAM, -0.18, 0.5, 0);
+    b.add(new BoxGeometry(0.42, 0.46, 0.56), PINE, 0.44, 0.43, 0);
+    return new Mesh(b.build(), this.lotMaterial);
+  }
+
+  /** One van mesh per truck in the garage; parked until a run is set. */
+  setTruckCount(count: number): void {
+    while (this.truckMeshes.length < count) {
+      const van = this.makeVan();
+      this.parkVan(van, this.truckMeshes.length);
+      this.truckMeshes.push(van);
+      this.scene.add(van);
+    }
+    while (this.truckMeshes.length > count) {
+      const van = this.truckMeshes.pop()!;
+      this.scene.remove(van);
+      van.geometry.dispose();
+    }
+    this.truckRuns.length = Math.min(this.truckRuns.length, count);
+  }
+
+  /** Today's runs, index-aligned with the garage's vans; [] parks a van.
+   *  Paths are computed here, once per morning — never per frame. */
+  setTruckRuns(runs: readonly (readonly TruckRunStop[])[]): void {
+    this.truckRuns = this.truckMeshes.map((_, i) => {
+      const stops = runs[i];
+      if (!stops || stops.length === 0) return null;
+      return buildRunPath(stops);
+    });
+  }
+
+  /** District plate under the pointer's ground hit, the freight depot's
+   *  yard (DEPOT_ID), or null. */
   districtAt(raycaster: Raycaster): string | null {
     if (!raycaster.ray.intersectPlane(this.groundPlane, this.hit)) return null;
+    if (Math.hypot(this.hit.x - DEPOT_SITE[0], this.hit.z - DEPOT_SITE[1]) <= DEPOT_RADIUS + 1) {
+      return DEPOT_ID;
+    }
     let best: string | null = null;
     let bestDist = Infinity;
     for (const district of DISTRICTS) {
@@ -384,7 +628,8 @@ export class CityScene {
     return best;
   }
 
-  /** §27 hover feedback: a soft pine ring under the district's plate. */
+  /** §27 hover feedback: a soft pine ring under the district's plate — or
+   *  the depot's yard (M15). */
   setHover(districtId: string | null): void {
     if (districtId === this.hoverId) return;
     this.hoverId = districtId;
@@ -392,18 +637,53 @@ export class CityScene {
       this.hoverRing.visible = false;
       return;
     }
-    const m = DISTRICT_MAPS[districtId]!;
-    const r = m.radius + 0.9;
-    this.hoverRing.position.set(m.center[0], PLATE_H + 0.05, m.center[1]);
+    let center: readonly [number, number];
+    let r: number;
+    if (districtId === DEPOT_ID) {
+      center = DEPOT_SITE;
+      r = DEPOT_RADIUS + 0.9;
+    } else {
+      const m = DISTRICT_MAPS[districtId]!;
+      center = m.center;
+      r = m.radius + 0.9;
+    }
+    this.hoverRing.position.set(center[0], PLATE_H + 0.05, center[1]);
     this.hoverRing.scale.set(r, 1, r);
     this.pulseT = 0;
     this.hoverRing.visible = true;
   }
 
-  /** Per-frame: only the hover ring breathes. */
-  update(dtMs: number): void {
-    if (!this.hoverRing.visible) return;
-    this.pulseT += dtMs / 1000;
-    this.hoverMat.opacity = 0.42 + 0.14 * Math.sin(this.pulseT * 2.6);
+  /** Per-frame: the hover ring breathes and the vans drive. The sim clock
+   *  drives the vans, so a reopened map finds them mid-route and a paused
+   *  game holds them still; `trucksDriving` is false outside the shift and
+   *  under reduced motion — parked either way, since arrivals were already
+   *  sim truth at the morning turnover (§20 flavor contract). */
+  update(dtMs: number, clockIgm: number, trucksDriving: boolean): void {
+    if (this.hoverRing.visible) {
+      this.pulseT += dtMs / 1000;
+      this.hoverMat.opacity = 0.42 + 0.14 * Math.sin(this.pulseT * 2.6);
+    }
+    for (let i = 0; i < this.truckMeshes.length; i++) {
+      const mesh = this.truckMeshes[i]!;
+      const run = this.truckRuns[i] ?? null;
+      if (!trucksDriving || run === null) {
+        this.parkVan(mesh, i);
+        continue;
+      }
+      const dist = TRUCK_SPEED * (clockIgm - DAY_START_IGM - i * TRUCK_DEPART_STAGGER_IGM);
+      if (dist <= 0 || dist >= run.total) {
+        this.parkVan(mesh, i);
+        continue;
+      }
+      const { points, cum } = run;
+      let seg = 1;
+      while (seg < cum.length - 1 && cum[seg]! < dist) seg++;
+      const a = points[seg - 1]!;
+      const b = points[seg]!;
+      const span = cum[seg]! - cum[seg - 1]!;
+      const t = span > 1e-6 ? (dist - cum[seg - 1]!) / span : 0;
+      mesh.position.set(a[0] + (b[0] - a[0]) * t, VAN_Y, a[1] + (b[1] - a[1]) * t);
+      if (span > 1e-6) mesh.rotation.y = Math.atan2(-(b[1] - a[1]), b[0] - a[0]);
+    }
   }
 }

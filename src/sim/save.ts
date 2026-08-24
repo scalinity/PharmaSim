@@ -89,10 +89,17 @@
 //    cash, licenses, the city memory and the market were account-wide all
 //    along and stay so.
 //
-//  §24's fuller schema (worldSeed, dc, aitech) is not here because those
-//  systems do not exist yet. They arrive field-by-field with the milestones
-//  that own them — 15 logistics, 16 AI tech — each with its own migrate
-//  step.
+//  Version 10 (milestone 15) adds the supply chain:
+//    · dc (§20/§24: the depot's stock pool and −12% inbound order, and the
+//      garage's trucks — each with its standing route of picking-list
+//      stops and the one-shot transfers riding the next morning's run)  (M15)
+//    A pre-depot save simply hasn't bought the building: the step seeds
+//    null, and the map's freight lot stands for sale exactly as it would
+//    on a new run.
+//
+//  §24's fuller schema (worldSeed, aitech) is not here because those
+//  systems do not exist yet. They arrive field-by-field with milestone 16,
+//  each with its own migrate step.
 // ===========================================================================
 
 import { DAY_END_IGM, DAY_START_IGM } from "../core/clock";
@@ -106,6 +113,13 @@ import { isLegacyMoment } from "../data/flavor";
 // back (a cycle would surface as a TDZ crash at module evaluation).
 import { DISTRICT_SHARE_LOG_DAYS, PLAYER_PHARMACY_ID } from "./city";
 import { CHRONIC_CATEGORIES, poolKeyOf, TRANSFER_CAP } from "./competitors";
+import {
+  isTruckSku,
+  MAX_TRUCKS,
+  plannedPeakLoad,
+  TRUCK_CAPACITY,
+  TRUCK_MAX_STOPS,
+} from "./dc";
 import { HISTORY_DAYS } from "./inventory";
 import {
   HIREABLE_ROLES,
@@ -124,6 +138,7 @@ import {
   type CompetitorState,
   type DayPhase,
   type DayStats,
+  type DcState,
   type DistrictTally,
   type GameSettings,
   type GameState,
@@ -131,10 +146,13 @@ import {
   type MarketState,
   type PatientPool,
   type StoreState,
+  type Truck,
+  type TruckStop,
+  type TruckTransfer,
   type WorldEventsState,
 } from "./state";
 
-export const SAVE_VERSION = 9;
+export const SAVE_VERSION = 10;
 
 export interface SaveFile {
   version: number;
@@ -152,6 +170,7 @@ export interface SaveFile {
   market: MarketState;
   stats: Record<string, number>;
   stores: StoreState[];
+  dc: DcState | null;
   activeStoreId: string;
   hiring: HiringPool;
   dayStats: DayStats;
@@ -276,6 +295,13 @@ const MIGRATIONS: readonly ((file: RawSave) => RawSave)[] = [
     delete file.repStars;
     return file;
   },
+  // 9 → 10 (milestone 15): the supply chain. A pre-depot save simply hasn't
+  // bought the building — the freight lot stands for sale on its map, and
+  // there is no DC stock, no garage, no routes until it does.
+  (file) => {
+    file.dc = null;
+    return file;
+  },
 ];
 
 // --- Deep copies: a save must never alias live state, and a hydrated state
@@ -322,6 +348,26 @@ function copyStaffMember(member: StaffMember): StaffMember {
   const copy: StaffMember = { ...member };
   if (member.assignment) copy.assignment = { ...member.assignment };
   return copy;
+}
+
+function copyTruck(truck: Truck): Truck {
+  return {
+    id: truck.id,
+    lastRunDay: truck.lastRunDay,
+    route: truck.route.map((stop) => ({
+      storeId: stop.storeId,
+      lines: stop.lines.map((line) => ({ ...line })),
+    })),
+    transfers: truck.transfers.map((t) => ({ ...t })),
+  };
+}
+
+function copyDc(dc: DcState): DcState {
+  return {
+    stock: { ...dc.stock },
+    inbound: dc.inbound.map((line) => ({ ...line })),
+    trucks: dc.trucks.map(copyTruck),
+  };
 }
 
 function copyHiring(hiring: HiringPool): HiringPool {
@@ -417,6 +463,7 @@ export function serialize(state: GameState): SaveFile {
     market: copyMarket(state.market),
     stats: { ...state.stats },
     stores: state.stores.map(copyStore),
+    dc: state.dc === null ? null : copyDc(state.dc),
     activeStoreId: state.activeStoreId,
     hiring: copyHiring(state.hiring),
     dayStats: copyDayStats(state.dayStats),
@@ -443,6 +490,7 @@ export function hydrate(file: SaveFile): GameState {
     market: copyMarket(file.market),
     stats: { ...file.stats },
     stores: file.stores.map(copyStore),
+    dc: file.dc === null ? null : copyDc(file.dc),
     activeStoreId: file.activeStoreId,
     hiring: copyHiring(file.hiring),
     workingStationId: null,
@@ -886,6 +934,118 @@ function validate(file: RawSave): SaveFile {
       }
     }
   }
+  // §20 depot (M15): the stock pool renders per SKU on the dispatch board,
+  // and the picking lists both render per row and walk per row every
+  // morning — so unknown SKUs are refused at the door (drugDef/otcDef
+  // throw on a stranger, and a refrigerated id would put cold stock on a
+  // van with no cold chain), and every array is capped at what the writer
+  // keeps: MAX_TRUCKS bays, TRUCK_MAX_STOPS stops, one line per SKU, and
+  // a peak load the §26 springs could actually carry.
+  if (file.dc !== null) {
+    const dc = requireObject(file.dc, "a depot");
+    const stock = requireObject(dc.stock, "depot stock");
+    for (const [skuId, units] of Object.entries(stock)) {
+      if (!isTruckSku(skuId)) reject("readable depot stock");
+      if (typeof units !== "number" || !Number.isFinite(units) || units < 0) {
+        reject("readable depot stock");
+      }
+    }
+    requireArray(dc.inbound, "a depot order");
+    const inboundSkus = new Set<string>();
+    for (const entry of dc.inbound as unknown[]) {
+      const line = requireObject(entry, "a depot order");
+      // The writer merges per SKU, so uniqueness is also the length cap.
+      if (
+        typeof line.skuId !== "string" ||
+        !isTruckSku(line.skuId) ||
+        inboundSkus.has(line.skuId) ||
+        !Number.isInteger(line.units) ||
+        (line.units as number) < 1
+      ) {
+        reject("a readable depot order");
+      }
+      inboundSkus.add(line.skuId);
+    }
+    requireArray(dc.trucks, "a garage");
+    if ((dc.trucks as unknown[]).length > MAX_TRUCKS) reject("a sane garage");
+    const truckIds = new Set<string>();
+    for (const entry of dc.trucks as unknown[]) {
+      const truck = requireObject(entry, "a truck");
+      if (typeof truck.id !== "string" || truck.id.length === 0 || truckIds.has(truck.id)) {
+        reject("readable truck ids");
+      }
+      truckIds.add(truck.id);
+      if (!Number.isInteger(truck.lastRunDay) || (truck.lastRunDay as number) < 0) {
+        reject("a truck's run day");
+      }
+      requireArray(truck.route, "a truck route");
+      if ((truck.route as unknown[]).length > TRUCK_MAX_STOPS) reject("a sane truck route");
+      // Route order matters to the transfers below — keep the stop ids.
+      const stopOrder: string[] = [];
+      for (const stopEntry of truck.route as unknown[]) {
+        const stop = requireObject(stopEntry, "a truck stop");
+        // Every stop resolves through storeById each morning and is named
+        // through storeName on the manifest — a stranger or a repeat is
+        // refused here, like the active-store pointer below.
+        if (
+          typeof stop.storeId !== "string" ||
+          !storeIds.has(stop.storeId) ||
+          stopOrder.includes(stop.storeId)
+        ) {
+          reject("a truck stop");
+        }
+        stopOrder.push(stop.storeId);
+        requireArray(stop.lines, "a picking list");
+        const lineSkus = new Set<string>();
+        for (const lineEntry of stop.lines as unknown[]) {
+          const line = requireObject(lineEntry, "a picking list");
+          if (
+            typeof line.skuId !== "string" ||
+            !isTruckSku(line.skuId) ||
+            lineSkus.has(line.skuId) ||
+            !Number.isInteger(line.units) ||
+            (line.units as number) < 1
+          ) {
+            reject("a readable picking list");
+          }
+          lineSkus.add(line.skuId);
+        }
+      }
+      requireArray(truck.transfers, "transfers");
+      // Every transfer moves ≥1 unit inside the peak-load check below, so
+      // capacity is also the writer's cap on this list's length.
+      if ((truck.transfers as unknown[]).length > TRUCK_CAPACITY) reject("a sane transfer list");
+      for (const transferEntry of truck.transfers as unknown[]) {
+        const t = requireObject(transferEntry, "transfers");
+        if (
+          typeof t.skuId !== "string" ||
+          !isTruckSku(t.skuId) ||
+          !Number.isInteger(t.units) ||
+          (t.units as number) < 1 ||
+          typeof t.fromStoreId !== "string" ||
+          typeof t.toStoreId !== "string"
+        ) {
+          reject("readable transfers");
+        }
+        // The morning run boards a pickup before its drop — a transfer
+        // whose stops are missing or reversed would strand its units.
+        const fromIdx = stopOrder.indexOf(t.fromStoreId);
+        const toIdx = stopOrder.indexOf(t.toStoreId);
+        if (fromIdx === -1 || toIdx === -1 || fromIdx >= toIdx) reject("readable transfers");
+      }
+      // Structure held, so the typed arithmetic can run: the same §26
+      // springs check the setRoute command enforces at draft time.
+      if (
+        plannedPeakLoad(
+          truck.route as unknown as TruckStop[],
+          truck.transfers as unknown as TruckTransfer[],
+        ) > TRUCK_CAPACITY
+      ) {
+        reject("a route the van can carry");
+      }
+    }
+  }
+
   // The pointer must land on a real store, or the boot's scene build and
   // every activeStore read would fall back somewhere the file never meant.
   if (typeof file.activeStoreId !== "string" || !storeIds.has(file.activeStoreId)) {

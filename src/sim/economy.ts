@@ -50,6 +50,9 @@ export const LEDGER_REASONS = [
   { id: "expansion", group: "cost", label: "Expansion" },
   /** §19: site (300× district rent) + the $15k fit-out, one line. */
   { id: "branch.purchase", group: "cost", label: "Branch purchase" },
+  /** §20: the depot building and the garage's vans (M15). */
+  { id: "dc.purchase", group: "cost", label: "Distribution center" },
+  { id: "truck.purchase", group: "cost", label: "Trucks" },
   { id: "renovation", group: "cost", label: "Renovation" },
   { id: "bank.draw", group: "financing", label: "Credit line draw" },
   { id: "bank.payment", group: "financing", label: "Credit line payment" },
@@ -165,6 +168,45 @@ export function orderTotal(
   let total = 0;
   for (const l of lines) total += unitCost(state, store, l.skuId) * l.units;
   return round2(total);
+}
+
+// --- §20 central purchasing (M15): the depot's own wholesale terms ---
+
+/** §26: the DC's shave off list. It *replaces* the reputation supplier
+ *  tier (§20 — discounts never stack), so this is a whole price, not a
+ *  delta on unitCost. */
+export const DC_DISCOUNT = 0.12;
+
+/** What the depot pays per unit today: list, the §16 shortage's ×1.5 when
+ *  the category is squeezed, and the flat −12% — no supplier tier (§20). */
+export function dcUnitCost(state: GameState, skuId: string): number {
+  const shortage = shortageActive(state, skuId) ? SHORTAGE_WHOLESALE_MULT : 1;
+  return round2(listWholesale(skuId) * shortage * (1 - DC_DISCOUNT));
+}
+
+export function dcOrderTotal(state: GameState, lines: readonly OrderLine[]): number {
+  let total = 0;
+  for (const l of lines) total += dcUnitCost(state, l.skuId) * l.units;
+  return round2(total);
+}
+
+/** §20 depot ordering gates: licenses are account-wide and apply as ever;
+ *  the depot has no cabinet question (T3 stock sits boxed on its shelves),
+ *  but the vans carry no cold chain — refrigerated SKUs order direct to
+ *  each store's own fridge, where §14's capacity is enforced. */
+export function dcSkuLock(state: GameState, skuId: string): string | null {
+  const drug = DRUG_BY_ID.get(skuId);
+  if (!drug) return null;
+  if (drug.refrigerated) return "No cold chain on the vans — order direct to a store's fridge";
+  if (drug.category === "vaccines") {
+    if (!state.licenses.includes("L4")) return "Needs the Immunization Certification license";
+  } else if (drug.tier === 2 && !state.licenses.includes("L2")) {
+    return "Needs the Expanded Formulary license";
+  }
+  if (drug.tier === 3 && !state.licenses.includes("L3")) {
+    return "Needs the Controlled Substances license";
+  }
+  return null;
 }
 
 // --- The wholesale catalog (§11, §12, §25) ---

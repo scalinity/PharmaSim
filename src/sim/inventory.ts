@@ -103,6 +103,25 @@ export function returnShelved(store: StoreState, skuId: string): void {
   line(store, skuId).shelved++;
 }
 
+/** §20 truck drop: units straight into the backroom, no van queue. */
+export function addBackroom(store: StoreState, skuId: string, units: number): void {
+  if (units <= 0) return;
+  line(store, skuId).backroom += units;
+}
+
+/** §20 transfer pickup: take up to `units` from wherever the store holds
+ *  them — boxed stock first, the shelf/bins only for the remainder — and
+ *  return how many actually left. */
+export function takeUnits(store: StoreState, skuId: string, units: number): number {
+  const s = store.stock[skuId];
+  if (!s || units <= 0) return 0;
+  const fromBack = Math.min(units, s.backroom);
+  s.backroom -= fromBack;
+  const fromShelf = Math.min(units - fromBack, s.shelved);
+  s.shelved -= fromShelf;
+  return fromBack + fromShelf;
+}
+
 // --- OTC pricing (§10) ---
 
 export function priceMultiplier(store: StoreState, skuId: string): number {

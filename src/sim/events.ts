@@ -113,6 +113,36 @@ export type SimEvent =
   /** An unvisited branch's day resolved (§19/§24). A trigger only — the
    *  numbers live on that store's daySummary. */
   | { type: "branch.daySummary"; storeId: string; day: number }
+  // --- Distribution + logistics (§20, milestone 15) ---
+  /** The depot is bought: state.dc exists, the gray building stands (§27). */
+  | { type: "dc.bought"; cost: number; day: number }
+  /** A −12% depot order signed; goods land on the DC shelves at dawn. */
+  | { type: "dc.orderSubmitted"; units: number; total: number }
+  /** Dawn at the depot: yesterday's central order is on the shelves. */
+  | { type: "dc.delivered"; units: number; skus: number }
+  /** A van joined the garage. */
+  | { type: "truck.bought"; truckId: string; cost: number }
+  /** A van's manifest changed (route, picking lists or transfers). */
+  | { type: "truck.routeChanged"; truckId: string }
+  /** A §20 transfer compiled onto a van's morning run. */
+  | {
+      type: "transfer.drafted";
+      truckId: string;
+      fromStoreId: string;
+      toStoreId: string;
+      skuId: string;
+      units: number;
+    }
+  /** A van called at a stop this morning (§20/§24) — goods already moved;
+   *  the ticker takes the first arrival per truck per day, quietly. */
+  | {
+      type: "truck.arrived";
+      truckId: string;
+      storeId: string;
+      delivered: number;
+      pickedUp: number;
+      day: number;
+    }
   /** A dev console command took effect; the message is toast-ready. */
   | { type: "dev.eventForced"; message: string }
   // --- App shell (§23, milestone 06) ---

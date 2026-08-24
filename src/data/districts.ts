@@ -302,6 +302,28 @@ export const ROADS: readonly RoadDef[] = [
   { from: "medicalDistrict", to: "downtown", points: [[16, 16], [20, 1], [20, -14]] },
 ];
 
+// --- The freight depot (M15, §20/§27) ---
+
+/** The depot's id on hover/tag surfaces — beside the district ids, never
+ *  one of them (districtById throws on it by design). */
+export const DEPOT_ID = "depot";
+
+/** Where the §20 distribution center stands: open ground on the east edge
+ *  of town, clear of every district plate, its spur meeting the
+ *  medicalDistrict↔downtown road at the [20, 1] waypoint. */
+export const DEPOT_SITE: [x: number, z: number] = [30, 2];
+
+/** Rough footprint radius — the map's hover hit area for the depot lot. */
+export const DEPOT_RADIUS = 6;
+
+/** The depot's own spur off the road network. Kept beside ROADS rather
+ *  than in it: ROADS is one ribbon per §17 adjacency edge, and the depot
+ *  is a building, not a district. */
+export const DEPOT_SPUR: readonly [x: number, z: number][] = [
+  [30, 2],
+  [20, 1],
+];
+
 /** The river that names Riverside — a flat water ribbon past the west side. */
 export const RIVER: readonly [x: number, z: number][] = [
   [-46, -40],

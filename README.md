@@ -56,6 +56,6 @@ builds (`npm run dev`) — `K` in particular rewrites the save, so packaged buil
 - [x] 12 City map + living demand
 - [x] 13 Competitors + market share
 - [x] 14 Multi-branch
-- [ ] 15 Distribution + logistics
+- [x] 15 Distribution + logistics
 - [ ] 16 AI endgame tech + balancing
 - [ ] 17 Audio + polish + packaging

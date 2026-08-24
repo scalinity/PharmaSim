@@ -13,13 +13,19 @@ import {
   refrigeratedHeld,
   refrigeratedInbound,
 } from "../../sim/coldchain";
+import { DC_SCOPE_ID, dcStockOf } from "../../sim/dc";
 import {
   bankStatus,
   catalog,
   categoryLabel,
   COPAY,
+  DC_DISCOUNT,
+  dcOrderTotal,
+  dcSkuLock,
+  dcUnitCost,
   listWholesale,
   orderTotal,
+  round2,
   shortageActive,
   shortageFillCap,
   skuLock,
@@ -34,6 +40,7 @@ import type { Sim } from "../../sim/sim";
 import { activeStore, storeById, storeName, type StoreState } from "../../sim/state";
 import { BranchScope } from "../components/BranchScope";
 import { fridgePips } from "../components/Meter";
+import { TransferDraft } from "../components/TransferDraft";
 import { Panel } from "../components/Panel";
 import { PillButton } from "../components/PillButton";
 import { PriceTag, type PriceTagHandle } from "../components/PriceTag";
@@ -104,6 +111,9 @@ interface Row {
   sales: HTMLElement;
   field: HTMLInputElement;
   tag: PriceTagHandle | null;
+  /** The OTC row's list-price cell, shown in place of the tag while the
+   *  depot scope is up (§20: pricing is per store, the depot has none). */
+  fixedOtc: HTMLElement | null;
   min: HTMLInputElement | null;
   target: HTMLInputElement | null;
 }
@@ -126,15 +136,27 @@ export function createOrdersPanel(sim: Sim, bus: EventBus<SimEvent>): OrdersPane
 
   // §19: the form is written up for one branch at a time — the scope names
   // it, the cart empties when it changes (a cart belongs to one door).
-  const scope = BranchScope(sim, () => {
-    clearCart();
-    refreshAll();
-    // The scoped store's own §11 reorder rules draft its cart, morning-only,
-    // same as the auto-draft on the day turn.
-    if (sim.snapshot.phase === "morning") setCart(draftOrder(scopedStore()));
-  });
+  // §20 (M15): the depot joins the row once the DC stands — same catalog,
+  // central terms.
+  const scope = BranchScope(
+    sim,
+    () => {
+      clearCart();
+      refreshAll();
+      // The scoped store's own §11 reorder rules draft its cart, morning-only,
+      // same as the auto-draft on the day turn. The depot has no rules.
+      if (!scopeIsDc() && sim.snapshot.phase === "morning") setCart(draftOrder(scopedStore()));
+    },
+    { depotChip: true },
+  );
 
-  /** The branch this order form is made out to. */
+  /** §20: the form is made out to the depot, not a branch. */
+  function scopeIsDc(): boolean {
+    return scope.current() === DC_SCOPE_ID;
+  }
+
+  /** The branch this order form is made out to. Meaningless while the
+   *  depot scope is up — every consumer branches on scopeIsDc() first. */
   function scopedStore(): StoreState {
     return storeById(sim.snapshot, scope.current()) ?? activeStore(sim.snapshot);
   }
@@ -142,7 +164,14 @@ export function createOrdersPanel(sim: Sim, bus: EventBus<SimEvent>): OrdersPane
   // --- Left leaf: the order form ---
 
   const head = h("div", { cls: "oform__head", attrs: { "aria-hidden": "true" } });
-  for (const label of COLUMNS) head.append(h("span", { cls: "oform__col", text: label }));
+  // Two columns re-speak under the depot scope (§20): the price is the
+  // list, the stock on hand is the depot's.
+  const headCols = new Map<string, HTMLElement>();
+  for (const label of COLUMNS) {
+    const col = h("span", { cls: "oform__col", text: label });
+    headCols.set(label, col);
+    head.append(col);
+  }
   const headMin = h("span", { cls: "oform__col oform__col--rule", text: "min" });
   const headTarget = h("span", { cls: "oform__col oform__col--rule", text: "to" });
   head.append(headMin, headTarget, h("span", { cls: "oform__col", text: "units" }));
@@ -186,7 +215,7 @@ export function createOrdersPanel(sim: Sim, bus: EventBus<SimEvent>): OrdersPane
 
   function commit(row: Row): void {
     let units = readNumber(row.field, 9999);
-    if (row.entry.refrigerated && units > 0) {
+    if (!scopeIsDc() && row.entry.refrigerated && units > 0) {
       // The fridge is the ceiling (§14): the same clamp the order command
       // applies, so the stub never promises units the command would trim.
       const capped = coldClampUnits(scopedStore(), units, coldClaimedElsewhere(row.entry.skuId));
@@ -249,6 +278,7 @@ export function createOrdersPanel(sim: Sim, bus: EventBus<SimEvent>): OrdersPane
       sales,
       field,
       tag: null,
+      fixedOtc: null,
       min: null,
       target: null,
     };
@@ -269,7 +299,14 @@ export function createOrdersPanel(sim: Sim, bus: EventBus<SimEvent>): OrdersPane
           refreshRow(row);
         },
       });
-      priceCell = row.tag.root;
+      // The depot scope swaps the tag for the plain list price (§20) —
+      // display: contents keeps the wrapper out of the grid's columns.
+      row.fixedOtc = h("span", { cls: "orow__fixed" }, [
+        h("span", { cls: "orow__fixednum", text: money(entry.listPrice) }),
+        h("span", { cls: "orow__fixedcap", text: "MSRP, list" }),
+      ]);
+      row.fixedOtc.hidden = true;
+      priceCell = h("span", { cls: "orow__pricecell" }, [row.tag.root, row.fixedOtc]);
     } else {
       priceCell = h("span", { cls: "orow__fixed" }, [
         h("span", { cls: "orow__fixednum", text: money(entry.listPrice) }),
@@ -307,6 +344,21 @@ export function createOrdersPanel(sim: Sim, bus: EventBus<SimEvent>): OrdersPane
   let meterCapacity = -1;
 
   function refreshFridgeMeter(): void {
+    if (scopeIsDc()) {
+      // §20: no cold room at the depot, no cold chain on the vans — the
+      // section stays visible so the locks read beside their reason.
+      if (meterCapacity !== -2) {
+        meterCapacity = -2;
+        meterSpoken = -1;
+        fridgeMeterHost.replaceChildren(
+          h("p", {
+            cls: "oform__coldnote",
+            text: "The vans carry no cold chain — refrigerated stock orders direct to each store's own fridge.",
+          }),
+        );
+      }
+      return;
+    }
     const store = scopedStore();
     const capacity = fridgeCapacity(store);
     let cartCold = 0;
@@ -391,14 +443,18 @@ export function createOrdersPanel(sim: Sim, bus: EventBus<SimEvent>): OrdersPane
   // --- Right leaf: the carbon duplicate + the bank's card ---
 
   const stubLines = h("div", { cls: "stub__lines" });
+  const stubHint = h("p", {
+    cls: "stub__hint",
+    text: "Cash leaves the till now. The van unloads into the backroom before you open tomorrow.",
+  });
   const stubUnits = h("span", { cls: "stub__num" });
   const stubTotal = h("span", { cls: "stub__num stub__num--total" });
   const stubAfter = h("span", { cls: "stub__num" });
   const placeButton = PillButton("Place order", () => {
     const lines = [...cart].map(([skuId, units]) => ({ skuId, units }));
-    if (lines.length > 0) {
-      sim.dispatch({ type: "order.submit", lines, storeId: scopedStore().id });
-    }
+    if (lines.length === 0) return;
+    if (scopeIsDc()) sim.dispatch({ type: "dc.order", lines });
+    else sim.dispatch({ type: "order.submit", lines, storeId: scopedStore().id });
   });
   const clearButton = PillButton("Clear", () => clearCart(), {
     variant: "secondary",
@@ -417,10 +473,7 @@ export function createOrdersPanel(sim: Sim, bus: EventBus<SimEvent>): OrdersPane
         stubAfter,
       ]),
       h("div", { cls: "stub__actions" }, [placeButton, clearButton]),
-      h("p", {
-        cls: "stub__hint",
-        text: "Cash leaves the till now. The van unloads into the backroom before you open tomorrow.",
-      }),
+      stubHint,
     ]),
   ]);
 
@@ -449,9 +502,16 @@ export function createOrdersPanel(sim: Sim, bus: EventBus<SimEvent>): OrdersPane
     familyNote,
   ]);
 
+  // §20: the shortage slip rides the side column, made out to the same
+  // branch as the form (hidden under the depot scope — the depot doesn't
+  // run out, it distributes).
+  const transferSlip = TransferDraft(sim, {
+    target: () => (scopeIsDc() ? null : scopedStore().id),
+  });
+
   const root = h("div", { cls: "orders" }, [
     h("div", { cls: "orders__leaf" }, [form]),
-    h("div", { cls: "orders__side" }, [stub, bank]),
+    h("div", { cls: "orders__side" }, [stub, bank, transferSlip.root]),
   ]);
   root.hidden = true;
 
@@ -462,23 +522,49 @@ export function createOrdersPanel(sim: Sim, bus: EventBus<SimEvent>): OrdersPane
     const store = scopedStore();
     // Locks move mid-session — a bought license or a placed cabinet opens
     // rows this panel built while they were still gated (§12) — and follow
-    // the scoped branch's own walls (§19).
-    row.entry.lock = skuLock(state, store, row.entry.skuId);
-    const stock = stockOf(store, row.entry.skuId);
-    const sell = row.entry.kind === "otc" ? otcPrice(store, row.entry.skuId) : row.entry.listPrice;
-    const marginValue = unitMargin(state, store, row.entry, sell);
+    // the scoped branch's own walls (§19), or the depot's terms (§20:
+    // account licenses apply, per-store equipment doesn't, and the cold
+    // chain can't ride the vans).
+    const isDc = scopeIsDc();
+    row.entry.lock = isDc
+      ? dcSkuLock(state, row.entry.skuId)
+      : skuLock(state, store, row.entry.skuId);
+    const sell =
+      !isDc && row.entry.kind === "otc" ? otcPrice(store, row.entry.skuId) : row.entry.listPrice;
+    const marginValue = isDc
+      ? round2(sell - dcUnitCost(state, row.entry.skuId))
+      : unitMargin(state, store, row.entry, sell);
 
     const list = listWholesale(row.entry.skuId);
-    const cost = unitCost(state, store, row.entry.skuId);
+    const cost = isDc
+      ? dcUnitCost(state, row.entry.skuId)
+      : unitCost(state, store, row.entry.skuId);
     row.cost.textContent = money(cost);
     row.costList.textContent = cost < list ? money(list) : "";
     row.margin.textContent = money(marginValue);
     row.margin.classList.toggle("orow__margin--thin", marginValue > 0 && marginValue < THIN_MARGIN);
     row.margin.classList.toggle("orow__margin--under", marginValue <= 0);
-    row.onHand.textContent = `${stock.shelved} / ${stock.backroom}`;
-    row.onHand.classList.toggle("orow__hand--out", stock.shelved + stock.backroom === 0);
-    const moved = sales7d(store, row.entry.skuId);
-    row.sales.textContent = moved === 0 ? "\u2014" : String(moved);
+    if (isDc) {
+      // The depot's shelves are one pool (\u00a724) \u2014 no front/back split \u2014 and
+      // central buying reads the whole network's week, not one till's.
+      const held = state.dc ? dcStockOf(state.dc, row.entry.skuId) : 0;
+      row.onHand.textContent = held === 0 ? "\u2014" : String(held);
+      row.onHand.classList.toggle("orow__hand--out", held === 0);
+      let moved = 0;
+      for (const s of state.stores) moved += sales7d(s, row.entry.skuId);
+      row.sales.textContent = moved === 0 ? "\u2014" : String(moved);
+    } else {
+      const stock = stockOf(store, row.entry.skuId);
+      row.onHand.textContent = `${stock.shelved} / ${stock.backroom}`;
+      row.onHand.classList.toggle("orow__hand--out", stock.shelved + stock.backroom === 0);
+      const moved = sales7d(store, row.entry.skuId);
+      row.sales.textContent = moved === 0 ? "\u2014" : String(moved);
+    }
+    if (row.tag && row.fixedOtc) {
+      // \u00a720: the depot has no shelf price \u2014 the tag yields to the list.
+      row.tag.root.hidden = isDc;
+      row.fixedOtc.hidden = !isDc;
+    }
 
     const locked = row.entry.lock !== null;
     // A SKU that just locked (cabinet sold mid-cart) leaves the cart too —
@@ -513,15 +599,17 @@ export function createOrdersPanel(sim: Sim, bus: EventBus<SimEvent>): OrdersPane
   function refreshStub(): void {
     const state = sim.snapshot;
     const store = scopedStore();
+    const isDc = scopeIsDc();
     // \u00a716: the duplicate shows what the wholesaler will *fill*, not what
     // was asked \u2014 the same 60% cap the order command applies, so the stub
-    // never totals units (or charges dollars) the van won't carry.
+    // never totals units (or charges dollars) the van won't carry. Under
+    // the depot scope the cap bites once for the whole network (\u00a720).
     const lines = [...cart].map(([skuId, units]) => ({
       skuId,
       asked: units,
       units: shortageFillCap(state, skuId, units),
     }));
-    const total = orderTotal(state, store, lines);
+    const total = isDc ? dcOrderTotal(state, lines) : orderTotal(state, store, lines);
     const units = lines.reduce((sum, l) => sum + l.units, 0);
 
     stubLines.replaceChildren();
@@ -545,7 +633,10 @@ export function createOrdersPanel(sim: Sim, bus: EventBus<SimEvent>): OrdersPane
           }),
           h("span", {
             cls: "stub__lcost",
-            text: money(unitCost(state, store, line.skuId) * line.units),
+            text: money(
+              (isDc ? dcUnitCost(state, line.skuId) : unitCost(state, store, line.skuId)) *
+                line.units,
+            ),
           }),
         ]),
       );
@@ -556,6 +647,9 @@ export function createOrdersPanel(sim: Sim, bus: EventBus<SimEvent>): OrdersPane
       );
     }
 
+    stubHint.textContent = isDc
+      ? "Cash leaves the till now. The order lands on the depot shelves at dawn — the vans take it from there."
+      : "Cash leaves the till now. The van unloads into the backroom before you open tomorrow.";
     stubUnits.textContent = String(units);
     stubTotal.textContent = money(total);
     stubAfter.textContent = money(state.cash - total);
@@ -580,30 +674,44 @@ export function createOrdersPanel(sim: Sim, bus: EventBus<SimEvent>): OrdersPane
     familyNote.hidden = state.loans.family <= 0;
     familyNote.textContent = `Aunt Rosa is owed ${money(state.loans.family)} \u2014 15% of each day's profit goes back to her.`;
 
-    // The tier is the scoped store's own earned contract (\u00a711/\u00a719).
-    const discount = supplierDiscount(scopedStore().repStars);
-    tierChip.textContent =
-      discount > 0
-        ? `Supplier tier \u00b7 ${(discount * 100).toFixed(0)}% off list`
-        : "No supplier tier yet \u00b7 2.0\u2605 earns 4% off";
+    // The tier is the scoped store's own earned contract (\u00a711/\u00a719) \u2014 or
+    // the depot's flat \u221212%, which *replaces* the tier (\u00a720, never stacks).
+    if (scopeIsDc()) {
+      tierChip.textContent = `Central purchasing \u00b7 ${(DC_DISCOUNT * 100).toFixed(0)}% off list, replaces the supplier tier`;
+    } else {
+      const discount = supplierDiscount(scopedStore().repStars);
+      tierChip.textContent =
+        discount > 0
+          ? `Supplier tier \u00b7 ${(discount * 100).toFixed(0)}% off list`
+          : "No supplier tier yet \u00b7 2.0\u2605 earns 4% off";
+    }
   }
 
   function refreshAll(): void {
     const state = sim.snapshot;
     const store = scopedStore();
+    const isDc = scopeIsDc();
     scope.refresh();
-    formEyebrow.textContent =
-      state.stores.length > 1
+    formEyebrow.textContent = isDc
+      ? "Hudson Valley Drug \u00b7 depot order \u00b7 central purchasing"
+      : state.stores.length > 1
         ? `Hudson Valley Drug \u00b7 order for ${storeName(state, store)}`
         : "Hudson Valley Drug \u00b7 wholesale order";
-    transferNote.hidden = state.stores.length < 2;
+    // The old "transfers arrive with the DC" note retires the day they do.
+    transferNote.hidden = state.stores.length < 2 || state.dc !== null;
+    const priceHead = headCols.get("your price");
+    if (priceHead) priceHead.textContent = isDc ? "list price" : "your price";
+    const handHead = headCols.get("on hand");
+    if (handHead) handHead.textContent = isDc ? "at depot" : "on hand";
     for (const row of rows.values()) refreshRow(row);
     refreshFridgeMeter();
     refreshStub();
     refreshBank();
-    headMin.hidden = !store.reorderUnlocked;
-    headTarget.hidden = !store.reorderUnlocked;
-    form.classList.toggle("oform--rules", store.reorderUnlocked);
+    transferSlip.refresh();
+    const rules = !isDc && store.reorderUnlocked;
+    headMin.hidden = !rules;
+    headTarget.hidden = !rules;
+    form.classList.toggle("oform--rules", rules);
   }
 
   /** Coalesce the sale-by-sale churn into one repaint per frame. */
@@ -661,6 +769,17 @@ export function createOrdersPanel(sim: Sim, bus: EventBus<SimEvent>): OrdersPane
     invalidate();
   });
   bus.on("order.delivered", invalidate);
+  // §20 (M15): the depot chip joins the scope row, its stock column moves
+  // with dawn deliveries and van loads, and a signed depot order clears
+  // the duplicate like a store order does.
+  bus.on("dc.bought", invalidate);
+  bus.on("dc.orderSubmitted", () => {
+    clearCart();
+    invalidate();
+  });
+  bus.on("dc.delivered", invalidate);
+  bus.on("truck.routeChanged", invalidate);
+  bus.on("transfer.drafted", invalidate);
   bus.on("day.phaseChanged", (e) => {
     // Morning: reorder rules write tomorrow's order up for you (§11) — it
     // still needs a signature. The morning draft is the active store's; a

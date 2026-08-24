@@ -20,10 +20,11 @@ import {
 } from "../sim/coldchain";
 import { poolPatientName } from "../sim/competitors";
 import { RUSH_WINDOWS } from "../sim/customers";
+import { truckLabel } from "../sim/dc";
 import { categoryLabel } from "../sim/economy";
 import type { SimEvent } from "../sim/events";
 import { outageActive } from "../sim/events-world";
-import { binFixtureFor, SHELF_SLOT_UNITS, stockOf } from "../sim/inventory";
+import { binFixtureFor, isOtc, SHELF_SLOT_UNITS, stockOf } from "../sim/inventory";
 import { eraDef } from "../sim/renovation";
 import type { Sim } from "../sim/sim";
 import { ROLE_LABELS } from "../sim/staff";
@@ -47,6 +48,7 @@ import { createToastHost, type ToastTone } from "./components/Toast";
 import { h } from "./dom";
 import { money } from "./format";
 import { createBuildPalette } from "./screens/buildPalette";
+import { createDepotPanel } from "./screens/depotPanel";
 import { createLegacyPanel } from "./screens/legacyPanel";
 import { createLicensesPanel } from "./screens/licensesPanel";
 import { createOrdersPanel } from "./screens/ordersPanel";
@@ -91,6 +93,9 @@ export interface HudHandle {
   bindCity(controls: CityControls): void;
   /** Reflect the scene actually shown: pill pressed state + Escape order. */
   setCityActive(on: boolean): void;
+  /** Open the dispatch board (§20) — the city map's depot card asks for
+   *  it after main.ts walks back inside. */
+  openDepot(): void;
   /** Register hover hint (null clears; a worked station overrides it). */
   stationHint(text: string | null): void;
   /** OTC shelf under the pointer: its price tags + restock card (§11). */
@@ -169,6 +174,19 @@ function worldHeadlines(state: Readonly<GameState>): TickerItem[] {
   for (const moment of state.legacy) {
     if (state.day - moment.day <= LEGACY_NEWS_DAYS) {
       items.push({ day: moment.day, text: legacyMomentDef(moment.id).title });
+    }
+  }
+
+  // §20: the vans' morning runs — one quiet line per truck per day,
+  // derived from the persisted lastRunDay so a reload reads the same news.
+  if (state.dc !== null) {
+    for (const truck of state.dc.trucks) {
+      if (truck.lastRunDay === state.day) {
+        items.push({
+          day: state.day,
+          text: `${truckLabel(truck.id)} finished its morning route — deliveries are in the backrooms`,
+        });
+      }
     }
   }
 
@@ -434,8 +452,24 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
   legacyPill.addEventListener("pointerdown", (e) => e.preventDefault());
   legacyPill.addEventListener("click", () => togglePanel("legacy"));
 
+  // §20: the dispatch board's pill stays off the dock until the depot is
+  // bought — a surface the run doesn't have yet isn't a button.
+  const depotPill = h(
+    "button",
+    {
+      cls: "pill pill--secondary pill--dock",
+      attrs: { type: "button", "aria-pressed": "false", "aria-label": "Depot (D)" },
+    },
+    [h("span", { cls: "keycap", attrs: { "aria-hidden": "true" }, text: "D" }), "Depot"],
+  );
+  depotPill.addEventListener("pointerdown", (e) => e.preventDefault());
+  depotPill.addEventListener("click", () => togglePanel("depot"));
+  function refreshDepotPill(): void {
+    depotPill.hidden = sim.snapshot.dc === null;
+  }
+
   // §28 dock order: B build · O orders · T team · R reports · L licenses ·
-  // C city, with the two later arrivals (V renovate, G legacy) after.
+  // C city, with the later arrivals (D depot, V renovate, G legacy) after.
   const dock = h("div", { cls: "dock" }, [
     buildPill,
     ordersPill,
@@ -443,6 +477,7 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     reportsPill,
     licensesPill,
     cityPill,
+    depotPill,
     renovatePill,
     legacyPill,
   ]);
@@ -550,9 +585,10 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
   const licenses = createLicensesPanel(sim, bus);
   const renovate = createRenovatePanel(sim, bus);
   const legacy = createLegacyPanel(sim, bus);
+  const depot = createDepotPanel(sim, bus);
 
   /** The dock's sheets, one registry: each pairs its panel with its pill. */
-  type PanelName = "orders" | "team" | "reports" | "licenses" | "renovate" | "legacy";
+  type PanelName = "orders" | "team" | "reports" | "licenses" | "renovate" | "legacy" | "depot";
   const panels: Record<PanelName, { handle: { setVisible(on: boolean): void }; pill: HTMLButtonElement }> = {
     orders: { handle: orders, pill: ordersPill },
     team: { handle: team, pill: teamPill },
@@ -560,6 +596,7 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     licenses: { handle: licenses, pill: licensesPill },
     renovate: { handle: renovate, pill: renovatePill },
     legacy: { handle: legacy, pill: legacyPill },
+    depot: { handle: depot, pill: depotPill },
   };
   let openPanel: PanelName | null = null;
 
@@ -737,6 +774,7 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     licenses.root,
     renovate.root,
     legacy.root,
+    depot.root,
     contextCard,
     morningStage,
     closeStage,
@@ -966,6 +1004,39 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     const units = `${e.units} ${e.units === 1 ? "unit" : "units"}`;
     toast(e.by ? `${e.by} brought out ${units}` : `Brought out ${units}`);
   });
+
+  // --- Distribution + logistics (§20, milestone 15) ---
+
+  /** The catalog name behind a transfer toast's SKU id. */
+  function skuNameOf(skuId: string): string {
+    return isOtc(skuId) ? otcDef(skuId).name : drugDef(skuId).name;
+  }
+
+  bus.on("dc.bought", (e) => {
+    toast(`The depot is yours — ${money(e.cost)}. Orders gains a Depot scope; the garage sells vans.`);
+    refreshDepotPill();
+  });
+  bus.on("truck.bought", (e) => {
+    toast(`${truckLabel(e.truckId)} joins the garage — ${money(e.cost)}`);
+  });
+  bus.on("dc.orderSubmitted", (e) => {
+    toast(`Depot order placed — ${e.units} units, ${money(e.total)}. On the shelves at dawn.`);
+    if (openPanel === "orders") setPanel(null);
+  });
+  bus.on("dc.delivered", (e) => {
+    toast(`Depot delivery — ${e.units} units across ${e.skus} lines, on the shelves`);
+  });
+  bus.on("transfer.drafted", (e) => {
+    const from = storeById(sim.snapshot, e.fromStoreId);
+    const to = storeById(sim.snapshot, e.toStoreId);
+    toast(
+      `${truckLabel(e.truckId)} picks up ${e.units} ${skuNameOf(e.skuId)} at ${
+        from ? storeLabel(sim.snapshot, from) : e.fromStoreId
+      } for ${to ? storeLabel(sim.snapshot, to) : e.toStoreId} in the morning`,
+    );
+  });
+  // truck.arrived stays off the toasts on purpose — the run's one line
+  // rides the ticker (§20: quietly), and the morning already speaks.
   bus.on("reorder.unlocked", (e) => {
     toast(`An empty shelf cost you a sale${atBranch(e.storeId)}. Orders now takes min/target levels.`, "error");
   });
@@ -1018,7 +1089,7 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     L3: "Controlled Substances licensed — the cabinet is in the Build palette",
     L4: "Immunization Certification licensed — the station arrives with its equipment",
     L5: "Multi-Branch Operation licensed — empty lots are for sale on the city map",
-    L6: "Distribution Operations licensed",
+    L6: "Distribution Operations licensed — the freight lot is for sale on the city map",
   };
 
   bus.on("license.bought", (e) => {
@@ -1109,6 +1180,9 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
       city?.toggle();
     } else if (e.code === "KeyL" && !e.repeat) {
       togglePanel("licenses");
+    } else if (e.code === "KeyD" && !e.repeat) {
+      // No depot, no board — the key sleeps with the hidden pill (§20).
+      if (sim.snapshot.dc !== null) togglePanel("depot");
     } else if (e.code === "KeyV" && !e.repeat) {
       togglePanel("renovate");
     } else if (e.code === "KeyG" && !e.repeat) {
@@ -1132,6 +1206,7 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
   setDay(state.day);
   refreshTicker();
   refreshBranchStrip();
+  refreshDepotPill();
   setPhase(state.phase);
   setClock(state.clockIgm);
   setSpeed(state.speed);
@@ -1164,6 +1239,9 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     },
     bindCity: (controls) => {
       city = controls;
+    },
+    openDepot: () => {
+      if (sim.snapshot.dc !== null) setPanel("depot");
     },
     setCityActive: (on) => {
       cityActive = on;
