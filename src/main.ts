@@ -24,7 +24,7 @@ import type { SimEvent } from "./sim/events";
 import { hydrate, migrate, serialize, type SaveFile } from "./sim/save";
 import { Sim } from "./sim/sim";
 import { createGameState } from "./sim/state";
-import { CameraRig } from "./render/cameraRig";
+import { CameraRig, type CameraPose } from "./render/cameraRig";
 import { CityScene } from "./render/cityScene";
 import { Lighting } from "./render/lighting";
 import { NpcView } from "./render/npcView";
@@ -211,7 +211,7 @@ let cityShown = false;
  *  one, or an in-flight swap survives the very handler meant to cancel it. */
 let cityTarget = false;
 let storePose = rig.getPose();
-let cityPose: ReturnType<typeof rig.getPose> | null = null;
+let cityPose: CameraPose | null = null;
 let fadeTimer = 0;
 
 function motionReduced(): boolean {
