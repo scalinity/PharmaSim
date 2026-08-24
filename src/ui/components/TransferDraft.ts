@@ -115,6 +115,11 @@ export function TransferDraft(sim: Sim, options: TransferDraftOptions = {}): Tra
     return out;
   }
 
+  /** What the last repaint drew, as a cheap string — the host panels call
+   *  refresh on every sale and spawn, and rebuilding six input rows per
+   *  frame for an unchanged set is DOM churn the §30 budget won't carry. */
+  let paintedSig = "";
+
   function refresh(): void {
     const state = sim.snapshot;
     const target = targetStore();
@@ -122,10 +127,34 @@ export function TransferDraft(sim: Sim, options: TransferDraftOptions = {}): Tra
       state.dc === null ||
       state.stores.length < 2 ||
       (options.target !== undefined && target === null);
-    if (root.hidden) return;
+    if (root.hidden) {
+      paintedSig = "";
+      return;
+    }
     // A slip mid-edit holds still — rebuilding under the pointer would eat
-    // the typed units.
+    // the typed units. paintedSig stays put: it describes the DOM as
+    // drawn, and the blur-time refresh must compare against that.
     if (root.contains(document.activeElement)) return;
+
+    const dc = state.dc;
+    const shortages =
+      target !== null && dc !== null && dc.trucks.length > 0
+        ? shortageLines(target, dc).sort((a, b) => b.moved - a.moved)
+        : [];
+    const sig = [
+      target?.id ?? "",
+      dc?.trucks.length ?? 0,
+      state.stores.map((s) => `${s.id}=${storeLabel(state, s)}`).join("|"),
+      shortages
+        .map(
+          (l) =>
+            `${l.skuId}:${l.source?.id ?? ""}:${l.holds}:${l.available}:${l.incoming}`,
+        )
+        .join("|"),
+    ].join("§");
+    if (sig === paintedSig) return;
+    paintedSig = sig;
+
     chips.hidden = options.target !== undefined;
     if (!chips.hidden) {
       chips.replaceChildren();
@@ -147,7 +176,6 @@ export function TransferDraft(sim: Sim, options: TransferDraftOptions = {}): Tra
 
     lines.replaceChildren();
     note.textContent = "";
-    const dc = state.dc;
     if (target === null || dc === null) return;
 
     if (dc.trucks.length === 0) {
@@ -155,7 +183,6 @@ export function TransferDraft(sim: Sim, options: TransferDraftOptions = {}): Tra
       return;
     }
 
-    const shortages = shortageLines(target, dc).sort((a, b) => b.moved - a.moved);
     if (shortages.length === 0) {
       lines.append(
         h("p", {
