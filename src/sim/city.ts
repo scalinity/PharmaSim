@@ -117,47 +117,53 @@ export interface PharmacyShare {
   share: number;
 }
 
+export interface DistrictShares {
+  player: PharmacyShare;
+  /** The §18 rivals, in state order. */
+  rivals: PharmacyShare[];
+}
+
 /**
  * §17 share in one district's eyes: every pharmacy's attractiveness, squared
- * against the field (squaring sharpens competition). The player store first,
- * then the §18 rivals in state order. Reads live stats, so a rep move, a
- * price cut or a shortage's reliability hit shifts tomorrow's routing —
- * this is also what the district cards' share bars and the §18 pool
- * transfers score against.
+ * against the field (squaring sharpens competition). The player's entry is
+ * its own field — the routing engine reads it, and no consumer has to lean
+ * on a position in a list. Reads live stats, so a rep move, a price cut or
+ * a shortage's reliability hit shifts tomorrow's routing — this is also
+ * what the district cards' share bars and the §18 pool transfers score
+ * against.
  */
-export function districtShares(state: GameState, districtId: string): PharmacyShare[] {
-  const entries: PharmacyShare[] = [
-    {
-      pharmacyId: PLAYER_PHARMACY_ID,
-      attractiveness: attractiveness(
-        districtId,
-        STORE_DISTRICT_ID,
-        state.repStars,
-        state.store.priceIndex,
-        storeAvailability(state),
-      ),
-      share: 0,
-    },
-  ];
-  for (const rival of state.competitors) {
-    entries.push({
-      pharmacyId: rival.id,
-      attractiveness: attractiveness(
-        districtId,
-        rival.homeDistrictId,
-        rival.repStars,
-        rival.priceIndex,
-        rivalAvailability(state, rival),
-      ),
-      share: 0,
-    });
+export function districtShares(state: GameState, districtId: string): DistrictShares {
+  const player: PharmacyShare = {
+    pharmacyId: PLAYER_PHARMACY_ID,
+    attractiveness: attractiveness(
+      districtId,
+      STORE_DISTRICT_ID,
+      state.repStars,
+      state.store.priceIndex,
+      storeAvailability(state),
+    ),
+    share: 0,
+  };
+  const rivals: PharmacyShare[] = state.competitors.map((rival) => ({
+    pharmacyId: rival.id,
+    attractiveness: attractiveness(
+      districtId,
+      rival.homeDistrictId,
+      rival.repStars,
+      rival.priceIndex,
+      rivalAvailability(state, rival),
+    ),
+    share: 0,
+  }));
+  let total = player.attractiveness * player.attractiveness;
+  for (const entry of rivals) total += entry.attractiveness * entry.attractiveness;
+  if (total > 0) {
+    player.share = (player.attractiveness * player.attractiveness) / total;
+    for (const entry of rivals) {
+      entry.share = (entry.attractiveness * entry.attractiveness) / total;
+    }
   }
-  let total = 0;
-  for (const entry of entries) total += entry.attractiveness * entry.attractiveness;
-  for (const entry of entries) {
-    entry.share = total > 0 ? (entry.attractiveness * entry.attractiveness) / total : 0;
-  }
-  return entries;
+  return { player, rivals };
 }
 
 /**
@@ -240,8 +246,7 @@ export function planCityDay(state: GameState): CityDayPlan {
   const sharesToday: Record<string, number> = {};
 
   for (const district of DISTRICTS) {
-    const shares = districtShares(state, district.id);
-    const playerShare = shares[0]!.share; // the player is always first
+    const playerShare = districtShares(state, district.id).player.share;
     sharesToday[district.id] = playerShare;
 
     const intent = (district.population / 1000) * district.otcIntent;

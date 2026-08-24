@@ -150,7 +150,8 @@ export function createCityOverlay(sim: Sim, bus: EventBus<SimEvent>): CityOverla
    *  reliability hit reads here the day it lands. */
   function pharmacyRows(id: string): HTMLElement[] {
     const state = sim.snapshot;
-    const shares = [...districtShares(state, id)].sort((a, b) => b.share - a.share);
+    const all = districtShares(state, id);
+    const shares = [all.player, ...all.rivals].sort((a, b) => b.share - a.share);
     const rows: HTMLElement[] = [
       h("p", { cls: "cityui__mixhead", text: "Pharmacies · share of demand" }),
     ];

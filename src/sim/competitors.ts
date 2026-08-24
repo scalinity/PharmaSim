@@ -103,8 +103,8 @@ export function ensurePatientPools(state: GameState): void {
   if (Object.keys(state.patientPools).length > 0) return;
   for (const district of DISTRICTS) {
     const shares = districtShares(state, district.id);
-    let best = shares[0]!;
-    for (const entry of shares) {
+    let best = shares.player;
+    for (const entry of shares.rivals) {
       if (entry.attractiveness > best.attractiveness) best = entry;
     }
     for (const category of CHRONIC_CATEGORIES) {
@@ -215,10 +215,9 @@ export function recordPoolStrike(
   if (pool.strikes.length < STRIKES_TO_TRANSFER) return;
 
   // §18: the best-scoring rival in the pool's district takes the refills.
-  const shares = districtShares(state, pool.districtId);
-  let best: (typeof shares)[number] | null = null;
-  for (const entry of shares) {
-    if (entry.pharmacyId === PLAYER_PHARMACY_ID) continue;
+  const { rivals } = districtShares(state, pool.districtId);
+  let best: (typeof rivals)[number] | null = null;
+  for (const entry of rivals) {
     if (best === null || entry.attractiveness > best.attractiveness) best = entry;
   }
   if (best === null) return; // no rivals in a hand-edited save: nowhere to go
@@ -310,8 +309,7 @@ function driftWeakestRival(state: GameState, emit: Emit): void {
   // Population-weighted total share: which rival the city is leaving behind.
   const totals = new Map<string, number>();
   for (const district of DISTRICTS) {
-    for (const entry of districtShares(state, district.id)) {
-      if (entry.pharmacyId === PLAYER_PHARMACY_ID) continue;
+    for (const entry of districtShares(state, district.id).rivals) {
       totals.set(
         entry.pharmacyId,
         (totals.get(entry.pharmacyId) ?? 0) + entry.share * district.population,
