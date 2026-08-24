@@ -414,7 +414,16 @@ export function createCityOverlay(sim: Sim, bus: EventBus<SimEvent>): CityOverla
   // morning switch flips the "you're here" line.
   bus.on("branch.bought", invalidate);
   bus.on("branch.activeChanged", invalidate);
-  bus.on("cash.changed", invalidate);
+  // Cash only moves the deed's "Short $X" gate line and its buy pill —
+  // rebuild for it just while a deed is actually on the card, not three
+  // times per completed sale for as long as the map is open.
+  bus.on("cash.changed", () => {
+    if (cardId === null) return;
+    const state = sim.snapshot;
+    if (!state.stores.some((s) => !isFoundingStore(state, s) && s.districtId === cardId)) {
+      invalidate();
+    }
+  });
 
   return {
     root,
