@@ -55,6 +55,15 @@ const FACILITY_LABELS: Record<FacilityKind, string> = {
 /** Top observed categories shown on the card before the list gets noisy. */
 const MIX_LINES = 5;
 
+/** One requirement line on a deed — the license application's checklist
+ *  voice, shared by the branch deed and the depot deed (§19/§20). */
+function deedGate(met: boolean, text: string): HTMLElement {
+  return h("p", { cls: met ? "cityui__gate cityui__gate--met" : "cityui__gate" }, [
+    h("span", { cls: "cityui__gateglyph", attrs: { "aria-hidden": "true" }, text: met ? "✓" : "◻" }),
+    h("span", { text }),
+  ]);
+}
+
 export interface CityOverlayHandle {
   root: HTMLElement;
   setActive(on: boolean): void;
@@ -298,12 +307,6 @@ export function createCityOverlay(
     const hasL5 = ownsLicense(state, "L5");
     const covered = state.cash >= price.total;
 
-    const gate = (met: boolean, text: string): HTMLElement =>
-      h("p", { cls: met ? "cityui__gate cityui__gate--met" : "cityui__gate" }, [
-        h("span", { cls: "cityui__gateglyph", attrs: { "aria-hidden": "true" }, text: met ? "✓" : "◻" }),
-        h("span", { text }),
-      ]);
-
     const buy = h("button", {
       cls: "pill pill--primary pill--small cityui__act",
       text: `Buy this lot — ${money(price.total)}`,
@@ -326,8 +329,8 @@ export function createCityOverlay(
         priceRow(`site · 300 × ${money(district.dailyRent)} rent`, money(price.site)),
         priceRow("fit-out · starting layout, Gen 1", money(price.fitOut)),
         priceRow("deed total", money(price.total), true),
-        gate(hasL5, hasL5 ? "Multi-Branch Operation — on the wall" : "Needs the Multi-Branch Operation license"),
-        gate(
+        deedGate(hasL5, hasL5 ? "Multi-Branch Operation — on the wall" : "Needs the Multi-Branch Operation license"),
+        deedGate(
           covered,
           covered
             ? "The till covers it"
@@ -361,11 +364,6 @@ export function createCityOverlay(
     if (state.dc === null) {
       const hasL6 = ownsLicense(state, "L6");
       const covered = state.cash >= DC_COST;
-      const gate = (met: boolean, text: string): HTMLElement =>
-        h("p", { cls: met ? "cityui__gate cityui__gate--met" : "cityui__gate" }, [
-          h("span", { cls: "cityui__gateglyph", attrs: { "aria-hidden": "true" }, text: met ? "✓" : "◻" }),
-          h("span", { text }),
-        ]);
       const buy = h("button", {
         cls: "pill pill--primary pill--small cityui__act",
         text: `Buy the depot — ${money(DC_COST)}`,
@@ -382,13 +380,13 @@ export function createCityOverlay(
             h("span", { cls: "cityui__deeddots" }),
             h("span", { cls: "cityui__deednum", text: money(DC_COST) }),
           ]),
-          gate(
+          deedGate(
             hasL6,
             hasL6
               ? "Distribution Operations — on the wall"
               : "Needs the Distribution Operations license",
           ),
-          gate(covered, covered ? "The till covers it" : `Short ${money(DC_COST - state.cash)}`),
+          deedGate(covered, covered ? "The till covers it" : `Short ${money(DC_COST - state.cash)}`),
           buy,
           h("p", {
             cls: "cityui__deednote",
