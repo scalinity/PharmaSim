@@ -489,9 +489,7 @@ export function createDepotPanel(sim: Sim, bus: EventBus<SimEvent>): DepotPanelH
     if (!dc) return;
     // A manifest mid-edit holds still — rebuilding under a focused field
     // would eat the typed units; the blur re-invalidates.
-    if (root.contains(document.activeElement) && document.activeElement !== document.body) {
-      return;
-    }
+    if (root.contains(document.activeElement)) return;
     heldChip.textContent = `${dcHeldUnits(dc)} units on the shelves`;
     refreshStock();
     vansHost.replaceChildren();
