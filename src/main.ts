@@ -201,10 +201,15 @@ const sceneFade = document.createElement("div");
 sceneFade.className = "scenefade";
 renderer.canvas.after(sceneFade);
 
-const CITY_TARGET = new Vector3(-3, 0, -3);
+const CITY_CENTER = new Vector3(-3, 0, -3);
 const CITY_VIEW_HEIGHT = 80;
 
+/** The scene actually rendering right now. Flips inside applyCityShown. */
 let cityShown = false;
+/** Where the swap is *headed*. During the 180 ms fade the two differ, and
+ *  every decision — the toggle, the close-phase pull-down — must read this
+ *  one, or an in-flight swap survives the very handler meant to cancel it. */
+let cityTarget = false;
 let storePose = rig.getPose();
 let cityPose: ReturnType<typeof rig.getPose> | null = null;
 let fadeTimer = 0;
@@ -242,7 +247,7 @@ function applyCityShown(on: boolean): void {
     // The city's wide zoom needs a deeper frustum than the store's (§27
     // camera notes in render/cameraRig.ts).
     rig.setDepthRange(-60, 200);
-    rig.setPose(cityPose ?? { ...rig.getPose(), target: CITY_TARGET.clone(), viewHeight: CITY_VIEW_HEIGHT });
+    rig.setPose(cityPose ?? { ...rig.getPose(), target: CITY_CENTER.clone(), viewHeight: CITY_VIEW_HEIGHT });
   } else {
     cityPose = rig.getPose();
     rig.setViewClamp(2, 30);
@@ -256,19 +261,21 @@ function applyCityShown(on: boolean): void {
   if (!on) cityOverlay.hoverDistrict(null);
 }
 
-/** Swap under a soft dip; `immediate` (phase changes) skips the fade. */
+/** Swap under a soft dip; `immediate` (phase changes) skips the fade. The
+ *  guard compares the *target*, so a request landing mid-fade redirects the
+ *  pending swap instead of slipping past it. */
 function setCityShown(on: boolean, immediate = false): void {
-  if (cityShown === on) return;
+  if (cityTarget === on) return;
+  cityTarget = on;
+  window.clearTimeout(fadeTimer);
   if (immediate || motionReduced()) {
-    window.clearTimeout(fadeTimer);
     sceneFade.classList.remove("scenefade--on");
     applyCityShown(on);
     return;
   }
-  window.clearTimeout(fadeTimer);
   sceneFade.classList.add("scenefade--on");
   fadeTimer = window.setTimeout(() => {
-    applyCityShown(on);
+    applyCityShown(cityTarget);
     fadeTimer = window.setTimeout(() => sceneFade.classList.remove("scenefade--on"), 60);
   }, 180);
 }
@@ -277,8 +284,8 @@ hud.bindCity({
   toggle: () => {
     // The receipt owns the close (§28): the map can come down under it but
     // never up — the C press waits for the next morning.
-    if (!cityShown && sim.snapshot.phase === "close") return;
-    setCityShown(!cityShown);
+    if (!cityTarget && sim.snapshot.phase === "close") return;
+    setCityShown(!cityTarget);
   },
 });
 
