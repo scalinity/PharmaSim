@@ -395,7 +395,8 @@ export interface BankStatus {
   available: number;
 }
 
-/** Credit line: 20× the trailing-7-day average gross, capped at $50k (§26). */
+/** Credit line: BANK_GROSS_MULTIPLE × the trailing-7-day average gross,
+ *  capped at BANK_CAP (§26). */
 export function bankStatus(state: GameState): BankStatus {
   // The whole network's books: the bank lends to the account (§10/§19).
   let average = 0;

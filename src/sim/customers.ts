@@ -277,8 +277,9 @@ export class CustomerSystem {
 
   private arrivals: number[] = [];
   private arrivalIdx = 0;
-  /** §14/§26 vaccine walk-ins: their own 3–6/day schedule once the service
-   *  exists — the §7 mix's 5% slice, kept apart from the demand streams. */
+  /** §14/§26 vaccine walk-ins: their own VACCINE_WALKINS_MIN–MAX daily
+   *  schedule once the service exists — the §7 mix's 5% slice, kept apart
+   *  from the demand streams. */
   private vaccineArrivals: number[] = [];
   private vaccineIdx = 0;
   /** Today's routed demand slices from the §17 city model (sim/city.ts) —
@@ -411,8 +412,9 @@ export class CustomerSystem {
     this.arrivals = this.sampleArrivals(n, DAY_START_IGM);
     this.arrivalIdx = 0;
 
-    // §14/§26: 3–6 vaccine walk-ins a day once L4, fridge and station stand,
-    // on the same rush curve as everyone else — and ×4 through flu season.
+    // §14/§26: VACCINE_WALKINS_MIN–MAX walk-ins a day once L4, fridge and
+    // station stand, on the same rush curve as everyone else — and ×4
+    // through flu season.
     // Deliberately *only* the ×4: §26 gives the walk-in stream exactly one
     // multiplier, so the visitor-side lulls and storm ×0.6 stay off it.
     this.vaccineArrivals = vaccinationUnlocked(state, activeStore(state))
