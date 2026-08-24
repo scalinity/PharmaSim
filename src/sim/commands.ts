@@ -6,6 +6,7 @@ import { DAY_START_IGM } from "../core/clock";
 import type { Rot } from "../core/grid";
 import { EXPANSIONS, furnitureDef } from "../data/furniture";
 import { coldClampUnits, hasFridge } from "./coldchain";
+import { advanceMarket } from "./competitors";
 import {
   bankStatus,
   catalog,
@@ -143,6 +144,9 @@ function beginMorning(state: GameState, emit: (event: SimEvent) => void): void {
   const refreshed = refreshHiringPool(state);
   completeRenovation(state, emit);
   advanceWorld(state, emit);
+  // §18: the market keeps its own calendar — Monday pool evaluation and the
+  // 28-day drift — ahead of the phase change for the same autosave reason.
+  advanceMarket(state, emit);
   emit({ type: "day.phaseChanged", phase: state.phase, day: state.day });
   emit({ type: "clock.minute", igm: state.clockIgm });
   if (delivery.units > 0) emit({ type: "order.delivered", ...delivery });

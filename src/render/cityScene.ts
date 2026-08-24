@@ -24,6 +24,7 @@ import {
   type Raycaster,
   Plane,
 } from "three";
+import { COMPETITOR_DEFS } from "../data/competitors";
 import {
   DISTRICT_MAPS,
   DISTRICTS,
@@ -145,6 +146,7 @@ export class CityScene {
     this.buildBuildings();
     this.buildLandmarks(flat);
     this.buildStoreMarker(flat);
+    this.buildRivalMarkers(flat);
 
     const ring = new RingGeometry(0.88, 1, 48);
     ring.rotateX(-Math.PI / 2);
@@ -220,6 +222,11 @@ export class CityScene {
     }
     if (districtId === "oldTown" && Math.hypot(x - STORE_SITE[0], z - STORE_SITE[1]) < 3.4) {
       return false;
+    }
+    // §18: each rival's shopfront keeps its plot on its home plate.
+    for (const rival of COMPETITOR_DEFS) {
+      if (rival.homeDistrictId !== districtId) continue;
+      if (Math.hypot(x - rival.site[0], z - rival.site[1]) < 3) return false;
     }
     for (const [bx, bz] of placed) {
       if (Math.hypot(x - bx, z - bz) < 2.1) return false;
@@ -298,6 +305,24 @@ export class CityScene {
     b.add(new BoxGeometry(0.16, 2.2, 0.16), 0x4a5a50, x, y + 2.3, z);
     b.add(new BoxGeometry(1.35, 0.44, 0.3), PINE, x, y + 3.5, z);
     b.add(new BoxGeometry(0.44, 1.35, 0.3), PINE, x, y + 3.5, z);
+    this.scene.add(new Mesh(b.build(), material));
+  }
+
+  /** §18 rival shopfronts: the store-cross pattern in each rival's §27
+   *  accent — smaller shop, shorter pole, so the player's pine cross stays
+   *  the marker the eye finds first. Star ratings live on the DOM tags. */
+  private buildRivalMarkers(material: MeshLambertMaterial): void {
+    const b = new PartsBuilder();
+    for (const rival of COMPETITOR_DEFS) {
+      const [x, z] = rival.site;
+      const y = PLATE_H;
+      b.add(new CylinderGeometry(1.4, 1.4, 0.1, 10), LOT_CREAM, x, y + 0.05, z);
+      b.add(new BoxGeometry(1.6, 0.95, 1.25), LANDMARK_WHITE, x, y + 0.55, z);
+      b.add(new BoxGeometry(1.8, 0.12, 1.45), rival.accent, x, y + 1.08, z);
+      b.add(new BoxGeometry(0.14, 1.7, 0.14), 0x4a5a50, x, y + 1.95, z);
+      b.add(new BoxGeometry(1.05, 0.34, 0.26), rival.accent, x, y + 2.85, z);
+      b.add(new BoxGeometry(0.34, 1.05, 0.26), rival.accent, x, y + 2.85, z);
+    }
     this.scene.add(new Mesh(b.build(), material));
   }
 

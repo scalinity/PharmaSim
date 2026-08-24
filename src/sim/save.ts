@@ -66,32 +66,53 @@
 //    only what the store has *seen* persists, and a pre-city save has seen
 //    nothing: the step seeds an empty memory that fills from play.
 //
-//  §24's fuller schema (worldSeed, stores[], competitors, patientPools, dc,
-//  aitech, stats) is not here because those systems do not exist yet.
-//  They arrive field-by-field with the milestones that own them —
-//  13 competitors, 14 branches, 15 logistics, 16 AI tech — each with its
-//  own migrate step.
+//  Version 8 (milestone 13) adds the contested market:
+//    · competitors (§18/§24: the four rivals' live stat blocks — price,
+//      rep and reliability move with drift) · patientPools (§18/§24: the
+//      chronic pools, their holder, and the bad-experience strikes that
+//      must survive a reload) · market (transfer log + last drift move,
+//      the reports' and ticker's §18 record) · city.districtShareLog (the
+//      receipt's ±2-point market note)                                 (M13)
+//    The step seeds launch stat blocks and an empty market; pools stay
+//    empty here and are assigned by launch-day scores in Sim's constructor,
+//    where the live scoring math can run. city.shareLog is cleared: the
+//    old sink-era share and a five-pharmacy market share are different
+//    scales, and a trend must never straddle the two.
+//
+//  §24's fuller schema (worldSeed, stores[], dc, aitech) is not here
+//  because those systems do not exist yet. They arrive field-by-field with
+//  the milestones that own them — 14 branches, 15 logistics, 16 AI tech —
+//  each with its own migrate step.
 // ===========================================================================
 
 import { DAY_END_IGM, DAY_START_IGM } from "../core/clock";
+import { COMPETITOR_DEFS, isCompetitorId } from "../data/competitors";
+import { DISTRICTS, type RxCategory } from "../data/districts";
 import { isLegacyMoment } from "../data/flavor";
+import { PLAYER_PHARMACY_ID } from "./city";
+import { CHRONIC_CATEGORIES, poolKeyOf } from "./competitors";
 import type { HiringPool, StaffMember } from "./staff";
 import {
   defaultSettings,
   freshCityState,
+  freshCompetitors,
+  freshMarketState,
   freshWorldEvents,
   type CityState,
+  type CompetitorState,
   type DayPhase,
   type DayStats,
   type DistrictTally,
   type GameSettings,
   type GameState,
   type LegacyEntry,
+  type MarketState,
+  type PatientPool,
   type StoreState,
   type WorldEventsState,
 } from "./state";
 
-export const SAVE_VERSION = 7;
+export const SAVE_VERSION = 8;
 
 export interface SaveFile {
   version: number;
@@ -107,6 +128,9 @@ export interface SaveFile {
   legacy: LegacyEntry[];
   events: WorldEventsState;
   city: CityState;
+  competitors: CompetitorState[];
+  patientPools: Record<string, PatientPool>;
+  market: MarketState;
   stats: Record<string, number>;
   store: StoreState;
   hiring: HiringPool;
@@ -186,6 +210,25 @@ const MIGRATIONS: readonly ((file: RawSave) => RawSave)[] = [
     file.city = freshCityState();
     return file;
   },
+  // 7 → 8 (milestone 13): the four §18 rivals join at their launch stat
+  // blocks and the transfer book opens empty. Pools stay empty here — Sim's
+  // constructor assigns them by launch-day scores, where the live §17 math
+  // can read the save's rep and fill rate. The routed-share history is
+  // cleared: the sink-era share and a five-pharmacy market share are
+  // different scales, and a trend must never straddle the two. A file whose
+  // city isn't even an object passes through untouched so validate() can
+  // refuse it with its own sentence.
+  (file) => {
+    file.competitors = freshCompetitors();
+    file.patientPools = {};
+    file.market = freshMarketState();
+    const city = file.city;
+    if (typeof city === "object" && city !== null && !Array.isArray(city)) {
+      (city as RawSave).shareLog = [];
+      (city as RawSave).districtShareLog = [];
+    }
+    return file;
+  },
 ];
 
 // --- Deep copies: a save must never alias live state, and a hydrated state
@@ -254,8 +297,24 @@ function copyTallies(day: Record<string, DistrictTally>): Record<string, Distric
 function copyCity(city: CityState): CityState {
   return {
     shareLog: [...city.shareLog],
+    districtShareLog: city.districtShareLog.map((day) => ({ ...day })),
     today: copyTallies(city.today),
     log: city.log.map(copyTallies),
+  };
+}
+
+function copyCompetitors(competitors: readonly CompetitorState[]): CompetitorState[] {
+  return competitors.map((rival) => ({ ...rival }));
+}
+
+function copyPools(pools: Record<string, PatientPool>): Record<string, PatientPool> {
+  return copyMap(pools, (pool) => ({ ...pool, strikes: [...pool.strikes] }));
+}
+
+function copyMarket(market: MarketState): MarketState {
+  return {
+    transfers: market.transfers.map((record) => ({ ...record })),
+    lastDrift: market.lastDrift === null ? null : { ...market.lastDrift },
   };
 }
 
@@ -303,6 +362,9 @@ export function serialize(state: GameState): SaveFile {
     legacy: state.legacy.map((moment) => ({ ...moment })),
     events: copyEvents(state.events),
     city: copyCity(state.city),
+    competitors: copyCompetitors(state.competitors),
+    patientPools: copyPools(state.patientPools),
+    market: copyMarket(state.market),
     stats: { ...state.stats },
     store: copyStore(state.store),
     hiring: copyHiring(state.hiring),
@@ -328,6 +390,9 @@ export function hydrate(file: SaveFile): GameState {
     legacy: file.legacy.map((moment) => ({ ...moment })),
     events: copyEvents(file.events),
     city: copyCity(file.city),
+    competitors: copyCompetitors(file.competitors),
+    patientPools: copyPools(file.patientPools),
+    market: copyMarket(file.market),
     stats: { ...file.stats },
     store: copyStore(file.store),
     hiring: copyHiring(file.hiring),
@@ -354,6 +419,22 @@ function requireArray(value: unknown, name: string): void {
 }
 
 const PHASES: readonly string[] = ["morning", "shift", "close"];
+
+// --- §18 market validation vocabulary (M13) ---
+
+const DISTRICT_IDS = new Set(DISTRICTS.map((d) => d.id));
+const CHRONIC_SET = new Set<string>(CHRONIC_CATEGORIES);
+const STRIKE_KINDS: readonly string[] = ["walkout", "stockout", "error"];
+const COUNSEL_LEVELS: readonly string[] = ["low", "mid", "high"];
+const DRIFT_MOVES: readonly string[] = ["price", "rep", "reliability"];
+
+/** A transfer record's pool reference must parse to a real district and a
+ *  chronic category — the reports panel renders both from the id. */
+function isPoolId(id: string): boolean {
+  const sep = id.indexOf(":");
+  if (sep === -1) return false;
+  return DISTRICT_IDS.has(id.slice(0, sep)) && CHRONIC_SET.has(id.slice(sep + 1));
+}
 
 function validate(file: RawSave): SaveFile {
   // Finiteness matters as much as the type: JSON.parse happily yields
@@ -484,6 +565,137 @@ function validate(file: RawSave): SaveFile {
           reject("readable district tallies");
         }
       }
+    }
+  }
+
+  // The per-district share memory (M13): two entries at most, each a small
+  // district → share record — the receipt's market note reads these raw.
+  requireArray(city.districtShareLog, "district share history");
+  if ((city.districtShareLog as unknown[]).length > 2) reject("a sane district share history");
+  for (const day of city.districtShareLog as unknown[]) {
+    const record = requireObject(day, "district share history");
+    if (Object.keys(record).length > 8) reject("a sane district share history");
+    for (const value of Object.values(record)) {
+      // Finiteness first, then bounds: a share is a fraction of a district.
+      if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) {
+        reject("readable district shares");
+      }
+    }
+  }
+
+  // §18 competitors (M13): the market is exactly the four known rivals —
+  // markers, drift and the transfer surfaces all look these ids up in
+  // data/competitors.ts, and that lookup throws on a stranger. Stats are
+  // §17 routing inputs, so finiteness before bounds, same as the share log.
+  requireArray(file.competitors, "competitors");
+  if ((file.competitors as unknown[]).length > 8) reject("a sane competitor list");
+  const rivalIds = new Set<string>();
+  for (const entry of file.competitors as unknown[]) {
+    const rival = requireObject(entry, "competitors");
+    if (
+      typeof rival.id !== "string" ||
+      !isCompetitorId(rival.id) ||
+      rivalIds.has(rival.id) ||
+      typeof rival.name !== "string"
+    ) {
+      reject("readable competitors");
+    }
+    rivalIds.add(rival.id as string);
+    // proximity() resolves the home district through districtById, which
+    // throws — an invented district would crash the first morning's plan.
+    if (typeof rival.homeDistrictId !== "string" || !DISTRICT_IDS.has(rival.homeDistrictId)) {
+      reject("a competitor's home district");
+    }
+    if (typeof rival.counsel !== "string" || !COUNSEL_LEVELS.includes(rival.counsel)) {
+      reject("a competitor's counsel level");
+    }
+    for (const key of ["priceIndex", "repStars", "stockReliability"]) {
+      if (typeof rival[key] !== "number" || !Number.isFinite(rival[key] as number)) {
+        reject(`a competitor ${key}`);
+      }
+    }
+    if ((rival.priceIndex as number) < 0.5 || (rival.priceIndex as number) > 2) {
+      reject("a competitor price index");
+    }
+    if ((rival.repStars as number) < 0 || (rival.repStars as number) > 5) {
+      reject("a competitor rating");
+    }
+    if ((rival.stockReliability as number) < 0 || (rival.stockReliability as number) > 1) {
+      reject("a competitor reliability");
+    }
+  }
+  if (rivalIds.size !== COMPETITOR_DEFS.length) reject("all four competitors");
+
+  // §18 patient pools (M13): every pool must carry the identity its own key
+  // claims — the spawn path looks pools up by `district:category`, and a
+  // mismatched key would orphan the pool under a name no draw can reach.
+  const pools = requireObject(file.patientPools, "patient pools");
+  const poolKeys = Object.keys(pools);
+  if (poolKeys.length > 40) reject("a sane patient-pool book");
+  for (const key of poolKeys) {
+    const pool = requireObject(pools[key], "patient pools");
+    if (
+      typeof pool.districtId !== "string" ||
+      !DISTRICT_IDS.has(pool.districtId) ||
+      typeof pool.category !== "string" ||
+      !CHRONIC_SET.has(pool.category) ||
+      key !== poolKeyOf(pool.districtId, pool.category as RxCategory)
+    ) {
+      reject("readable patient pools");
+    }
+    if (
+      typeof pool.pharmacyId !== "string" ||
+      (pool.pharmacyId !== PLAYER_PHARMACY_ID && !isCompetitorId(pool.pharmacyId))
+    ) {
+      reject("a pool's pharmacy");
+    }
+    if (!Array.isArray(pool.strikes) || (pool.strikes as unknown[]).length > 4) {
+      reject("a pool's strikes");
+    }
+    for (const strike of pool.strikes as unknown[]) {
+      if (typeof strike !== "string" || !STRIKE_KINDS.includes(strike)) {
+        reject("a pool's strikes");
+      }
+    }
+    if (!Number.isInteger(pool.lastVisitDay) || (pool.lastVisitDay as number) < 0) {
+      reject("a pool's visit day");
+    }
+    if (typeof pool.retry !== "boolean") reject("a pool's retry flag");
+  }
+
+  // §18 market records (M13): the transfer log renders per row in the
+  // reports panel, so it gets the event-schedule treatment — a hard cap,
+  // then every field the copy is built from.
+  const market = requireObject(file.market, "market records");
+  requireArray(market.transfers, "transfer records");
+  if ((market.transfers as unknown[]).length > 64) reject("a sane transfer log");
+  for (const entry of market.transfers as unknown[]) {
+    const record = requireObject(entry, "transfer records");
+    if (
+      !Number.isInteger(record.day) ||
+      (record.day as number) < 1 ||
+      (record.direction !== "in" && record.direction !== "out") ||
+      typeof record.rivalId !== "string" ||
+      !isCompetitorId(record.rivalId) ||
+      typeof record.poolId !== "string" ||
+      !isPoolId(record.poolId) ||
+      typeof record.reason !== "string" ||
+      (record.reason as string).length > 120
+    ) {
+      reject("readable transfer records");
+    }
+  }
+  if (market.lastDrift !== null) {
+    const drift = requireObject(market.lastDrift, "drift record");
+    if (
+      !Number.isInteger(drift.day) ||
+      (drift.day as number) < 1 ||
+      typeof drift.competitorId !== "string" ||
+      !isCompetitorId(drift.competitorId) ||
+      typeof drift.move !== "string" ||
+      !DRIFT_MOVES.includes(drift.move)
+    ) {
+      reject("a readable drift record");
     }
   }
 

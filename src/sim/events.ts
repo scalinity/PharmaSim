@@ -1,6 +1,7 @@
 // SimEvent union — everything the sim announces to render/ and ui/.
 
 import type { Season } from "../core/clock";
+import type { DriftMove } from "../data/competitors";
 import type { Archetype } from "./customers";
 import type { StaffMember } from "./staff";
 import type { DayPhase, GameSettings, GameSpeed, OrderLine, PlacedFurniture } from "./state";
@@ -93,6 +94,21 @@ export type SimEvent =
   | { type: "coldchain.spoiled"; units: number; value: number }
   /** Storm-day weather bed — a hook for milestone 17's audio, silent now. */
   | { type: "ambience.rain"; on: boolean }
+  // --- Competitors + market (§18, milestone 13) ---
+  /** §18 drift: the weakest rival improved an attribute a notch this
+   *  morning; the ticker derives its headline from state.market.lastDrift. */
+  | { type: "competitor.drift"; id: string; name: string; move: DriftMove; day: number }
+  /** A chronic pool's refills changed hands (§18): out on two bad
+   *  experiences, in on the Monday evaluation. */
+  | {
+      type: "market.transfer";
+      direction: "in" | "out";
+      poolId: string;
+      patientName: string;
+      rivalName: string;
+      reason: string;
+      day: number;
+    }
   /** A dev console command took effect; the message is toast-ready. */
   | { type: "dev.eventForced"; message: string }
   // --- App shell (§23, milestone 06) ---

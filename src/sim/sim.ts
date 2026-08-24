@@ -6,6 +6,7 @@ import { DAY_END_IGM, IGM_PER_TICK } from "../core/clock";
 import type { Rot } from "../core/grid";
 import { rollCityDay } from "./city";
 import { handleCommand, type Command } from "./commands";
+import { ensurePatientPools } from "./competitors";
 import { applyRep, CustomerSystem, REP_REASONS } from "./customers";
 import { closeDay, groupTotal, operatingProfit } from "./economy";
 import type { SimEvent } from "./events";
@@ -55,6 +56,9 @@ export class Sim {
     // §16: a fresh run or a just-migrated save plans its current season and
     // year here, so the first morning's world is already scheduled.
     ensurePlanned(this.state);
+    // §18: a fresh run or a just-migrated save assigns its chronic pools by
+    // launch-day scores here — the market opens already contested.
+    ensurePatientPools(this.state);
   }
 
   /** Read-only view of the state for HUD rendering. Never mutate through this. */

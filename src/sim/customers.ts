@@ -32,6 +32,7 @@ import {
   VACCINE_WALKINS_MIN,
   vaccinationUnlocked,
 } from "./coldchain";
+import { beginPoolVisit, duePoolVisit, recordPoolServed, recordPoolStrike } from "./competitors";
 import { COPAY, post, STORE_DISTRICT_ID } from "./economy";
 import type { SimEvent } from "./events";
 import { otcDemandMult, vaccineWalkinMult, visitorMult } from "./events-world";
@@ -105,6 +106,9 @@ export interface Customer {
   mode: CustomerMode;
   /** Active RxScript id, or 0 (Rx patients only). */
   scriptId: number;
+  /** §18: the chronic pool this visit fronts, or null — the recognizable
+   *  weekly regular whose bad experiences move refills between pharmacies. */
+  poolId: string | null;
   /** Igm since drop-off; ≥60 starts the waiting-room browse (§7). */
   waitIgm: number;
   /** The one waiting-room browse round has been taken. */
@@ -1045,6 +1049,8 @@ export class CustomerSystem {
       state.dayStats.refusals++;
       recordStockOut(state, script.drugId, emit);
       applyRep(state, REP_REFUSED, emit, REP_REASONS.refused);
+      // §18: a chronic regular turned away for stock is a strike.
+      if (c.poolId !== null) recordPoolStrike(state, c.poolId, "stockout", emit);
       emit({ type: "rx.refused", drugId: script.drugId, customerId: c.id });
       c.scriptId = 0;
       this.leaveQueueStructures(c);
@@ -1092,9 +1098,13 @@ export class CustomerSystem {
       state.dayStats.errors++;
       post(state, "refund", -refund, emit);
       applyRep(state, REP_ERROR, emit, REP_REASONS.error);
+      // §18: a dispensed error on a chronic regular is a strike.
+      if (c.poolId !== null) recordPoolStrike(state, c.poolId, "error", emit);
       emit({ type: "rx.errorDispensed", scriptId: script.id, refund });
     } else {
       applyRep(state, REP_SERVE, emit, REP_REASONS.serve);
+      // §18: a clean pickup settles a chronic regular's account.
+      if (c.poolId !== null) recordPoolServed(state, c.poolId);
       const worker = counterId ? this.stationWorker(state, counterId) : null;
       if (worker?.charming) applyRep(state, REP_CHARMING, emit, REP_REASONS.charming);
     }
@@ -1150,6 +1160,7 @@ export class CustomerSystem {
       districtId: STORE_DISTRICT_ID,
       mode: "enter",
       scriptId: 0,
+      poolId: null,
       waitIgm: 0,
       hasBrowsed: false,
       counseling: false,
@@ -1210,6 +1221,7 @@ export class CustomerSystem {
     c.angry = false;
     c.serveLeft = 0;
     c.scriptId = 0;
+    c.poolId = null;
     c.waitIgm = 0;
     c.hasBrowsed = false;
     c.counseling = false;
@@ -1248,11 +1260,19 @@ export class CustomerSystem {
       // and category sent them, then the SKU inside it. A coverage change
       // since the plan was made (cabinet sold mid-shift) can leave a routed
       // category unfillable; that visitor browses the front store instead.
+      // §18: when the slice matches a player-held chronic pool that is due,
+      // the visitor *is* that pool's regular — same name, same drug.
       const slice = this.drawRxSlice();
-      const drug = slice ? drawScriptDrugIn(state, slice.category) : null;
+      const pool = slice ? duePoolVisit(state, slice.districtId, slice.category) : null;
+      const drug = pool ? pool.drug : slice ? drawScriptDrugIn(state, slice.category) : null;
       if (slice && drug) {
         c.kind = "rx";
         c.districtId = slice.districtId;
+        if (pool) {
+          c.name = pool.patientName;
+          c.poolId = pool.poolId;
+          beginPoolVisit(state, pool.poolId);
+        }
         c.scriptId = this.workflow.createScript(c.id, c.name, drug).id;
         recordSeen(state, c.districtId, slice.category);
       }
@@ -1673,6 +1693,8 @@ export class CustomerSystem {
       emit,
       REP_REASONS.walkout,
     );
+    // §18: a chronic regular walking out is a bad experience on the book.
+    if (c.poolId !== null) recordPoolStrike(state, c.poolId, "walkout", emit);
     emit({ type: "customer.walkout", id: c.id, archetype: c.archetype });
     this.leaveQueueStructures(c);
     this.beginLeave(c, true);

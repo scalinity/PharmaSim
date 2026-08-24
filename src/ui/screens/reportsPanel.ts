@@ -5,6 +5,7 @@
 // omniscience — this is the "we keep running out of amoxicillin" page.
 
 import type { EventBus } from "../../core/bus";
+import { competitorDef } from "../../data/competitors";
 import { DISTRICT_MAPS, DISTRICTS } from "../../data/districts";
 import {
   observedWindow,
@@ -13,6 +14,7 @@ import {
   type ObservedLine,
   type ObservedWindowDays,
 } from "../../sim/city";
+import { poolPatientName, transfersThisWeek } from "../../sim/competitors";
 import { categoryLabel } from "../../sim/economy";
 import type { SimEvent } from "../../sim/events";
 import type { Sim } from "../../sim/sim";
@@ -61,6 +63,20 @@ export function createReportsPanel(sim: Sim, bus: EventBus<SimEvent>): ReportsPa
     text: "Played days only — the counter can't count demand it never saw. “Short” is demand that walked in and left unfilled.",
   });
 
+  // §18 "transfers in/out this week": named chronic regulars and the reason
+  // their refills moved — the market's wins and losses, legible by name.
+  const txCount = h("span", { cls: "reports__txcount" });
+  const txHead = h("p", { cls: "reports__txhead" }, [
+    h("span", { text: "Transfers this week" }),
+    txCount,
+  ]);
+  const txList = h("div", { cls: "reports__txlist" });
+  const txNone = h("p", {
+    cls: "reports__txnone",
+    text: "No transfers this week — the chronic regulars are staying put.",
+  });
+  const txSection = h("div", { cls: "reports__tx" }, [txHead, txList, txNone]);
+
   const sheet = Panel({ cls: "reports" }, [
     h("div", { cls: "reports__top" }, [
       h("div", {}, [
@@ -69,6 +85,7 @@ export function createReportsPanel(sim: Sim, bus: EventBus<SimEvent>): ReportsPa
       ]),
       shareChip,
     ]),
+    txSection,
     tabs.root,
     head,
     list,
@@ -158,6 +175,44 @@ export function createReportsPanel(sim: Sim, bus: EventBus<SimEvent>): ReportsPa
     }
   }
 
+  // Transfer rows are immutable once written, so the cached refs only ever
+  // appear, hold their order, and age out with the week (§30 — the same
+  // no-rebuild rule as the ledger rows below).
+  const txRows = new Map<string, HTMLElement>();
+
+  function refreshTransfers(): void {
+    const state = sim.snapshot;
+    const records = transfersThisWeek(state);
+    let inCount = 0;
+    const live = new Set<string>();
+    for (const record of records) {
+      if (record.direction === "in") inCount++;
+      const key = `${record.day}:${record.poolId}:${record.direction}`;
+      live.add(key);
+      let row = txRows.get(key);
+      if (!row) {
+        const out = record.direction === "out";
+        row = h("p", { cls: out ? "reports__txrow reports__txrow--out" : "reports__txrow" }, [
+          h("span", { cls: "reports__txday", text: `Day ${record.day}` }),
+          h("span", {
+            cls: "reports__txwho",
+            text: `${poolPatientName(record.poolId)} — ${record.reason} ${out ? "→" : "←"} ${competitorDef(record.rivalId).name}`,
+          }),
+        ]);
+        txRows.set(key, row);
+      }
+      txList.append(row);
+    }
+    for (const [key, row] of txRows) {
+      if (!live.has(key)) {
+        row.remove();
+        txRows.delete(key);
+      }
+    }
+    txCount.textContent = records.length > 0 ? `in ${inCount} · out ${records.length - inCount}` : "";
+    txNone.hidden = records.length > 0;
+  }
+
   function refresh(): void {
     const state = sim.snapshot;
 
@@ -166,6 +221,8 @@ export function createReportsPanel(sim: Sim, bus: EventBus<SimEvent>): ReportsPa
       trend.current === null
         ? "No routed days yet"
         : `City share ≈${(trend.current * 100).toFixed(1)}%`;
+
+    refreshTransfers();
 
     for (const district of DISTRICTS) {
       const block = blocks.get(district.id)!;
@@ -220,6 +277,7 @@ export function createReportsPanel(sim: Sim, bus: EventBus<SimEvent>): ReportsPa
   bus.on("sale.completed", invalidate);
   bus.on("customer.walkout", invalidate);
   bus.on("day.phaseChanged", invalidate);
+  bus.on("market.transfer", invalidate);
 
   return {
     root,

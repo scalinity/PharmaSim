@@ -5,6 +5,7 @@
 // reason posted during the day (§10), so the paper always adds up to the till.
 
 import { formatClock, seasonForDay } from "../../core/clock";
+import { districtById } from "../../data/districts";
 import { legacyMomentDef } from "../../data/flavor";
 import { REP_REASONS } from "../../sim/customers";
 import { groupTotal, LEDGER_REASONS, ledgerNet, operatingProfit } from "../../sim/economy";
@@ -103,6 +104,31 @@ export function buildReceipt(sim: Sim, onNextDay: () => void): HTMLElement {
   // Everything asked for that we could hand over — scripts and shelves both.
   const rate = state.store.fillRate7d[0];
   if (rate !== undefined) line("Asked and served", `${Math.round(rate * 100)}%`);
+
+  // §18 market note: one line, only when the day moved a district's share
+  // meaningfully (±2 points against the last played day) — the biggest
+  // mover speaks for the market.
+  const shareDays = state.city.districtShareLog;
+  if (shareDays.length >= 2) {
+    let moverId: string | null = null;
+    let moverDelta = 0;
+    for (const districtId of Object.keys(shareDays[0]!)) {
+      const prior = shareDays[1]![districtId];
+      if (prior === undefined) continue;
+      const delta = shareDays[0]![districtId]! - prior;
+      if (Math.abs(delta) > Math.abs(moverDelta)) {
+        moverDelta = delta;
+        moverId = districtId;
+      }
+    }
+    if (moverId !== null && Math.abs(moverDelta) >= 0.02) {
+      line(
+        `Market — ${districtById(moverId).name} share`,
+        `${moverDelta >= 0 ? "+" : ""}${(moverDelta * 100).toFixed(1)} pts`,
+        moverDelta < 0 ? "rcpt__line--rose" : "",
+      );
+    }
+  }
   rule();
 
   // --- Word of mouth (§15 rep delta with reasons) ---

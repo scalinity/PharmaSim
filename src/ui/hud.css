@@ -3741,6 +3741,68 @@ html.app-shell .topbar {
   padding-top: 2px;
 }
 
+/* ---- City: the §18 rivals (M13) ---- */
+
+/* A rival's shop tag: smaller than a street tag, its accent as a dot and
+   its live star rating in mono — the map's §18 "own star ratings". */
+.cityui__tag--rival {
+  padding: 2px 8px 3px;
+  font-size: 11px;
+  gap: 4px;
+}
+
+.cityui__rivaldot {
+  width: 7px;
+  height: 7px;
+  border: 1px solid var(--ink-25);
+  flex: none;
+}
+
+.cityui__rivalstars {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink-75);
+}
+
+/* The district card's share bars: five pharmacies, largest first. */
+.cityui__pharmrow {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 16px 4px;
+}
+
+.cityui__pharmrow--mine .cityui__pharmname {
+  font-weight: var(--w-semibold);
+  color: var(--pine);
+}
+
+.cityui__pharmname {
+  width: 108px;
+  flex: none;
+  font-size: 11px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cityui__pharmstars {
+  width: 32px;
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink-75);
+  text-align: right;
+}
+
+.cityui__pharmpct {
+  width: 30px;
+  flex: none;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: 11px;
+}
+
 /* ---- Reports (§17, §28): the market ledger ---- */
 
 .reportswrap {
@@ -3919,6 +3981,66 @@ html.app-shell .topbar {
 .reports__none {
   margin: 0;
   padding: 2px 20px 6px;
+  font-size: var(--fs-12);
+  color: var(--ink-75);
+}
+
+/* ---- Reports: §18 transfers in/out this week (M13) ---- */
+
+.reports__tx {
+  padding: 6px 0 8px;
+  border-bottom: 1.5px solid var(--ink);
+}
+
+.reports__txhead {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin: 0 0 3px;
+  padding: 0 20px;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-75);
+}
+
+.reports__txcount {
+  letter-spacing: 0.04em;
+  text-transform: none;
+}
+
+.reports__txrow {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0;
+  padding: 2px 20px;
+}
+
+.reports__txlist > .reports__txrow:nth-child(odd) {
+  background: rgba(47, 107, 79, 0.05);
+}
+
+.reports__txday {
+  flex: none;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-75);
+}
+
+.reports__txwho {
+  font-size: var(--fs-12);
+  color: var(--pine);
+}
+
+.reports__txrow--out .reports__txwho {
+  color: var(--rose);
+}
+
+.reports__txnone {
+  margin: 0;
+  padding: 2px 20px 4px;
   font-size: var(--fs-12);
   color: var(--ink-75);
 }

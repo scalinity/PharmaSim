@@ -100,6 +100,15 @@ const LEGACY_MOMENTS: readonly LegacyMomentDef[] = [
       "He'd say it's too bright. He'd visit every day.",
     photo: { ground: "#bfe3d2", ink: INK, mark: "GEN 4" },
   },
+  {
+    id: "first_transfer_in",
+    title: "They chose us",
+    text:
+      "More refills walked in this week than walked out — regulars from across town, by name. " +
+      "Your grandmother kept a birthday book under the register for exactly this reason. " +
+      "Start writing names down.",
+    photo: { ground: "#2f6b4f", ink: PAPER, mark: "IN" },
+  },
   // --- Hooks: written now, fired by the milestones that build them ---
   {
     id: "first_branch",

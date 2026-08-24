@@ -6,6 +6,7 @@
 
 import type { EventBus } from "../core/bus";
 import { DAYS_PER_SEASON, dayProgress, formatClock, seasonForDay, type Season } from "../core/clock";
+import { competitorDef, driftHeadline } from "../data/competitors";
 import { drugDef } from "../data/drugs";
 import { legacyMomentDef } from "../data/flavor";
 import { furnitureDef, STATION_NAMES } from "../data/furniture";
@@ -16,6 +17,7 @@ import {
   refrigeratedHeld,
   refrigeratedInbound,
 } from "../sim/coldchain";
+import { poolPatientName } from "../sim/competitors";
 import { RUSH_WINDOWS } from "../sim/customers";
 import { categoryLabel } from "../sim/economy";
 import type { SimEvent } from "../sim/events";
@@ -158,6 +160,26 @@ function worldHeadlines(state: Readonly<GameState>): TickerItem[] {
     if (state.day - moment.day <= LEGACY_NEWS_DAYS) {
       items.push({ day: moment.day, text: legacyMomentDef(moment.id).title });
     }
+  }
+
+  // §18 competitor moves: yesterday's drift, and fresh transfers by name —
+  // both derived from the persisted market record, so a reload reads the
+  // same news.
+  const drift = state.market.lastDrift;
+  if (drift !== null && state.day - drift.day <= 1) {
+    items.push({ day: drift.day, text: driftHeadline(drift.competitorId, drift.move) });
+  }
+  for (const transfer of state.market.transfers) {
+    if (state.day - transfer.day > 1) continue;
+    const patient = poolPatientName(transfer.poolId);
+    const rival = competitorDef(transfer.rivalId).name;
+    items.push({
+      day: transfer.day,
+      text:
+        transfer.direction === "out"
+          ? `Lost a regular — ${patient} now fills at ${rival}`
+          : `Won a regular — ${patient} transferred in from ${rival}`,
+    });
   }
 
   return items;
@@ -845,6 +867,8 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
   bus.on("shortage.started", refreshTicker);
   bus.on("shortage.ended", refreshTicker);
   bus.on("legacy.moment", refreshTicker);
+  bus.on("competitor.drift", refreshTicker);
+  bus.on("market.transfer", refreshTicker);
   bus.on("outage.changed", (e) => {
     if (e.on) {
       toast(

@@ -17,6 +17,7 @@ import { EventBus } from "./core/bus";
 import { seasonForDay } from "./core/clock";
 import { cellToWorld, FACING } from "./core/grid";
 import { startLoop } from "./core/loop";
+import { COMPETITOR_DEFS } from "./data/competitors";
 import { DISTRICT_MAPS, DISTRICTS } from "./data/districts";
 import { createStorage } from "./platform/storage";
 import { CustomerSystem } from "./sim/customers";
@@ -389,11 +390,16 @@ function updateRoleGlyphs(): void {
 function updateOverlays(): void {
   if (hudRoot.hidden) return; // title screen: no chips to place
   if (cityShown) {
-    // The map's own overlay: street tags pinned to each district's plate.
+    // The map's own overlay: street tags pinned to each district's plate,
+    // and the §18 rivals' shop tags pinned over their marker crosses.
     for (const district of DISTRICTS) {
       const m = DISTRICT_MAPS[district.id]!;
       const [sx, sy] = project(m.center[0], 0.4, m.center[1]);
       cityOverlay.updateLabel(district.id, sx, sy);
+    }
+    for (const rival of COMPETITOR_DEFS) {
+      const [sx, sy] = project(rival.site[0], 3.9, rival.site[1]);
+      cityOverlay.updateLabel(rival.id, sx, sy);
     }
     return;
   }

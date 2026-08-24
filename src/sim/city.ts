@@ -9,9 +9,9 @@ import { DISTRICTS, districtById, type District, type RxCategory } from "../data
 import { DRUG_DEFS, type DrugDef } from "../data/drugs";
 import { hasFridge } from "./coldchain";
 import { STORE_DISTRICT_ID } from "./economy";
-import { rxDemandMult } from "./events-world";
+import { anyShortageActive, rxDemandMult } from "./events-world";
 import { canFillDrug } from "./licenses";
-import type { CityState, GameState } from "./state";
+import type { CityState, CompetitorState, GameState } from "./state";
 
 // --- §17 generation ---
 
@@ -48,18 +48,25 @@ function categoryScripts(district: District, category: RxCategory, day: number):
   return perDay;
 }
 
-// --- §17 routing ---
+// --- §17 routing: five pharmacies per district (M13) ---
 
 const W_PROXIMITY = 0.35;
 const W_REP = 0.3;
 const W_PRICE = 0.15;
 const W_AVAILABILITY = 0.2;
 
-/** §17 proximity: 1.0 in the store's own district, 0.5 next door, 0.2
+/** The player store's id wherever a pharmacy id is expected (§18 pool
+ *  assignments, §17 share lists) — rivals use their data/competitors.ts ids. */
+export const PLAYER_PHARMACY_ID = "player";
+
+/** §18/§26: what a shortage does to every rival's availability. */
+const SHORTAGE_RELIABILITY_HIT = 0.15;
+
+/** §17 proximity: 1.0 in the pharmacy's own district, 0.5 next door, 0.2
  *  across town (adjacency from data/districts.ts). */
-function proximity(districtId: string, storeDistrictId: string): number {
-  if (districtId === storeDistrictId) return 1;
-  return districtById(storeDistrictId).adjacent.includes(districtId) ? 0.5 : 0.2;
+function proximity(districtId: string, homeDistrictId: string): number {
+  if (districtId === homeDistrictId) return 1;
+  return districtById(homeDistrictId).adjacent.includes(districtId) ? 0.5 : 0.2;
 }
 
 /** §17 priceScore = clamp(2 − priceIndex, 0..1): list pricing already
@@ -70,7 +77,7 @@ function priceScore(priceIndex: number): number {
 
 /** §17 availability: the trailing 7-day fill rate. A store with no record
  *  yet gets the benefit of the doubt. */
-function storeAvailability(state: GameState): number {
+export function storeAvailability(state: GameState): number {
   const rates = state.store.fillRate7d;
   if (rates.length === 0) return 1;
   let sum = 0;
@@ -78,36 +85,98 @@ function storeAvailability(state: GameState): number {
   return sum / rates.length;
 }
 
-/** The store's §17 attractiveness in one district's eyes. */
-function storeAttractiveness(state: GameState, districtId: string): number {
+/** §18: a rival's availability is its stockReliability, wearing the −0.15
+ *  while any regional shortage squeezes the market (§26). */
+export function rivalAvailability(state: GameState, rival: CompetitorState): number {
+  const hit = anyShortageActive(state) ? SHORTAGE_RELIABILITY_HIT : 0;
+  return Math.max(0, rival.stockReliability - hit);
+}
+
+/** The §17 attractiveness score, one formula for every pharmacy in town —
+ *  the player's stats and the rivals' §18 stat blocks feed the same math. */
+function attractiveness(
+  districtId: string,
+  homeDistrictId: string,
+  repStars: number,
+  priceIndex: number,
+  availability: number,
+): number {
   return (
-    W_PROXIMITY * proximity(districtId, STORE_DISTRICT_ID) +
-    W_REP * (state.repStars / 5) +
-    W_PRICE * priceScore(state.store.priceIndex) +
-    W_AVAILABILITY * storeAvailability(state)
+    W_PROXIMITY * proximity(districtId, homeDistrictId) +
+    W_REP * (repStars / 5) +
+    W_PRICE * priceScore(priceIndex) +
+    W_AVAILABILITY * availability
   );
 }
 
-/**
- * Until the §18 rivals arrive (M13), the rest of the city's pharmacies act
- * as one static "elsewhere" sink: a constant attractiveness, the same in
- * every district — no drift, no shortages. It holds one constant per §17
- * stream because the two capture differently (§26 mix): convenience OTC is
- * soaked up by whichever shop is nearest, while a prescription travels to
- * *your* pharmacy. Both are tuned so the §26 baseline emerges — a fresh
- * Old Town store at 2.5★ (A = 0.85 at home / 0.675 next door / 0.57 across
- * town, squares 0.7225 / 0.4556 / 0.3249 against the city's demand table)
- * routes ≈13 OTC + ≈7 Rx visitors a day: 20/day on the §7 mix, no cliff at
- * the engine swap.
- */
-const ELSEWHERE_A_OTC = 4.2;
-const ELSEWHERE_A_RX = 2.57;
-
-/** §17 share: A² over the sum of squares — squaring sharpens competition. */
-function share(storeA: number, elsewhereA: number): number {
-  const a2 = storeA * storeA;
-  return a2 / (a2 + elsewhereA * elsewhereA);
+export interface PharmacyShare {
+  /** PLAYER_PHARMACY_ID or a §18 rival id. */
+  pharmacyId: string;
+  attractiveness: number;
+  /** A² / ΣA² — the district's shares sum to 1 across the five. */
+  share: number;
 }
+
+/**
+ * §17 share in one district's eyes: every pharmacy's attractiveness, squared
+ * against the field (squaring sharpens competition). The player store first,
+ * then the §18 rivals in state order. Reads live stats, so a rep move, a
+ * price cut or a shortage's reliability hit shifts tomorrow's routing —
+ * this is also what the district cards' share bars and the §18 pool
+ * transfers score against.
+ */
+export function districtShares(state: GameState, districtId: string): PharmacyShare[] {
+  const entries: PharmacyShare[] = [
+    {
+      pharmacyId: PLAYER_PHARMACY_ID,
+      attractiveness: attractiveness(
+        districtId,
+        STORE_DISTRICT_ID,
+        state.repStars,
+        state.store.priceIndex,
+        storeAvailability(state),
+      ),
+      share: 0,
+    },
+  ];
+  for (const rival of state.competitors) {
+    entries.push({
+      pharmacyId: rival.id,
+      attractiveness: attractiveness(
+        districtId,
+        rival.homeDistrictId,
+        rival.repStars,
+        rival.priceIndex,
+        rivalAvailability(state, rival),
+      ),
+      share: 0,
+    });
+  }
+  let total = 0;
+  for (const entry of entries) total += entry.attractiveness * entry.attractiveness;
+  for (const entry of entries) {
+    entry.share = total > 0 ? (entry.attractiveness * entry.attractiveness) / total : 0;
+  }
+  return entries;
+}
+
+/**
+ * §17 routes *market share*; these convert a share of demand into feet
+ * through the door. A five-pharmacy market hands a fresh Old Town store
+ * ≈21% of the city — honest share, but far more demand than the §26
+ * 20-visitor baseline, because not every routed unit of demand is a
+ * same-day visit: refills spread across the month, mail order, the
+ * hospital's own counter. Each stream keeps its own capture because the
+ * two convert differently (§26 mix): a prescription travels — about one
+ * routed script in three reaches the counter — while convenience OTC is
+ * bought wherever the buyer already stands, roughly one visit in eight.
+ * Tuned so the §26 baseline survives the M13 engine swap: a fresh Old Town
+ * store at 2.5★ (A = 0.85 at home / 0.675 next door / 0.57 across town,
+ * shares ≈.28 / .19–.24 / .15–.19 against the four §18 rivals) routes
+ * ≈13 OTC + ≈7 Rx visitors a day — 20/day on the §7 mix, no cliff.
+ */
+const CAPTURE_OTC = 0.125;
+const CAPTURE_RX = 0.3;
 
 // --- The day plan (consumed by sim/customers.ts) ---
 
@@ -141,14 +210,16 @@ function genNoise(): number {
  * Route today's city demand to the store (§17): every district generates Rx
  * scripts per category (pop × prevalence × seasonMult × noise, plus facility
  * bonuses) and OTC visit intent; the store takes its squared-attractiveness
- * share of each against the rest of the city. Only categories the store
- * could actually fill are routed — unlicensed demand goes elsewhere, which
- * is what makes a new license grow the day (§12 × §17, milestone 08).
+ * share of each against the four §18 rivals, converted to visits by the
+ * per-stream capture. Only categories the store could actually fill are
+ * routed — unlicensed demand goes elsewhere, which is what makes a new
+ * license grow the day (§12 × §17, milestone 08).
  *
- * Also writes today's routed share onto the share log (noise-free, so the
- * trend arrow moves on rep, price and availability — not on a lucky
- * Tuesday). One entry per *played* day: a skipped or renovation morning
- * never plans, so it observes and records nothing.
+ * Also writes today's shares onto the logs (noise-free, so the trend arrow
+ * moves on rep, price and availability — not on a lucky Tuesday): the
+ * city-wide routed share, and the per-district share the receipt's market
+ * note compares against yesterday's (M13). One entry per *played* day: a
+ * skipped or renovation morning never plans, so it records nothing.
  */
 export function planCityDay(state: GameState): CityDayPlan {
   // The slice of each category's demand weight this store could fill today.
@@ -166,19 +237,20 @@ export function planCityDay(state: GameState): CityDayPlan {
   // demand, licensed or not — a new license honestly raises the share.
   let captured = 0;
   let cityDemand = 0;
+  const sharesToday: Record<string, number> = {};
 
   for (const district of DISTRICTS) {
-    const a = storeAttractiveness(state, district.id);
-    const otcShare = share(a, ELSEWHERE_A_OTC);
-    const rxShare = share(a, ELSEWHERE_A_RX);
+    const shares = districtShares(state, district.id);
+    const playerShare = shares[0]!.share; // the player is always first
+    sharesToday[district.id] = playerShare;
 
     const intent = (district.population / 1000) * district.otcIntent;
-    const otcCount = intent * otcShare * genNoise();
+    const otcCount = intent * playerShare * CAPTURE_OTC * genNoise();
     if (otcCount > 0) {
       otc.push({ districtId: district.id, count: otcCount });
       otcTotal += otcCount;
     }
-    captured += intent * otcShare;
+    captured += intent * playerShare;
     cityDemand += intent;
 
     for (const category of RX_CATEGORIES) {
@@ -187,9 +259,9 @@ export function planCityDay(state: GameState): CityDayPlan {
       cityDemand += generated;
       const weight = fillableWeight[category] ?? 0;
       if (weight <= 0) continue;
-      const routed = generated * (weight / CATEGORY_WEIGHT[category]) * rxShare;
+      const routed = generated * (weight / CATEGORY_WEIGHT[category]) * playerShare;
       captured += routed;
-      const count = routed * genNoise();
+      const count = routed * CAPTURE_RX * genNoise();
       rx.push({ districtId: district.id, category, count });
       rxTotal += count;
     }
@@ -197,6 +269,11 @@ export function planCityDay(state: GameState): CityDayPlan {
 
   state.city.shareLog.unshift(cityDemand > 0 ? captured / cityDemand : 0);
   state.city.shareLog.length = Math.min(state.city.shareLog.length, SHARE_LOG_DAYS);
+  state.city.districtShareLog.unshift(sharesToday);
+  state.city.districtShareLog.length = Math.min(
+    state.city.districtShareLog.length,
+    DISTRICT_SHARE_LOG_DAYS,
+  );
 
   return { otc, rx, otcTotal, rxTotal };
 }
@@ -254,6 +331,8 @@ export type ObservedKey = RxCategory | typeof OTC_TALLY_KEY;
 /** Trailing days kept beside today — with it, the §17 28-day window. */
 const CITY_LOG_DAYS = 27;
 const SHARE_LOG_DAYS = 28;
+/** Today beside the last played day — the receipt's market note (M13). */
+const DISTRICT_SHARE_LOG_DAYS = 2;
 
 function tallyFor(city: CityState, districtId: string, key: ObservedKey): [number, number] {
   const district = (city.today[districtId] ??= {});

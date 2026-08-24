@@ -67,6 +67,17 @@ export function vaccineWalkinMult(state: GameState): number {
   return seasonForDay(state.day) === "Winter" ? FLU_VACCINE_MULT : 1;
 }
 
+/** §18/§26: is any regional shortage squeezing the city today? The rivals
+ *  buy from the same squeezed wholesalers, so any active shortage puts the
+ *  −0.15 on every rival's availability — sim/city.ts reads this for their
+ *  §17 routing while the player's own availability drops the honest way,
+ *  through capped orders and a falling fill rate. */
+export function anyShortageActive(state: GameState): boolean {
+  return state.events.shortages.some(
+    (s) => state.day >= s.startDay && state.day <= s.endDay,
+  );
+}
+
 // --- Storm-day readers ---
 
 export function stormToday(state: GameState): boolean {

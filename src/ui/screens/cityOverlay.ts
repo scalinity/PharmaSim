@@ -5,12 +5,23 @@
 // observed memory): knowledge builds by playing, never from the generator.
 
 import type { EventBus } from "../../core/bus";
+import { COMPETITOR_DEFS, competitorDef } from "../../data/competitors";
 import { DISTRICTS, districtById, type FacilityKind } from "../../data/districts";
-import { observedWindow, OTC_TALLY_KEY, shareTrend } from "../../sim/city";
+import {
+  districtShares,
+  observedWindow,
+  OTC_TALLY_KEY,
+  PLAYER_PHARMACY_ID,
+  shareTrend,
+} from "../../sim/city";
 import { categoryLabel, STORE_DISTRICT_ID } from "../../sim/economy";
 import type { SimEvent } from "../../sim/events";
 import type { Sim } from "../../sim/sim";
 import { h } from "../dom";
+
+function accentCss(accent: number): string {
+  return `#${accent.toString(16).padStart(6, "0")}`;
+}
 
 /** §17 skew column, said the way the pharmacist behind the counter would. */
 const CHARACTER: Record<string, string> = {
@@ -39,7 +50,8 @@ export interface CityOverlayHandle {
   setActive(on: boolean): void;
   /** District under the pointer (render-side pick), or null. */
   hoverDistrict(id: string | null): void;
-  /** Screen-space anchor for one district's street tag (per frame). */
+  /** Screen-space anchor for a district's street tag or a rival's shop
+   *  tag (per frame) — keyed by district id or competitor id. */
   updateLabel(id: string, screenX: number, screenY: number): void;
 }
 
@@ -56,6 +68,27 @@ export function createCityOverlay(sim: Sim, bus: EventBus<SimEvent>): CityOverla
     tags.set(district.id, tag);
     tagHost.append(tag);
   }
+
+  // §18: the rivals' shop tags — name and live star rating, in their §27
+  // accent, pinned to their markers the way street tags pin to plates.
+  const rivalStars = new Map<string, HTMLElement>();
+  for (const def of COMPETITOR_DEFS) {
+    const dot = h("span", { cls: "cityui__rivaldot" });
+    dot.style.background = accentCss(def.accent);
+    const stars = h("span", { cls: "cityui__rivalstars" });
+    const tag = h("div", { cls: "cityui__tag cityui__tag--rival" }, [dot, def.name, stars]);
+    tags.set(def.id, tag);
+    rivalStars.set(def.id, stars);
+    tagHost.append(tag);
+  }
+  function refreshRivalStars(): void {
+    for (const rival of sim.snapshot.competitors) {
+      const stars = rivalStars.get(rival.id);
+      if (stars) stars.textContent = `${rival.repStars.toFixed(1)}★`;
+    }
+  }
+  refreshRivalStars();
+  bus.on("competitor.drift", refreshRivalStars);
 
   const hint = h("p", {
     cls: "cityui__hint",
@@ -112,6 +145,35 @@ export function createCityOverlay(sim: Sim, bus: EventBus<SimEvent>): CityOverla
     ];
   }
 
+  /** §18: every pharmacy's share of this district, largest first — the
+   *  same live A²/ΣA² the routing runs on, so a rep move or a shortage's
+   *  reliability hit reads here the day it lands. */
+  function pharmacyRows(id: string): HTMLElement[] {
+    const state = sim.snapshot;
+    const shares = [...districtShares(state, id)].sort((a, b) => b.share - a.share);
+    const rows: HTMLElement[] = [
+      h("p", { cls: "cityui__mixhead", text: "Pharmacies · share of demand" }),
+    ];
+    for (const entry of shares) {
+      const player = entry.pharmacyId === PLAYER_PHARMACY_ID;
+      const def = player ? null : competitorDef(entry.pharmacyId);
+      const rival = player ? null : state.competitors.find((c) => c.id === entry.pharmacyId);
+      const bar = h("span", { cls: "cityui__bar" });
+      bar.style.width = `${Math.max(2, entry.share * 100).toFixed(0)}%`;
+      bar.style.background = def ? accentCss(def.accent) : "";
+      const stars = player ? state.repStars : rival?.repStars ?? 0;
+      rows.push(
+        h("div", { cls: player ? "cityui__pharmrow cityui__pharmrow--mine" : "cityui__pharmrow" }, [
+          h("span", { cls: "cityui__pharmname", text: player ? "Your pharmacy" : def!.name }),
+          h("span", { cls: "cityui__pharmstars", text: `${stars.toFixed(1)}★` }),
+          h("span", { cls: "cityui__barwrap" }, [bar]),
+          h("span", { cls: "cityui__pharmpct", text: `${(entry.share * 100).toFixed(0)}%` }),
+        ]),
+      );
+    }
+    return rows;
+  }
+
   function buildCard(id: string): void {
     const district = districtById(id);
     const state = sim.snapshot;
@@ -166,6 +228,7 @@ export function createCityOverlay(sim: Sim, bus: EventBus<SimEvent>): CityOverla
             h("li", { cls: "cityui__facility", text: FACILITY_LABELS[f.kind] }),
           ),
         ]),
+        ...pharmacyRows(id),
         h("p", { cls: "cityui__mixhead", text: "Scripts seen · 28 days" }),
         ...mix,
         ...(id === STORE_DISTRICT_ID

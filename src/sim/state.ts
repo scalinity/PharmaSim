@@ -1,7 +1,9 @@
-// GameState root type + factory (SPEC §5, §6, §10, §11, §24, §26).
+// GameState root type + factory (SPEC §5, §6, §10, §11, §18, §24, §26).
 
 import { DAY_START_IGM } from "../core/clock";
 import type { Rot } from "../core/grid";
+import { COMPETITOR_DEFS, type DriftMove } from "../data/competitors";
+import type { RxCategory } from "../data/districts";
 import type { HiringPool, StaffMember } from "./staff";
 
 export type DayPhase = "morning" | "shift" | "close";
@@ -138,6 +140,10 @@ export interface CityState {
   /** Routed share of the whole city's demand, one entry per played day,
    *  most recent first (≤28 — the trend windows). */
   shareLog: number[];
+  /** Per-district §17 share by district id, one entry per played day, most
+   *  recent first (≤2 — today against the last played day, the receipt's
+   *  ±2-point market note, M13). */
+  districtShareLog: Record<string, number>[];
   /** Today's observed traffic, keyed by district id. */
   today: Record<string, DistrictTally>;
   /** Prior days, most recent first (≤27 — with today, the 28-day window). */
@@ -145,7 +151,86 @@ export interface CityState {
 }
 
 export function freshCityState(): CityState {
-  return { shareLog: [], today: {}, log: [] };
+  return { shareLog: [], districtShareLog: [], today: {}, log: [] };
+}
+
+// --- §18 competitors + the chronic-patient market (M13) ---
+
+/** One §18 rival's live stat block (§24 CompetitorState). Identity fields
+ *  mirror data/competitors.ts; price, rep and reliability move with drift. */
+export interface CompetitorState {
+  id: string;
+  name: string;
+  homeDistrictId: string;
+  priceIndex: number;
+  repStars: number;
+  counsel: "low" | "mid" | "high";
+  stockReliability: number;
+}
+
+/** §18 launch stat blocks off the data table — a new run's market, and the
+ *  v8 migration's seed for saves that predate the rivals. */
+export function freshCompetitors(): CompetitorState[] {
+  return COMPETITOR_DEFS.map((def) => ({
+    id: def.id,
+    name: def.name,
+    homeDistrictId: def.homeDistrictId,
+    priceIndex: def.priceIndex,
+    repStars: def.repStars,
+    counsel: def.counsel,
+    stockReliability: def.stockReliability,
+  }));
+}
+
+/** A §18 bad experience at the player store — two of these move the pool. */
+export type PoolStrike = "walkout" | "stockout" | "error";
+
+/** One chronic patient pool (§18/§24 patientPools): a district's monthly
+ *  refills in one category, fronted by a recognizable named patient, held
+ *  by whichever pharmacy currently earns them. Keyed `district:category`
+ *  (sim/competitors.ts owns the key). Beyond §24's minimum, the pool
+ *  carries the §18 bad-experience tracking — strikes must survive a save,
+ *  or a reload would quietly forgive the first one. */
+export interface PatientPool {
+  districtId: string;
+  category: RxCategory;
+  /** PLAYER_PHARMACY_ID (sim/city.ts) or a §18 rival id. */
+  pharmacyId: string;
+  /** Bad experiences at the player store since the last clean pickup. */
+  strikes: PoolStrike[];
+  /** Day of the patient's last visit; 0 = never. One visit a week, plus a
+   *  next-day retry after a bad experience — the refill can't wait. */
+  lastVisitDay: number;
+  retry: boolean;
+}
+
+/** One §18 prescription transfer, kept two weeks for the reports panel. */
+export interface TransferRecord {
+  day: number;
+  poolId: string;
+  direction: "in" | "out";
+  /** The rival the pool moved to (out) or came from (in). */
+  rivalId: string;
+  /** §28 copy, written when it happened ("two stock-outs"). */
+  reason: string;
+}
+
+/** The last §18 drift move — the ticker derives its headline from this. */
+export interface DriftRecord {
+  day: number;
+  competitorId: string;
+  move: DriftMove;
+}
+
+/** §18 market bookkeeping beside §24's competitors/patientPools: the
+ *  transfer log the reports read, and the drift the ticker names. */
+export interface MarketState {
+  transfers: TransferRecord[];
+  lastDrift: DriftRecord | null;
+}
+
+export function freshMarketState(): MarketState {
+  return { transfers: [], lastDrift: null };
 }
 
 /** One §15 reputation reason tallied for the receipt. */
@@ -224,6 +309,13 @@ export interface GameState {
   events: WorldEventsState;
   /** §17 city memory: routed-share history + observed district demand (M12). */
   city: CityState;
+  /** §18 rivals' live stat blocks (§24) — sim/competitors.ts drifts them. */
+  competitors: CompetitorState[];
+  /** §18 chronic patient pools (§24), keyed `district:category`. Empty
+   *  until Sim's constructor assigns them by launch-day scores. */
+  patientPools: Record<string, PatientPool>;
+  /** §18 transfer log + last drift move (M13). */
+  market: MarketState;
   /** Lifetime counters and milestone days (§24) — `license.L3` → day bought,
    *  `era.2` → day the renovation was signed. */
   stats: Record<string, number>;
@@ -341,6 +433,10 @@ export function createGameState(): GameState {
     legacy: [],
     events: freshWorldEvents(),
     city: freshCityState(),
+    competitors: freshCompetitors(),
+    // Assigned by launch-day scores in Sim's constructor (sim/competitors.ts).
+    patientPools: {},
+    market: freshMarketState(),
     stats: { "license.L1": 1 },
     store: {
       grid: { cols: 10, rows: 7, expansions: 0 },
