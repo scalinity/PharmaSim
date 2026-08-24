@@ -89,6 +89,11 @@ import { DAY_END_IGM, DAY_START_IGM } from "../core/clock";
 import { COMPETITOR_DEFS, isCompetitorId } from "../data/competitors";
 import { DISTRICTS, type RxCategory } from "../data/districts";
 import { isLegacyMoment } from "../data/flavor";
+// Validation vocabulary from the gameplay modules that own the data. The
+// import direction is one-way — nothing under city/competitors imports this
+// file — and must stay so; if a gameplay module ever needs something from
+// here, move the shared constants into a leaf module instead of importing
+// back (a cycle would surface as a TDZ crash at module evaluation).
 import { DISTRICT_SHARE_LOG_DAYS, PLAYER_PHARMACY_ID } from "./city";
 import { CHRONIC_CATEGORIES, poolKeyOf, TRANSFER_CAP } from "./competitors";
 import type { HiringPool, StaffMember } from "./staff";
