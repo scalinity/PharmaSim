@@ -946,7 +946,10 @@ function validate(file: RawSave): SaveFile {
     const stock = requireObject(dc.stock, "depot stock");
     for (const [skuId, units] of Object.entries(stock)) {
       if (!isTruckSku(skuId)) reject("readable depot stock");
-      if (typeof units !== "number" || !Number.isFinite(units) || units < 0) {
+      // Whole units, like every line the writer ever adds or subtracts — a
+      // hand-edited fraction would ride a picking list into a store's
+      // backroom and walk NaN-adjacent arithmetic from there.
+      if (typeof units !== "number" || !Number.isInteger(units) || units < 0) {
         reject("readable depot stock");
       }
     }
