@@ -44,8 +44,11 @@ export const FORECAST_NOISE = 0.1;
 const REP_MULT_BASE = 0.4;
 const REP_MULT_PER_STAR = 0.24;
 
-/** Expected §7 basket per OTC visit — the same coarse stand-in the §19
- *  branch resolver serves with (one item plus a 50% second). */
+/** Expected §7 basket per OTC visit — the §19 branch resolver's stand-in
+ *  (one item plus a 50% second), which the visited floor also lands on:
+ *  weighting the §7 archetype mix (hurried 1 target · steady 1–2 ·
+ *  bargain 2–3 · chatty 2–4, first pick certain, later picks at the 0.6
+ *  extra-item chance) gives ≈1.53 before stock-outs and balks. */
 const OTC_ITEMS_PER_VISIT = 1.5;
 
 // --- The verification assistant (§21) ---
@@ -220,8 +223,13 @@ export function forecastStore(state: GameState, store: StoreState): Map<string, 
     }
   }
 
-  // OTC: the day's visits spread over the catalog by §25 weight under the
-  // day's season pull (spring's ×2.5 on allergy, winter's ×3 on cold & flu).
+  // OTC: the day's visits spread over the *whole* catalog by §25 weight
+  // under the day's season pull (spring's ×2.5 on allergy, winter's ×3 on
+  // cold & flu). Deliberately the whole catalog, not the shelved subset:
+  // shoppers pick among whatever is on the shelf, so realized sales
+  // concentrate on the carried lines — but the table must still quote the
+  // demand a line *would* pull if stocked, or Order-to-forecast could
+  // never propose a new one.
   const visits = out.get(OTC_VISITS_KEY);
   if (visits) {
     out.delete(OTC_VISITS_KEY);
