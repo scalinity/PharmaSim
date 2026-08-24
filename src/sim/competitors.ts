@@ -6,7 +6,7 @@
 // math itself lives in sim/city.ts — this file owns the *dynamics*.
 // Pure sim — no DOM, no three.js.
 
-import { competitorDef, type DriftMove } from "../data/competitors";
+import type { DriftMove } from "../data/competitors";
 import { DISTRICTS, type RxCategory } from "../data/districts";
 import { DRUG_DEFS, type DrugDef } from "../data/drugs";
 import { FIRST_NAMES, LAST_NAMES } from "../data/names";
@@ -298,15 +298,7 @@ export function recordPoolStrike(
     rivalId: best.pharmacyId,
     reason,
   });
-  emit({
-    type: "market.transfer",
-    direction: "out",
-    poolId,
-    patientName: poolPatientName(poolId),
-    rivalName: competitorDef(best.pharmacyId).name,
-    reason,
-    day: state.day,
-  });
+  emit({ type: "market.transfer", direction: "out", poolId, day: state.day });
 }
 
 // --- The market's morning (called from beginMorning, §5) ---
@@ -353,15 +345,7 @@ function evaluatePools(state: GameState, emit: Emit): void {
     pool.lastVisitDay = 0; // the new regular shows up this very week
     const reason = "steady fills and a better name";
     pushTransfer(state, { day: state.day, poolId, direction: "in", rivalId: fromId, reason });
-    emit({
-      type: "market.transfer",
-      direction: "in",
-      poolId,
-      patientName: poolPatientName(poolId),
-      rivalName: competitorDef(fromId).name,
-      reason,
-      day: state.day,
-    });
+    emit({ type: "market.transfer", direction: "in", poolId, day: state.day });
   }
 
   // §22: the first completed week that nets transfers *in* is a moment.
@@ -424,7 +408,7 @@ function driftWeakestRival(state: GameState, emit: Emit): void {
   else weakest.stockReliability = Math.min(1, weakest.stockReliability + DRIFT_RELIABILITY_STEP);
 
   state.market.lastDrift = { day: state.day, competitorId: weakest.id, move: pick.move };
-  emit({ type: "competitor.drift", id: weakest.id, name: weakest.name, move: pick.move, day: state.day });
+  emit({ type: "competitor.drift", id: weakest.id, move: pick.move, day: state.day });
 }
 
 /**

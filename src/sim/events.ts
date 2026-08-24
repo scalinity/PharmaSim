@@ -96,19 +96,13 @@ export type SimEvent =
   | { type: "ambience.rain"; on: boolean }
   // --- Competitors + market (§18, milestone 13) ---
   /** §18 drift: the weakest rival improved an attribute a notch this
-   *  morning; the ticker derives its headline from state.market.lastDrift. */
-  | { type: "competitor.drift"; id: string; name: string; move: DriftMove; day: number }
+   *  morning. A trigger only — every consumer derives its copy from
+   *  state.market, so a reload reads the same news. */
+  | { type: "competitor.drift"; id: string; move: DriftMove; day: number }
   /** A chronic pool's refills changed hands (§18): out on two bad
-   *  experiences, in on the Monday evaluation. */
-  | {
-      type: "market.transfer";
-      direction: "in" | "out";
-      poolId: string;
-      patientName: string;
-      rivalName: string;
-      reason: string;
-      day: number;
-    }
+   *  experiences, in on the Monday evaluation. A trigger only — the
+   *  names and reason live on state.market.transfers. */
+  | { type: "market.transfer"; direction: "in" | "out"; poolId: string; day: number }
   /** A dev console command took effect; the message is toast-ready. */
   | { type: "dev.eventForced"; message: string }
   // --- App shell (§23, milestone 06) ---
