@@ -4694,7 +4694,11 @@ html.app-shell .topbar {
   border-left: 2px dashed rgba(47, 107, 79, 0.45);
 }
 
-.van__stop:last-of-type::before {
+/* The last waypoint ends the rail. :last-of-type can't say that — the
+   add-a-stop row is also a div sibling, so the last div is never a stop;
+   anchor on what actually follows the final stop instead. */
+.van__stop:has(+ .van__addstop)::before,
+.van__stop:last-child::before {
   bottom: 4px;
 }
 
