@@ -641,13 +641,24 @@ export function createOrdersPanel(sim: Sim, bus: EventBus<SimEvent>): OrdersPane
   }
 
   /** Keep the forecast leaf current (called from refreshAll while it is
-   *  the open view): a scope or day turn rebuilds; churn updates in place. */
+   *  the open view): a scope or day turn rebuilds, and so does anything
+   *  that changes which SKUs the table can show — licenses and equipment
+   *  gate canFillDrug and the vaccine service. Rep moves magnitudes only
+   *  and stays out of the key on purpose: a per-serve rebuild would defeat
+   *  the cache, and the draft reads the table's own rows either way.
+   *  Everything else updates in place. */
   function refreshForecast(): void {
     const state = sim.snapshot;
     const shortages = state.events.shortages
       .map((s) => `${s.category}:${s.startDay}`)
       .join(",");
-    const key = `${scope.current()}|${state.day}|${shortages}|${state.stores.length}`;
+    let furniture = 0;
+    if (scopeIsDc()) {
+      for (const s of state.stores) furniture += s.furniture.length;
+    } else {
+      furniture = scopedStore().furniture.length;
+    }
+    const key = `${scope.current()}|${state.day}|${shortages}|${state.stores.length}|${state.licenses.length}|${furniture}`;
     if (key !== fcastKey) {
       fcastKey = key;
       buildForecastTable();
