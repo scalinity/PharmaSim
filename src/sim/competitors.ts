@@ -10,7 +10,13 @@ import { competitorDef, type DriftMove } from "../data/competitors";
 import { DISTRICTS, type RxCategory } from "../data/districts";
 import { DRUG_DEFS, type DrugDef } from "../data/drugs";
 import { FIRST_NAMES, LAST_NAMES } from "../data/names";
-import { districtShares, PLAYER_PHARMACY_ID, rivalAvailability, storeAvailability } from "./city";
+import {
+  districtShares,
+  PLAYER_PHARMACY_ID,
+  rivalAvailability,
+  storeAvailability,
+  type PharmacyShare,
+} from "./city";
 import type { SimEvent } from "./events";
 import { recordMoment } from "./legacy";
 import { canFillDrug } from "./licenses";
@@ -95,21 +101,26 @@ export function poolDrug(poolId: string, category: RxCategory): DrugDef {
  * chronic categories become pools held by whichever pharmacy is most
  * attractive in that district right now — for a fresh run that is the
  * rivals, mostly each district's nearest; a migrated 4★ store starts with
- * the pools it has honestly already earned. Runs once: pools are content-
- * deterministic, so a non-empty record means an earlier session assigned
- * them and play has moved them since.
+ * the pools it has honestly already earned. A pool that already exists is
+ * play's record and is never reassigned; the gate is per key, so a pool
+ * added by later content (a new district, a new chronic category) still
+ * reaches existing saves instead of silently never existing there.
  */
 export function ensurePatientPools(state: GameState): void {
-  if (Object.keys(state.patientPools).length > 0) return;
   for (const district of DISTRICTS) {
-    const shares = districtShares(state, district.id);
-    let best = shares.player;
-    for (const entry of shares.rivals) {
-      if (entry.attractiveness > best.attractiveness) best = entry;
-    }
+    let best: PharmacyShare | null = null;
     for (const category of CHRONIC_CATEGORIES) {
       if ((district.prevalence[category] ?? 0) <= 0) continue;
-      state.patientPools[poolKeyOf(district.id, category)] = {
+      const key = poolKeyOf(district.id, category);
+      if (state.patientPools[key]) continue;
+      if (best === null) {
+        const shares = districtShares(state, district.id);
+        best = shares.player;
+        for (const entry of shares.rivals) {
+          if (entry.attractiveness > best.attractiveness) best = entry;
+        }
+      }
+      state.patientPools[key] = {
         districtId: district.id,
         category,
         pharmacyId: best.pharmacyId,
