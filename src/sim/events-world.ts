@@ -10,6 +10,7 @@ import { DRUG_DEFS } from "../data/drugs";
 import { isRefrigerated } from "./coldchain";
 import { categoryLabel, listWholesale, post, round2 } from "./economy";
 import type { SimEvent } from "./events";
+import { mulberry32 } from "./rng";
 import { activeStore, type GameState, type StormEvent } from "./state";
 
 type Emit = (event: SimEvent) => void;
@@ -120,17 +121,6 @@ export function outageActive(state: GameState): boolean {
 }
 
 // --- Planning (seeded, deterministic per save) ---
-
-/** mulberry32 — the standard tiny PRNG; one stream per (seed, purpose). */
-function mulberry32(seed: number): () => number {
-  let a = seed | 0;
-  return () => {
-    a = (a + 0x6d2b79f5) | 0;
-    let t = Math.imul(a ^ (a >>> 15), 1 | a);
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
 
 /** Rx categories a shortage can squeeze: every scripted category in the
  *  §25 catalog. The vaccine dose is §14 service stock, not script demand,
