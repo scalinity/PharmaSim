@@ -272,7 +272,10 @@ function buildBranchSheet(sim: Sim, store: StoreState): SheetRefs {
       String(summary.served),
       summary.served < summary.demand ? "rcpt__line--rose" : "",
     );
-    line("Crew capacity", `≈${Math.round(summary.capacity)}`);
+    // The stored capacity bounds the Rx stream only — OTC serves against
+    // the larger checkout budget, so "Crew capacity ≈0 · Served 37" would
+    // contradict itself on an ordinary cashier-only roster.
+    line("Rx capacity", `≈${Math.round(summary.capacity)}`);
     line("Scripts filled", String(summary.rxFills));
     line("Front-store units", String(summary.otcUnits));
     if (summary.stockOuts > 0) {
@@ -288,7 +291,14 @@ function buildBranchSheet(sim: Sim, store: StoreState): SheetRefs {
     section("the crew");
     if (manager) note(`${manager.name} ran the day.`);
     else note("No manager — the day ran at 60%.", true);
-    if (summary.otcOnly) note("No pharmacist on staff — OTC only.", true);
+    if (summary.otcOnly) {
+      note(
+        summary.hadPharmacist
+          ? "No tech on the fill bench — OTC only."
+          : "No pharmacist on staff — OTC only.",
+        true,
+      );
+    }
     if (store.staff.length === 0) note("Nobody on the roster. The lights were on, that's all.", true);
     rule();
     line(

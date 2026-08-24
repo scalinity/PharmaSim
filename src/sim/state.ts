@@ -45,7 +45,9 @@ export interface BranchDaySummary {
   /** Routed §17 visits (OTC + Rx) the branch was asked for today. */
   demand: number;
   served: number;
-  /** min(fills, verifies, checkouts) × managerFactor — what the crew could do. */
+  /** min(fills, verifies, checkouts) × managerFactor — the crew's ceiling
+   *  on the *Rx stream*; OTC serves against the larger checkout budget, so
+   *  the receipt labels this "Rx capacity". */
   capacity: number;
   rxFills: number;
   otcUnits: number;
@@ -58,7 +60,8 @@ export interface BranchDaySummary {
   repDelta: number;
   hadManager: boolean;
   hadPharmacist: boolean;
-  /** No pharmacist on staff: the branch sold OTC only (§19). */
+  /** The Rx stream was zeroed (no pharmacist's verifies or no tech's
+   *  fills) while the register still ran: the branch sold OTC only (§19). */
   otcOnly: boolean;
   /** §13: the crew had the floor — nothing resolved today. */
   underRenovation: boolean;

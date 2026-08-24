@@ -381,7 +381,10 @@ export function resolveBranchDay(
     repDelta,
     hadManager: crew.hadManager,
     hadPharmacist: crew.hadPharmacist,
-    otcOnly: !crew.hadPharmacist,
+    // The Rx stream was zeroed while the register still ran — true with no
+    // pharmacist to verify OR no tech to fill (§19), not the pharmacist
+    // alone: the receipt names the missing hands off hadPharmacist.
+    otcOnly: rxBudget === 0 && checkoutBudget > 0,
     underRenovation: false,
   };
   emit({ type: "branch.daySummary", storeId: store.id, day: state.day });
