@@ -173,13 +173,19 @@ export function forecastStore(state: GameState, store: StoreState): Map<string, 
     const { stores } = districtShares(state, district.id);
     return stores.find((entry) => entry.pharmacyId === store.id)?.share ?? 0;
   });
-  const repMult = REP_MULT_BASE + REP_MULT_PER_STAR * store.repStars;
+  // The §7 door conversion (beginDay's repMult × the season's visitor pull)
+  // rides the *visited* floor's schedule only: an unvisited branch resolves
+  // straight off routedBranchDay, which carries neither — its rep already
+  // reaches it once, through districtShares. Applying it to a branch would
+  // double-count rep and over-order its whole week.
+  const visited = store.id === state.activeStoreId;
+  const repMult = visited ? REP_MULT_BASE + REP_MULT_PER_STAR * store.repStars : 1;
   const fillable = DRUG_DEFS.filter((def) => canFillDrug(state, store, def));
   const vaccines = vaccinationUnlocked(state, store);
 
   for (let t = 0; t < FORECAST_DAYS; t++) {
     const day = state.day + t;
-    const doorMult = repMult * seasonVisitorMultOn(day);
+    const doorMult = visited ? repMult * seasonVisitorMultOn(day) : 1;
 
     // Rx: routed scripts per category, split to SKUs by §25 demand weight.
     for (let d = 0; d < DISTRICTS.length; d++) {
