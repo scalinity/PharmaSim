@@ -1367,6 +1367,16 @@ export class CustomerSystem {
 
   private despawn(c: Customer): void {
     this.releaseClaims(c);
+    // Invariant sweep: an inactive slot owns no cells. releaseClaims only
+    // covers the two tracked claims, and a long M16 playtest caught a cell
+    // still owned by a despawned slot (near the doorway, where it slows
+    // every later leaver until the slot is reused) — the write path that
+    // strands it has not been pinned, so the exit enforces the invariant
+    // outright. ≤192 cells per despawn, far off any §30 hot path.
+    const owner = c.poolIndex + 1;
+    for (let i = 0; i < this.occupied.length; i++) {
+      if (this.occupied[i] === owner) this.occupied[i] = 0;
+    }
     if (c.chairId) {
       this.chairOccupants.delete(c.chairId);
       c.chairId = null;
