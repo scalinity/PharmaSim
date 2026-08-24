@@ -4,6 +4,7 @@
 import type { EventBus } from "../core/bus";
 import { DAY_END_IGM, IGM_PER_TICK } from "../core/clock";
 import type { Rot } from "../core/grid";
+import { rollCityDay } from "./city";
 import { handleCommand, type Command } from "./commands";
 import { applyRep, CustomerSystem, REP_REASONS } from "./customers";
 import { closeDay, groupTotal, operatingProfit } from "./economy";
@@ -241,6 +242,8 @@ export class Sim {
         recordMoment(this.state, "first_profit", this.emit);
       }
       rollHistory(this.state, gross);
+      // §17: today's observed neighborhood demand joins the 28-day window.
+      rollCityDay(this.state);
       this.state.phase = "close";
       this.bus.emit({ type: "day.phaseChanged", phase: this.state.phase, day: this.state.day });
     }

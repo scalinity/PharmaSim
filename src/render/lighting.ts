@@ -42,17 +42,24 @@ export class Lighting {
   private outageTarget = 0;
   private lastIgm: number | null = null;
 
-  constructor(private scene: Scene) {
+  /** `shadows: false` is the city map's rig (§30: one 1024 map, and it
+   *  belongs to the active store — the map gets the same arc, shadow-free). */
+  constructor(
+    private scene: Scene,
+    options: { shadows?: boolean } = {},
+  ) {
     this.hemi = new HemisphereLight(SKY_WARM, HEMI_GROUND, 0.9);
     scene.add(this.hemi);
 
     this.key = new DirectionalLight(KEY_WARM, 1.9);
-    this.key.castShadow = true;
-    this.key.shadow.mapSize.set(1024, 1024);
-    this.key.shadow.normalBias = 0.03;
-    const cam = this.key.shadow.camera;
-    cam.near = 4;
-    cam.far = 70;
+    if (options.shadows !== false) {
+      this.key.castShadow = true;
+      this.key.shadow.mapSize.set(1024, 1024);
+      this.key.shadow.normalBias = 0.03;
+      const cam = this.key.shadow.camera;
+      cam.near = 4;
+      cam.far = 70;
+    }
     scene.add(this.key);
     scene.add(this.key.target);
     this.fitFloor(10, 7);

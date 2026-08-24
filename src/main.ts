@@ -12,11 +12,12 @@ import "@fontsource/ibm-plex-mono/600.css";
 import "./ui/tokens.css";
 import "./ui/hud.css";
 
-import { Vector3 } from "three";
+import { Raycaster, Vector2, Vector3 } from "three";
 import { EventBus } from "./core/bus";
 import { seasonForDay } from "./core/clock";
 import { cellToWorld, FACING } from "./core/grid";
 import { startLoop } from "./core/loop";
+import { DISTRICT_MAPS, DISTRICTS } from "./data/districts";
 import { createStorage } from "./platform/storage";
 import { CustomerSystem } from "./sim/customers";
 import type { SimEvent } from "./sim/events";
@@ -24,6 +25,7 @@ import { hydrate, migrate, serialize, type SaveFile } from "./sim/save";
 import { Sim } from "./sim/sim";
 import { createGameState } from "./sim/state";
 import { CameraRig } from "./render/cameraRig";
+import { CityScene } from "./render/cityScene";
 import { Lighting } from "./render/lighting";
 import { NpcView } from "./render/npcView";
 import { Picking } from "./render/picking";
@@ -31,6 +33,7 @@ import { Renderer } from "./render/renderer";
 import { RxBinBoard } from "./render/rxBins";
 import { StaffView } from "./render/staffView";
 import { StoreScene } from "./render/storeScene";
+import { createCityOverlay } from "./ui/screens/cityOverlay";
 import { createHud } from "./ui/hud";
 import { createShell, type ShellPersistence } from "./ui/shell";
 
@@ -70,11 +73,18 @@ const store = new StoreScene(sim, bus);
 const npcs = new NpcView(sim, store.scene);
 const staffView = new StaffView(sim, store.scene);
 const lighting = new Lighting(store.scene);
+// The city map (M12, §17/§27): its own scene under the same §27 day arc —
+// shadow-free, since the single 1024 map belongs to the active store (§30).
+const city = new CityScene();
+const cityLighting = new Lighting(city.scene, { shadows: false });
 const rig = new CameraRig(renderer.canvas);
 rig.setAspect(renderer.aspect);
 renderer.onResize((width, height) => rig.setAspect(width / height));
 
-bus.on("clock.minute", (e) => lighting.setTime(e.igm));
+bus.on("clock.minute", (e) => {
+  lighting.setTime(e.igm);
+  cityLighting.setTime(e.igm);
+});
 // §27 winter edge dimming follows the calendar; §16 outages drop the key to
 // 20% cold. Both *listeners* are registered further down, behind the saves
 // block — day.phaseChanged is the autosave's own event, and persistence must
@@ -82,6 +92,8 @@ bus.on("clock.minute", (e) => lighting.setTime(e.igm));
 lighting.setSeason(seasonForDay(sim.snapshot.day) === "Winter");
 lighting.setTime(sim.snapshot.clockIgm);
 lighting.fitFloor(sim.snapshot.store.grid.cols, sim.snapshot.store.grid.rows);
+cityLighting.setSeason(seasonForDay(sim.snapshot.day) === "Winter");
+cityLighting.setTime(sim.snapshot.clockIgm);
 bus.on("expansion.bought", (e) => lighting.fitFloor(e.cols, e.rows));
 
 // §28 era tint: the store's generation rides the document root, and every
@@ -144,13 +156,23 @@ window.addEventListener("beforeunload", () => {
 // throwing color lerp — may starve the autosave of day.phaseChanged (§23).
 bus.on("day.phaseChanged", (e) => {
   lighting.setSeason(seasonForDay(e.day) === "Winter");
+  cityLighting.setSeason(seasonForDay(e.day) === "Winter");
   // Snap at every untimed boundary, not just the morning: the ease rides
   // clock minutes, and a close reached mid-ease (a renovation's early close,
   // or a window ending at 20:00) never ticks another one — the receipt
   // would otherwise print over a half-blacked-out floor (§13, §16).
-  if (e.phase !== "shift") lighting.setOutage(false, true);
+  if (e.phase !== "shift") {
+    lighting.setOutage(false, true);
+    cityLighting.setOutage(false, true);
+  }
+  // The receipt owns the close (§28): the map goes down with the shift so
+  // the paper prints over the store it reports on.
+  if (e.phase === "close") setCityShown(false, true);
 });
-bus.on("outage.changed", (e) => lighting.setOutage(e.on));
+bus.on("outage.changed", (e) => {
+  lighting.setOutage(e.on);
+  cityLighting.setOutage(e.on);
+});
 
 const hud = createHud(hudRoot, sim, bus);
 const binBoard = new RxBinBoard();
@@ -165,6 +187,113 @@ const picking = new Picking(sim, bus, store, binBoard, rig.camera, renderer.canv
   fridgeHover: hud.fridgeHover,
 });
 hud.bindBuild(picking);
+
+// --- City view (M12, §17/§28): a render-layer scene swap, not a dock sheet.
+// The same camera rig serves both scenes with its own clamps and saved
+// framing per side; a soft dip hides the cut (instant under reduced motion).
+
+const cityOverlay = createCityOverlay(sim);
+hudRoot.append(cityOverlay.root);
+
+// Between the canvas and the HUD in DOM order, so the dip covers the scene
+// while the paper stays crisp — stacking here is document order, no z-index.
+const sceneFade = document.createElement("div");
+sceneFade.className = "scenefade";
+renderer.canvas.after(sceneFade);
+
+const CITY_TARGET = new Vector3(-3, 0, -3);
+const CITY_VIEW_HEIGHT = 80;
+
+let cityShown = false;
+let storePose = rig.getPose();
+let cityPose: ReturnType<typeof rig.getPose> | null = null;
+let fadeTimer = 0;
+
+function motionReduced(): boolean {
+  return (
+    window.matchMedia("(prefers-reduced-motion: reduce)").matches ||
+    sim.snapshot.settings.reducedMotion
+  );
+}
+
+/** The actual swap: scene, camera clamps + framing, picking, overlay, pill. */
+function applyCityShown(on: boolean): void {
+  if (cityShown === on) return;
+  cityShown = on;
+  if (on) {
+    // Stepping out to the map steps away from whatever station the player's
+    // hands were on — a bench fill must not start while the store is away.
+    if (sim.snapshot.buildMode) sim.dispatch({ type: "build.exit" });
+    if (sim.snapshot.workingStationId !== null) sim.dispatch({ type: "station.leave" });
+    picking.setSuspended(true);
+    // The store's screen-space chips stop being placed while the map is up;
+    // whatever is on screen right now comes down with the swap.
+    for (const item of sim.snapshot.store.furniture) {
+      hud.hideStockChip(item.id);
+      hud.hideQueueChip(item.id);
+    }
+    for (const key of liveStackKeys) hud.hideStageStack(key);
+    liveStackKeys = new Set();
+    for (const id of liveGlyphIds) hud.hideRoleGlyph(id);
+    liveGlyphIds = new Set();
+    store.setBottleneck(null);
+    storePose = rig.getPose();
+    rig.setViewClamp(6, 100);
+    // The city's wide zoom needs a deeper frustum than the store's (§27
+    // camera notes in render/cameraRig.ts).
+    rig.setDepthRange(-60, 200);
+    rig.setPose(cityPose ?? { ...rig.getPose(), target: CITY_TARGET.clone(), viewHeight: CITY_VIEW_HEIGHT });
+  } else {
+    cityPose = rig.getPose();
+    rig.setViewClamp(2, 30);
+    rig.setDepthRange(1, 150);
+    rig.setPose(storePose);
+    city.setHover(null);
+    picking.setSuspended(false);
+  }
+  hud.setCityActive(on);
+  cityOverlay.setActive(on);
+  if (!on) cityOverlay.hoverDistrict(null);
+}
+
+/** Swap under a soft dip; `immediate` (phase changes) skips the fade. */
+function setCityShown(on: boolean, immediate = false): void {
+  if (cityShown === on) return;
+  if (immediate || motionReduced()) {
+    window.clearTimeout(fadeTimer);
+    sceneFade.classList.remove("scenefade--on");
+    applyCityShown(on);
+    return;
+  }
+  window.clearTimeout(fadeTimer);
+  sceneFade.classList.add("scenefade--on");
+  fadeTimer = window.setTimeout(() => {
+    applyCityShown(on);
+    fadeTimer = window.setTimeout(() => sceneFade.classList.remove("scenefade--on"), 60);
+  }, 180);
+}
+
+hud.bindCity({
+  toggle: () => {
+    // The receipt owns the close (§28): the map can come down under it but
+    // never up — the C press waits for the next morning.
+    if (!cityShown && sim.snapshot.phase === "close") return;
+    setCityShown(!cityShown);
+  },
+});
+
+// District hover: ray the map's ground through the shared camera (§27
+// feedback: ring under the plate, card in the right rail).
+const cityRaycaster = new Raycaster();
+const cityNdc = new Vector2();
+renderer.canvas.addEventListener("pointermove", (e) => {
+  if (!cityShown) return;
+  cityNdc.set((e.clientX / window.innerWidth) * 2 - 1, -(e.clientY / window.innerHeight) * 2 + 1);
+  cityRaycaster.setFromCamera(cityNdc, rig.camera);
+  const id = city.districtAt(cityRaycaster);
+  city.setHover(id);
+  cityOverlay.hoverDistrict(id);
+});
 
 /**
  * How tight the fill glide frames the shelf (§8). A 0.37 m label at the
@@ -187,6 +316,9 @@ function fillViewHeight(): number {
 // Fill interaction (§8): labeled bins appear and the camera glides to frame
 // the Rx shelf; both retract when the fill ends (done, caught, or abandoned).
 bus.on("rx.fillStarted", (e) => {
+  // Entering the city stepped the player away from every station, so a fill
+  // can't start under the map — but never glide a camera that isn't home.
+  if (cityShown) return;
   const state = sim.snapshot;
   const { cols, rows } = state.store.grid;
   const shelf = e.shelfId ? state.store.furniture.find((f) => f.id === e.shelfId) : undefined;
@@ -249,6 +381,15 @@ function updateRoleGlyphs(): void {
 
 function updateOverlays(): void {
   if (hudRoot.hidden) return; // title screen: no chips to place
+  if (cityShown) {
+    // The map's own overlay: street tags pinned to each district's plate.
+    for (const district of DISTRICTS) {
+      const m = DISTRICT_MAPS[district.id]!;
+      const [sx, sy] = project(m.center[0], 0.4, m.center[1]);
+      cityOverlay.updateLabel(district.id, sx, sy);
+    }
+    return;
+  }
   const state = sim.snapshot;
   updateRoleGlyphs();
   if (state.phase === "close") {
@@ -432,11 +573,15 @@ const loopHooks = {
   tick: () => sim.tick(),
   render: (dtMs: number, alpha: number) => {
     rig.update(dtMs);
-    store.update(rig.camera, dtMs);
-    npcs.update(alpha);
-    staffView.update(alpha);
+    if (cityShown) {
+      city.update(dtMs);
+    } else {
+      store.update(rig.camera, dtMs);
+      npcs.update(alpha);
+      staffView.update(alpha);
+    }
     updateOverlays();
-    renderer.render(store.scene, rig.camera);
+    renderer.render(cityShown ? city.scene : store.scene, rig.camera);
   },
 };
 startLoop(loopHooks);
@@ -453,6 +598,7 @@ if (bootIntoPlay) {
   sim,
   rig,
   store,
+  city,
   bus,
   renderer,
   binBoard,

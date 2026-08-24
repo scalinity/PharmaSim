@@ -7,15 +7,10 @@
 // caught errors back to the fill queue; with no verifier, verification is
 // implicit at handoff with the owner's 90% catch. Pure sim — no DOM.
 
-import { IGM_PER_TICK, seasonForDay } from "../core/clock";
-import { districtById } from "../data/districts";
+import { IGM_PER_TICK } from "../core/clock";
 import { DRUG_DEFS, drugDef, type DrugDef } from "../data/drugs";
-import { hasFridge } from "./coldchain";
-import { STORE_DISTRICT_ID } from "./economy";
 import type { SimEvent } from "./events";
-import { rxDemandMult } from "./events-world";
 import { binFixtureFor, returnShelved, takeShelved } from "./inventory";
-import { drugDailyDemand, fillableDrugs } from "./licenses";
 import { OWNER_CATCH_RATE } from "./staff";
 import type { GameState } from "./state";
 
@@ -77,49 +72,6 @@ function shuffle<T>(items: T[]): T[] {
     [items[i], items[j]] = [items[j]!, items[i]!];
   }
   return items;
-}
-
-/**
- * Weighted draw over what the store is licensed and equipped to fill (§12,
- * §17): each fillable drug pulls with its slice of the district's daily
- * category generation, so an L2 wall writes mental-health scripts and a
- * stocked cabinet brings the controlled ones — never before.
- *
- * The pool is memoized on license coverage (licenses owned + a cabinet or
- * fridge on the floor) plus the §16 season, whose category multipliers bend
- * the weights — anything that shifts a weight must sit in this key, or a
- * mid-run change would never land. Per-spawn work stays one key build
- * instead of re-deriving 49 demand slices, while a mid-shift license
- * purchase (or a season turn) still lands on the very next spawn.
- */
-let drawPoolKey = "";
-let drawPool: DrugDef[] = [];
-let drawWeights: number[] = [];
-let drawTotal = 0;
-
-function drawScriptDrug(state: GameState): DrugDef {
-  const cabinet = state.store.furniture.some((f) => f.defId === "cabinet_controlled");
-  const key =
-    state.licenses.join(",") +
-    (cabinet ? "|cabinet" : "") +
-    (hasFridge(state) ? "|fridge" : "") +
-    "|" +
-    seasonForDay(state.day);
-  if (key !== drawPoolKey) {
-    const district = districtById(STORE_DISTRICT_ID);
-    drawPoolKey = key;
-    drawPool = fillableDrugs(state);
-    drawWeights = drawPool.map(
-      (def) => drugDailyDemand(district, def) * rxDemandMult(state, def.category),
-    );
-    drawTotal = drawWeights.reduce((sum, w) => sum + w, 0);
-  }
-  let u = Math.random() * drawTotal;
-  for (let i = 0; i < drawPool.length; i++) {
-    u -= drawWeights[i]!;
-    if (u <= 0) return drawPool[i]!;
-  }
-  return drawPool[0]!;
 }
 
 /** Look-alike ids for a drug: §25 `confusableWith` both ways, padded up to 3
@@ -295,9 +247,10 @@ export class RxWorkflow {
     return this.scripts.get(id);
   }
 
-  /** New script written for an arriving Rx patient (stage: dropoff). */
-  createScript(state: GameState, customerId: number, patientName: string): RxScript {
-    const drug = drawScriptDrug(state);
+  /** New script written for an arriving Rx patient (stage: dropoff). The
+   *  drug is the caller's draw — the §17 city model routes a district and
+   *  category first, then picks the SKU (sim/city.ts drawScriptDrugIn). */
+  createScript(customerId: number, patientName: string, drug: DrugDef): RxScript {
     const script: RxScript = {
       id: this.nextScriptId++,
       customerId,

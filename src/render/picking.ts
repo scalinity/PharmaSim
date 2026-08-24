@@ -63,6 +63,8 @@ export class Picking {
   private downY = 0;
   private downButton = -1;
   private canvasCursor = "";
+  /** City view up (M12): the store's picking sleeps under the map. */
+  private suspended = false;
 
   constructor(
     private sim: Sim,
@@ -132,6 +134,18 @@ export class Picking {
     this.refresh();
   }
 
+  /** §28 city view: while the map is up, pointer and keys belong to it —
+   *  hover, hints and the cursor are put away so nothing lingers over it.
+   *  Build mode is exited before the swap (main.ts), so no ghost is held. */
+  setSuspended(on: boolean): void {
+    this.suspended = on;
+    if (on) {
+      this.scene.setHover(null);
+      this.setCursor("");
+      this.clearHints();
+    }
+  }
+
   /** Context panel: pick the selected item up as a move ghost. */
   beginMove(): void {
     if (!this.selection) return;
@@ -148,6 +162,7 @@ export class Picking {
   }
 
   private onKeyDown(e: KeyboardEvent): void {
+    if (this.suspended) return;
     if (e.code === "KeyB" && !e.repeat) {
       this.sim.dispatch({ type: this.sim.snapshot.buildMode ? "build.exit" : "build.enter" });
     } else if (e.code === "KeyR" && this.ghostDefId) {
@@ -164,6 +179,7 @@ export class Picking {
   }
 
   private onPointerMove(e: PointerEvent): void {
+    if (this.suspended) return;
     this.updateHoverCell(e.clientX, e.clientY);
     this.refresh();
 
@@ -265,6 +281,7 @@ export class Picking {
   }
 
   private onClick(e: PointerEvent): void {
+    if (this.suspended) return;
     this.updateHoverCell(e.clientX, e.clientY);
     const state = this.sim.snapshot;
 

@@ -53,7 +53,7 @@ builds (`npm run dev`) — `K` in particular rewrites the save, so packaged buil
 - [x] 09 Cold chain + vaccinations
 - [x] 10 Modernization + legacy
 - [x] 11 Events + atmosphere
-- [ ] 12 City map + living demand
+- [x] 12 City map + living demand
 - [ ] 13 Competitors + market share
 - [ ] 14 Multi-branch
 - [ ] 15 Distribution + logistics

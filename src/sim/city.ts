@@ -1,0 +1,350 @@
+// The city and its living demand (SPEC §17, §26): per-district, per-category
+// Rx generation off the §24 district table plus OTC visit intent, facility
+// bonuses (the nursing home's chronic refills ride Mondays as one weekly
+// batch), routing by attractiveness against the rest of the city, and the
+// store's observed-demand memory — the "learn your neighborhood" knowledge
+// the reports panel and district cards read. Pure sim — no DOM, no three.js.
+
+import { DISTRICTS, districtById, type District, type RxCategory } from "../data/districts";
+import { DRUG_DEFS, type DrugDef } from "../data/drugs";
+import { hasFridge } from "./coldchain";
+import { STORE_DISTRICT_ID } from "./economy";
+import { rxDemandMult } from "./events-world";
+import { canFillDrug } from "./licenses";
+import type { CityState, GameState } from "./state";
+
+// --- §17 generation ---
+
+/** Total §25 demand weight per category — the pool a category's daily
+ *  scripts spread across, licensed or not. */
+const CATEGORY_WEIGHT = {} as Record<RxCategory, number>;
+for (const def of DRUG_DEFS) {
+  CATEGORY_WEIGHT[def.category] = (CATEGORY_WEIGHT[def.category] ?? 0) + def.demandWeight;
+}
+
+const RX_CATEGORIES = Object.keys(CATEGORY_WEIGHT) as RxCategory[];
+
+/** §17: the nursing home's chronic refills route as one weekly batch — the
+ *  week's worth lands on Monday (day 1 is a Monday, §5) instead of
+ *  trickling in daily like every other facility's bonus. */
+export function nursingBatchDay(day: number): boolean {
+  return (day - 1) % 7 === 0;
+}
+
+/** One district's §17 daily script generation for one category:
+ *  pop × prevalence, plus flat facility bonuses — the nursing home's
+ *  arriving ×7 on batch day and not at all otherwise. */
+function categoryScripts(district: District, category: RxCategory, day: number): number {
+  let perDay = (district.population / 1000) * (district.prevalence[category] ?? 0);
+  for (const facility of district.facilities) {
+    const bonus = facility.bonus[category] ?? 0;
+    if (bonus === 0) continue;
+    if (facility.kind === "nursingHome") {
+      if (nursingBatchDay(day)) perDay += bonus * 7;
+    } else {
+      perDay += bonus;
+    }
+  }
+  return perDay;
+}
+
+// --- §17 routing ---
+
+const W_PROXIMITY = 0.35;
+const W_REP = 0.3;
+const W_PRICE = 0.15;
+const W_AVAILABILITY = 0.2;
+
+/** §17 proximity: 1.0 in the store's own district, 0.5 next door, 0.2
+ *  across town (adjacency from data/districts.ts). */
+function proximity(districtId: string, storeDistrictId: string): number {
+  if (districtId === storeDistrictId) return 1;
+  return districtById(storeDistrictId).adjacent.includes(districtId) ? 0.5 : 0.2;
+}
+
+/** §17 priceScore = clamp(2 − priceIndex, 0..1): list pricing already
+ *  scores full marks; only marking up past MSRP costs share. */
+function priceScore(priceIndex: number): number {
+  return Math.min(1, Math.max(0, 2 - priceIndex));
+}
+
+/** §17 availability: the trailing 7-day fill rate. A store with no record
+ *  yet gets the benefit of the doubt. */
+export function storeAvailability(state: GameState): number {
+  const rates = state.store.fillRate7d;
+  if (rates.length === 0) return 1;
+  let sum = 0;
+  for (const rate of rates) sum += rate;
+  return sum / rates.length;
+}
+
+/** The store's §17 attractiveness in one district's eyes. */
+export function storeAttractiveness(state: GameState, districtId: string): number {
+  return (
+    W_PROXIMITY * proximity(districtId, STORE_DISTRICT_ID) +
+    W_REP * (state.repStars / 5) +
+    W_PRICE * priceScore(state.store.priceIndex) +
+    W_AVAILABILITY * storeAvailability(state)
+  );
+}
+
+/**
+ * Until the §18 rivals arrive (M13), the rest of the city's pharmacies act
+ * as one static "elsewhere" sink: a constant attractiveness, the same in
+ * every district — no drift, no shortages. It holds one constant per §17
+ * stream because the two capture differently (§26 mix): convenience OTC is
+ * soaked up by whichever shop is nearest, while a prescription travels to
+ * *your* pharmacy. Both are tuned so the §26 baseline emerges — a fresh
+ * Old Town store at 2.5★ (A = 0.85 at home / 0.675 next door / 0.57 across
+ * town, squares 0.7225 / 0.4556 / 0.3249 against the city's demand table)
+ * routes ≈13 OTC + ≈7 Rx visitors a day: 20/day on the §7 mix, no cliff at
+ * the engine swap.
+ */
+const ELSEWHERE_A_OTC = 4.2;
+const ELSEWHERE_A_RX = 2.57;
+
+/** §17 share: A² over the sum of squares — squaring sharpens competition. */
+function share(storeA: number, elsewhereA: number): number {
+  const a2 = storeA * storeA;
+  return a2 / (a2 + elsewhereA * elsewhereA);
+}
+
+// --- The day plan (consumed by sim/customers.ts) ---
+
+export interface RxDemandSlice {
+  districtId: string;
+  category: RxCategory;
+  /** Expected scripts routed to the store today (fractional). */
+  count: number;
+}
+
+export interface OtcDemandSlice {
+  districtId: string;
+  count: number;
+}
+
+export interface CityDayPlan {
+  otc: OtcDemandSlice[];
+  rx: RxDemandSlice[];
+  otcTotal: number;
+  rxTotal: number;
+}
+
+/** §17 generation noise, per district × category — small, so one category's
+ *  swing reads in the reports without whipsawing the whole day (§7's own
+ *  dayNoise still moves the schedule as a whole). */
+function genNoise(): number {
+  return 0.9 + Math.random() * 0.2;
+}
+
+/**
+ * Route today's city demand to the store (§17): every district generates Rx
+ * scripts per category (pop × prevalence × seasonMult × noise, plus facility
+ * bonuses) and OTC visit intent; the store takes its squared-attractiveness
+ * share of each against the rest of the city. Only categories the store
+ * could actually fill are routed — unlicensed demand goes elsewhere, which
+ * is what makes a new license grow the day (§12 × §17, milestone 08).
+ *
+ * Also writes today's routed share onto the share log (noise-free, so the
+ * trend arrow moves on rep, price and availability — not on a lucky
+ * Tuesday). One entry per *played* day: a skipped or renovation morning
+ * never plans, so it observes and records nothing.
+ */
+export function planCityDay(state: GameState): CityDayPlan {
+  // The slice of each category's demand weight this store could fill today.
+  const fillableWeight = {} as Record<RxCategory, number>;
+  for (const def of DRUG_DEFS) {
+    if (!canFillDrug(state, def)) continue;
+    fillableWeight[def.category] = (fillableWeight[def.category] ?? 0) + def.demandWeight;
+  }
+
+  const otc: OtcDemandSlice[] = [];
+  const rx: RxDemandSlice[] = [];
+  let otcTotal = 0;
+  let rxTotal = 0;
+  // Share-log accounting: what the store captures of the *whole* city's
+  // demand, licensed or not — a new license honestly raises the share.
+  let captured = 0;
+  let cityDemand = 0;
+
+  for (const district of DISTRICTS) {
+    const a = storeAttractiveness(state, district.id);
+    const otcShare = share(a, ELSEWHERE_A_OTC);
+    const rxShare = share(a, ELSEWHERE_A_RX);
+
+    const intent = (district.population / 1000) * district.otcIntent;
+    const otcCount = intent * otcShare * genNoise();
+    if (otcCount > 0) {
+      otc.push({ districtId: district.id, count: otcCount });
+      otcTotal += otcCount;
+    }
+    captured += intent * otcShare;
+    cityDemand += intent;
+
+    for (const category of RX_CATEGORIES) {
+      const generated = categoryScripts(district, category, state.day) * rxDemandMult(state, category);
+      if (generated <= 0) continue;
+      cityDemand += generated;
+      const weight = fillableWeight[category] ?? 0;
+      if (weight <= 0) continue;
+      const routed = generated * (weight / CATEGORY_WEIGHT[category]) * rxShare;
+      captured += routed;
+      const count = routed * genNoise();
+      rx.push({ districtId: district.id, category, count });
+      rxTotal += count;
+    }
+  }
+
+  state.city.shareLog.unshift(cityDemand > 0 ? captured / cityDemand : 0);
+  state.city.shareLog.length = Math.min(state.city.shareLog.length, SHARE_LOG_DAYS);
+
+  return { otc, rx, otcTotal, rxTotal };
+}
+
+// --- Drug draw within a routed category (§17 × §25) ---
+
+/**
+ * Weighted draw of one drug inside a routed category: each fillable SKU
+ * pulls with its §25 demand weight. Pools are memoized on license coverage
+ * (licenses owned + a cabinet or fridge on the floor) — the only inputs
+ * that move a within-category weight; season and district scale whole
+ * categories and cancel here. A mid-shift coverage change (cabinet sold,
+ * license bought) still lands on the very next spawn. Null when the
+ * category has nothing fillable left — the caller degrades gracefully.
+ */
+let poolKey = "";
+const categoryPools = new Map<string, { drugs: DrugDef[]; total: number }>();
+
+export function drawScriptDrugIn(state: GameState, category: RxCategory): DrugDef | null {
+  const cabinet = state.store.furniture.some((f) => f.defId === "cabinet_controlled");
+  const key =
+    state.licenses.join(",") + (cabinet ? "|cabinet" : "") + (hasFridge(state) ? "|fridge" : "");
+  if (key !== poolKey) {
+    poolKey = key;
+    categoryPools.clear();
+  }
+  let pool = categoryPools.get(category);
+  if (!pool) {
+    const drugs = DRUG_DEFS.filter((def) => def.category === category && canFillDrug(state, def));
+    pool = { drugs, total: drugs.reduce((sum, def) => sum + def.demandWeight, 0) };
+    categoryPools.set(category, pool);
+  }
+  if (pool.drugs.length === 0) return null;
+  let u = Math.random() * pool.total;
+  for (const def of pool.drugs) {
+    u -= def.demandWeight;
+    if (u <= 0) return def;
+  }
+  return pool.drugs[0]!;
+}
+
+// --- Observed-demand memory (§17 "learn your neighborhood") ---
+
+/** OTC visits ride the observed tallies under this key, beside the §24 Rx
+ *  categories — a visit is "asked", a completed checkout is "served". */
+export const OTC_TALLY_KEY = "otc";
+
+/** Trailing days kept beside today — with it, the §17 28-day window. */
+const CITY_LOG_DAYS = 27;
+const SHARE_LOG_DAYS = 28;
+
+function tallyFor(city: CityState, districtId: string, key: string): [number, number] {
+  const district = (city.today[districtId] ??= {});
+  return (district[key] ??= [0, 0]);
+}
+
+/** Demand walked through the door: an Rx patient's category, or an OTC
+ *  shopper's visit. Recorded at spawn — a walk-out or refusal was still
+ *  demand the player saw. */
+export function recordSeen(state: GameState, districtId: string, key: string): void {
+  tallyFor(state.city, districtId, key)[0] += 1;
+}
+
+/** Demand actually served: a script handed over at pickup, or an OTC
+ *  checkout rung up. */
+export function recordServed(state: GameState, districtId: string, key: string): void {
+  tallyFor(state.city, districtId, key)[1] += 1;
+}
+
+/** Close of day: today's tallies join the log (§17 28-day window). */
+export function rollCityDay(state: GameState): void {
+  state.city.log.unshift(state.city.today);
+  state.city.log.length = Math.min(state.city.log.length, CITY_LOG_DAYS);
+  state.city.today = {};
+}
+
+// --- Read-only selectors (reports panel, district cards) ---
+
+export interface ObservedLine {
+  /** An Rx category id, or OTC_TALLY_KEY. */
+  key: string;
+  asked: number;
+  served: number;
+  /** Same-length window immediately before this one (trend arrows); NaN
+   *  never appears — an unknown prior window reads as priorKnown: false. */
+  priorAsked: number;
+}
+
+export interface ObservedWindow {
+  lines: ObservedLine[];
+  /** The prior window has at least one recorded day behind it. */
+  priorKnown: boolean;
+}
+
+/**
+ * One district's observed tallies summed over the trailing `days` window
+ * (today included), with the preceding same-length window for trend
+ * comparison. Only keys the store has actually seen appear — knowledge,
+ * never the generator (§17).
+ */
+export function observedWindow(state: GameState, districtId: string, days: number): ObservedWindow {
+  const lines = new Map<string, ObservedLine>();
+  const add = (tally: Record<string, [number, number]> | undefined, prior: boolean): void => {
+    if (!tally) return;
+    for (const key of Object.keys(tally)) {
+      let line = lines.get(key);
+      if (!line) {
+        line = { key, asked: 0, served: 0, priorAsked: 0 };
+        lines.set(key, line);
+      }
+      const [asked, served] = tally[key]!;
+      if (prior) {
+        line.priorAsked += asked;
+      } else {
+        line.asked += asked;
+        line.served += served;
+      }
+    }
+  };
+
+  add(state.city.today[districtId], false);
+  const log = state.city.log;
+  const span = Math.min(log.length, days * 2 - 1);
+  for (let i = 0; i < span; i++) {
+    add(log[i]![districtId], i >= days - 1);
+  }
+  const sorted = [...lines.values()].sort((a, b) => b.asked - a.asked);
+  return { lines: sorted, priorKnown: log.length >= days };
+}
+
+export interface ShareTrend {
+  /** Mean routed share over the last up-to-7 played days, or null before
+   *  the first played day. */
+  current: number | null;
+  /** Mean over the 7 played days before those, or null while unknown. */
+  prior: number | null;
+}
+
+/** The store's routed share of the whole city's demand: this week against
+ *  the week before — the district card's trend arrow (§17). */
+export function shareTrend(state: GameState): ShareTrend {
+  const log = state.city.shareLog;
+  const mean = (from: number, to: number): number | null => {
+    const end = Math.min(to, log.length);
+    if (end <= from) return null;
+    let sum = 0;
+    for (let i = from; i < end; i++) sum += log[i]!;
+    return sum / (end - from);
+  };
+  return { current: mean(0, 7), prior: log.length > 7 ? mean(7, 14) : null };
+}

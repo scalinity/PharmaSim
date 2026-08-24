@@ -59,11 +59,18 @@
 //    Season itself is still derived from `day` (§5), never stored — only
 //    the scheduled events and their seed persist.
 //
+//  Version 7 (milestone 12) adds the city:
+//    · city (§17: the routed-share history and the per-district
+//      observed-demand memory the reports and district cards read)     (M12)
+//    District data itself is content (data/districts.ts), never state —
+//    only what the store has *seen* persists, and a pre-city save has seen
+//    nothing: the step seeds an empty memory that fills from play.
+//
 //  §24's fuller schema (worldSeed, stores[], competitors, patientPools, dc,
 //  aitech, stats) is not here because those systems do not exist yet.
 //  They arrive field-by-field with the milestones that own them —
-//  08 licenses/expansion, 09 cold chain, 10 legacy, 12 city, 13 competitors,
-//  14 branches, 15 logistics, 16 AI tech — each with its own migrate step.
+//  13 competitors, 14 branches, 15 logistics, 16 AI tech — each with its
+//  own migrate step.
 // ===========================================================================
 
 import { DAY_END_IGM, DAY_START_IGM } from "../core/clock";
@@ -71,9 +78,12 @@ import { isLegacyMoment } from "../data/flavor";
 import type { HiringPool, StaffMember } from "./staff";
 import {
   defaultSettings,
+  freshCityState,
   freshWorldEvents,
+  type CityState,
   type DayPhase,
   type DayStats,
+  type DistrictTally,
   type GameSettings,
   type GameState,
   type LegacyEntry,
@@ -81,7 +91,7 @@ import {
   type WorldEventsState,
 } from "./state";
 
-export const SAVE_VERSION = 6;
+export const SAVE_VERSION = 7;
 
 export interface SaveFile {
   version: number;
@@ -96,6 +106,7 @@ export interface SaveFile {
   pendingEra: 2 | 3 | 4 | null;
   legacy: LegacyEntry[];
   events: WorldEventsState;
+  city: CityState;
   stats: Record<string, number>;
   store: StoreState;
   hiring: HiringPool;
@@ -167,6 +178,14 @@ const MIGRATIONS: readonly ((file: RawSave) => RawSave)[] = [
     file.events = freshWorldEvents();
     return file;
   },
+  // 6 → 7 (milestone 12): the city map + living demand. A pre-city save
+  // routed everything from the hard-wired Old Town profile and *observed*
+  // nothing, so the neighborhood memory starts empty and fills in from the
+  // next played day — knowledge builds by playing, never retroactively (§17).
+  (file) => {
+    file.city = freshCityState();
+    return file;
+  },
 ];
 
 // --- Deep copies: a save must never alias live state, and a hydrated state
@@ -228,6 +247,18 @@ function copyEvents(events: WorldEventsState): WorldEventsState {
   };
 }
 
+function copyTallies(day: Record<string, DistrictTally>): Record<string, DistrictTally> {
+  return copyMap(day, (tally) => copyMap(tally, (line) => [line[0], line[1]] as [number, number]));
+}
+
+function copyCity(city: CityState): CityState {
+  return {
+    shareLog: [...city.shareLog],
+    today: copyTallies(city.today),
+    log: city.log.map(copyTallies),
+  };
+}
+
 function copyDayStats(stats: DayStats): DayStats {
   return {
     cashOpen: stats.cashOpen,
@@ -271,6 +302,7 @@ export function serialize(state: GameState): SaveFile {
     pendingEra: state.pendingEra,
     legacy: state.legacy.map((moment) => ({ ...moment })),
     events: copyEvents(state.events),
+    city: copyCity(state.city),
     stats: { ...state.stats },
     store: copyStore(state.store),
     hiring: copyHiring(state.hiring),
@@ -295,6 +327,7 @@ export function hydrate(file: SaveFile): GameState {
     pendingEra: file.pendingEra,
     legacy: file.legacy.map((moment) => ({ ...moment })),
     events: copyEvents(file.events),
+    city: copyCity(file.city),
     stats: { ...file.stats },
     store: copyStore(file.store),
     hiring: copyHiring(file.hiring),
@@ -417,6 +450,36 @@ function validate(file: RawSave): SaveFile {
     }
     if (typeof outage.hadGenerator !== "boolean" || typeof outage.ended !== "boolean") {
       reject("outage flags");
+    }
+  }
+
+  // §17 city memory (M12): the share log and observed windows are loop
+  // bounds for the reports panel and the trend math, and NaN slides through
+  // every range comparison — finiteness first, then bounds.
+  const city = requireObject(file.city, "city memory");
+  requireArray(city.shareLog, "share history");
+  if ((city.shareLog as unknown[]).length > 28) reject("a sane share history");
+  for (const value of city.shareLog as unknown[]) {
+    if (typeof value !== "number" || !Number.isFinite(value)) reject("readable share history");
+  }
+  requireArray(city.log, "observed demand");
+  if ((city.log as unknown[]).length > 27) reject("a sane observed-demand window");
+  for (const day of [city.today, ...(city.log as unknown[])]) {
+    const record = requireObject(day, "observed demand");
+    for (const tally of Object.values(record)) {
+      const lines = requireObject(tally, "district tallies");
+      for (const line of Object.values(lines)) {
+        if (
+          !Array.isArray(line) ||
+          line.length !== 2 ||
+          typeof line[0] !== "number" ||
+          !Number.isFinite(line[0]) ||
+          typeof line[1] !== "number" ||
+          !Number.isFinite(line[1])
+        ) {
+          reject("readable district tallies");
+        }
+      }
     }
   }
 

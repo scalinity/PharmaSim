@@ -126,6 +126,28 @@ export function freshWorldEvents(): WorldEventsState {
   };
 }
 
+/** One district's observed §17 script traffic: category id (or the OTC
+ *  visits key, sim/city.ts) → [asked, served]. Only what actually walked
+ *  through the door is recorded — the reports read knowledge, never the
+ *  generator (§17 "learn your neighborhood"). */
+export type DistrictTally = Record<string, [asked: number, served: number]>;
+
+/** §17 city memory (M12): the store's routed-share history and what it has
+ *  seen from each district. sim/city.ts owns every write. */
+export interface CityState {
+  /** Routed share of the whole city's demand, one entry per played day,
+   *  most recent first (≤28 — the trend windows). */
+  shareLog: number[];
+  /** Today's observed traffic, keyed by district id. */
+  today: Record<string, DistrictTally>;
+  /** Prior days, most recent first (≤27 — with today, the 28-day window). */
+  log: Record<string, DistrictTally>[];
+}
+
+export function freshCityState(): CityState {
+  return { shareLog: [], today: {}, log: [] };
+}
+
 /** One §15 reputation reason tallied for the receipt. */
 export interface RepReason {
   count: number;
@@ -200,6 +222,8 @@ export interface GameState {
   legacy: LegacyEntry[];
   /** §16 world events: the seeded schedule and today's active effects. */
   events: WorldEventsState;
+  /** §17 city memory: routed-share history + observed district demand (M12). */
+  city: CityState;
   /** Lifetime counters and milestone days (§24) — `license.L3` → day bought,
    *  `era.2` → day the renovation was signed. */
   stats: Record<string, number>;
@@ -316,6 +340,7 @@ export function createGameState(): GameState {
     pendingEra: null,
     legacy: [],
     events: freshWorldEvents(),
+    city: freshCityState(),
     stats: { "license.L1": 1 },
     store: {
       grid: { cols: 10, rows: 7, expansions: 0 },

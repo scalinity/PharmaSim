@@ -3435,6 +3435,502 @@ html.app-shell .topbar {
   line-height: 1.5;
 }
 
+/* ---- Scene fade (M12): the dip between store and city map ---- */
+
+/* Sits between the canvas and the HUD in document order: the world dips to
+   a warm paper-sage wash while the scene swaps; the HUD stays crisp. */
+.scenefade {
+  position: fixed;
+  inset: 0;
+  background: #e0ddcc;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 180ms var(--ease-out);
+}
+
+.scenefade--on {
+  opacity: 1;
+}
+
+/* ---- City overlay (§17, §28): street tags + the neighborhood card ---- */
+
+.cityui {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* Street tags: little paper labels pinned to each district's plate. */
+.cityui__tag {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 10px 4px;
+  background: var(--paper);
+  border: 1.5px solid var(--ink);
+  box-shadow: var(--chip-shadow);
+  font-family: var(--font-display);
+  font-size: 13px;
+  font-weight: var(--w-semibold);
+  white-space: nowrap;
+  rotate: -1.2deg;
+  transition: border-color var(--dur-fast) var(--ease-out);
+}
+
+.cityui__tags > .cityui__tag:nth-child(even) {
+  rotate: 1deg;
+}
+
+.cityui__tag--hot {
+  border-color: var(--pine);
+  box-shadow: 0 0 0 1px var(--pine), var(--chip-shadow);
+}
+
+.cityui__tagcross {
+  color: var(--pine);
+  font-size: 11px;
+  line-height: 1;
+}
+
+.cityui__hint {
+  position: absolute;
+  bottom: 74px;
+  left: 50%;
+  transform: translateX(-50%);
+  margin: 0;
+  padding: 4px 12px;
+  background: rgba(251, 248, 240, 0.82);
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--ink-75);
+  white-space: nowrap;
+}
+
+/* The neighborhood card: an index card pulled from the counter's file,
+   settling into the §28 right rail. The dark file tab carries the name. */
+.cityui__card {
+  position: absolute;
+  top: 84px;
+  right: 12px;
+  width: 288px;
+  max-height: calc(100% - 170px);
+  display: flex;
+  flex-direction: column;
+  pointer-events: none;
+  filter: var(--panel-shadow);
+  animation: paper-settle var(--dur) var(--ease-out) both;
+}
+
+.cityui__tab {
+  align-self: flex-start;
+  margin-left: 10px;
+  padding: 5px 16px 4px;
+  background: var(--ink);
+  clip-path: polygon(6px 0, calc(100% - 6px) 0, 100% 100%, 0 100%);
+}
+
+.cityui__tabname {
+  font-family: var(--font-display);
+  font-size: var(--fs-16);
+  font-weight: var(--w-semibold);
+  color: var(--paper);
+}
+
+.cityui__body {
+  background: var(--ink);
+  padding: var(--panel-border);
+  clip-path: polygon(
+    0 0,
+    calc(100% - var(--panel-notch)) 0,
+    100% var(--panel-notch),
+    100% 100%,
+    0 100%
+  );
+  overflow-y: auto;
+}
+
+/* One paper sheet inside the ink border: every child paints on paper and
+   pads consistently — simpler than an inner wrapper fighting the scroll. */
+.cityui__body > * {
+  background: var(--paper);
+}
+
+.cityui__body > :first-child {
+  padding-top: 14px;
+}
+
+.cityui__body > :last-child {
+  padding-bottom: 16px;
+}
+
+.cityui__eyebrow,
+.cityui__facts,
+.cityui__character,
+.cityui__facilities,
+.cityui__mixhead,
+.cityui__mixrow,
+.cityui__otcline,
+.cityui__empty,
+.cityui__storehead,
+.cityui__share,
+.cityui__sharenote {
+  margin: 0;
+  padding: 0 16px;
+}
+
+.cityui__eyebrow {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-75);
+  padding-bottom: 4px;
+}
+
+.cityui__facts {
+  display: flex;
+  gap: 6px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  padding-bottom: 6px;
+}
+
+.cityui__dot {
+  color: var(--ink-60);
+}
+
+.cityui__character {
+  font-size: var(--fs-12);
+  line-height: 1.5;
+  color: var(--ink-75);
+  padding-bottom: 8px;
+}
+
+.cityui__facilities {
+  list-style: none;
+  padding-bottom: 8px;
+}
+
+.cityui__facility {
+  position: relative;
+  padding-left: 12px;
+  font-size: var(--fs-12);
+  line-height: 1.55;
+}
+
+.cityui__facility::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.62em;
+  width: 5px;
+  height: 5px;
+  background: var(--pine);
+}
+
+.cityui__mixhead {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-75);
+  padding-top: 6px;
+  padding-bottom: 5px;
+  border-top: 1px dashed var(--ink-25);
+}
+
+.cityui__mixrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 4px;
+}
+
+.cityui__mixname {
+  width: 86px;
+  flex: none;
+  font-size: var(--fs-12);
+}
+
+.cityui__barwrap {
+  flex: 1;
+  height: 6px;
+  background: rgba(32, 48, 43, 0.08);
+}
+
+.cityui__bar {
+  display: block;
+  height: 100%;
+  background: var(--pine);
+}
+
+.cityui__mixnum {
+  width: 26px;
+  flex: none;
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+}
+
+.cityui__otcline {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-75);
+  padding-top: 4px;
+}
+
+.cityui__empty {
+  font-size: var(--fs-12);
+  line-height: 1.5;
+  color: var(--ink-75);
+  padding-bottom: 4px;
+}
+
+.cityui__storehead {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--font-display);
+  font-size: var(--fs-14);
+  font-weight: var(--w-semibold);
+  padding-top: 10px;
+  padding-bottom: 4px;
+  border-top: 1px dashed var(--ink-25);
+  margin-top: 8px;
+}
+
+.cityui__share {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.cityui__sharenum {
+  font-family: var(--font-mono);
+  font-size: var(--fs-16);
+  font-weight: var(--w-semibold);
+}
+
+.cityui__arrow {
+  font-family: var(--font-mono);
+  font-size: var(--fs-14);
+}
+
+.cityui__arrow--up {
+  color: var(--pine);
+}
+
+.cityui__arrow--down {
+  color: var(--rose);
+}
+
+.cityui__sharecap {
+  font-size: 11px;
+  color: var(--ink-75);
+}
+
+.cityui__sharenote {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-75);
+  padding-top: 2px;
+}
+
+/* ---- Reports (§17, §28): the market ledger ---- */
+
+.reportswrap {
+  position: absolute;
+  /* Below the wire strip: the centered sheet would otherwise run its
+     eyebrow under the ticker tape. */
+  top: 104px;
+  bottom: 76px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(780px, calc(100% - 24px));
+  z-index: 15;
+  pointer-events: none;
+}
+
+.reports {
+  /* asked-for · asked · filled · short · trend */
+  --rcols: minmax(140px, 1fr) 64px 64px 92px 56px;
+  height: 100%;
+  pointer-events: auto;
+}
+
+.reports .panel__inner {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  padding: 14px 0 0;
+}
+
+.reports__top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 0 20px;
+}
+
+.reports__eyebrow {
+  margin: 0 0 2px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-75);
+}
+
+.reports .panel__title {
+  margin: 0 0 10px;
+}
+
+.reports__share {
+  padding: 3px 10px;
+  border: 1.5px solid var(--ink);
+  border-radius: 999px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.reports__head {
+  display: grid;
+  grid-template-columns: var(--rcols);
+  gap: 7px;
+  padding: 8px 20px 4px;
+  border-bottom: 1.5px solid var(--ink);
+}
+
+.reports__col {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-75);
+  text-align: right;
+}
+
+.reports__col--name {
+  text-align: left;
+}
+
+.reports__list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-bottom: 8px;
+}
+
+.reports__district {
+  padding: 10px 0 4px;
+  border-bottom: 1px dashed var(--ink-25);
+}
+
+.reports__districtname {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 4px;
+  padding: 0 20px;
+  font-family: var(--font-display);
+  font-size: var(--fs-14);
+  font-weight: var(--w-semibold);
+}
+
+/* The same tint the district's blocks wear on the map — one city, one ink. */
+.reports__swatch {
+  width: 10px;
+  height: 10px;
+  border: 1px solid var(--ink-25);
+}
+
+.reports__row {
+  display: grid;
+  grid-template-columns: var(--rcols);
+  align-items: baseline;
+  gap: 7px;
+  padding: 2px 20px;
+}
+
+/* Green-bar ledger striping, like the receipt's book (§28). */
+.reports__row:nth-child(odd) {
+  background: rgba(47, 107, 79, 0.05);
+}
+
+.reports__row--front .reports__name {
+  color: var(--ink-75);
+  font-style: italic;
+}
+
+.reports__name {
+  font-size: var(--fs-12);
+}
+
+.reports__num {
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  text-align: right;
+}
+
+/* The discovery stamp: demand you saw and couldn't fill reads rose. */
+.reports__num--short {
+  color: var(--rose);
+  font-weight: var(--w-semibold);
+}
+
+.reports__num--zero {
+  color: var(--ink-25);
+}
+
+.reports__trend {
+  font-family: var(--font-mono);
+  font-size: var(--fs-12);
+  text-align: right;
+}
+
+.reports__trend--up {
+  color: var(--pine);
+}
+
+.reports__trend--down {
+  color: var(--rose);
+}
+
+.reports__trend--none {
+  color: var(--ink-25);
+}
+
+.reports__trend--new {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--amber);
+}
+
+.reports__none {
+  margin: 0;
+  padding: 2px 20px 6px;
+  font-size: var(--fs-12);
+  color: var(--ink-75);
+}
+
+.reports__foot {
+  margin: 0;
+  padding: 8px 20px 12px;
+  border-top: 1.5px solid var(--ink);
+  font-size: 11px;
+  line-height: 1.5;
+  color: var(--ink-75);
+}
+
 /* ---- Reduced motion ---- */
 
 @media (prefers-reduced-motion: reduce) {

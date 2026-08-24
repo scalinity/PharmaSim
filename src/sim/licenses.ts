@@ -3,7 +3,6 @@
 // the §17 demand generator draw — generation only emits SKUs the store could
 // actually fill; unlicensed demand implicitly goes elsewhere. Pure sim.
 
-import type { District } from "../data/districts";
 import { DRUG_DEFS, type DrugDef } from "../data/drugs";
 import { hasFridge } from "./coldchain";
 import type { GameState } from "./state";
@@ -153,30 +152,4 @@ export function canFillDrug(state: GameState, def: DrugDef): boolean {
 
 export function fillableDrugs(state: GameState): DrugDef[] {
   return DRUG_DEFS.filter((def) => canFillDrug(state, def));
-}
-
-/** Total §25 demand weight per category — the whole pool a category's daily
- *  scripts spread across, licensed or not. */
-const CATEGORY_WEIGHT: Record<string, number> = {};
-for (const def of DRUG_DEFS) {
-  CATEGORY_WEIGHT[def.category] = (CATEGORY_WEIGHT[def.category] ?? 0) + def.demandWeight;
-}
-
-/**
- * §17 generation, sliced to one drug: the district's daily scripts for the
- * drug's category (pop × prevalence + facility bonuses), split across the
- * category's SKUs by demand weight. Scripts for SKUs the store can't fill are
- * simply never routed here — no artificial multiplier, more fillable
- * categories = more scripts (§17, milestone 08).
- *
- * This is pure district math, not licensing — it lives beside its first
- * consumer (fillableDrugs) until milestone 12 builds the §17 demand module,
- * and CATEGORY_WEIGHT above moves with it.
- */
-export function drugDailyDemand(district: District, def: DrugDef): number {
-  let perDay = (district.population / 1000) * (district.prevalence[def.category] ?? 0);
-  for (const facility of district.facilities) {
-    perDay += facility.bonus[def.category] ?? 0;
-  }
-  return (perDay * def.demandWeight) / CATEGORY_WEIGHT[def.category]!;
 }

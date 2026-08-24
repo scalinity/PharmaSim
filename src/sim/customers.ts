@@ -10,11 +10,20 @@
 import { DAY_START_IGM, IGM_PER_TICK } from "../core/clock";
 import { cellIndex, doorCells, FACING, footprintRect } from "../core/grid";
 import { Pathfinder } from "../core/pathfind";
-import { districtById } from "../data/districts";
-import { drugDef, TIER1_DRUGS } from "../data/drugs";
+import { drugDef } from "../data/drugs";
 import { furnitureDef } from "../data/furniture";
 import { randomFullName } from "../data/names";
 import { otcDef } from "../data/otc";
+import {
+  drawScriptDrugIn,
+  OTC_TALLY_KEY,
+  planCityDay,
+  recordSeen,
+  recordServed,
+  type CityDayPlan,
+  type OtcDemandSlice,
+  type RxDemandSlice,
+} from "./city";
 import {
   VACCINE_DOSE_ID,
   VACCINE_IGM,
@@ -25,8 +34,7 @@ import {
 } from "./coldchain";
 import { COPAY, post, STORE_DISTRICT_ID } from "./economy";
 import type { SimEvent } from "./events";
-import { otcDemandMult, rxDemandMult, vaccineWalkinMult, visitorMult } from "./events-world";
-import { drugDailyDemand, fillableDrugs } from "./licenses";
+import { otcDemandMult, vaccineWalkinMult, visitorMult } from "./events-world";
 import {
   balksAt,
   otcPrice,
@@ -91,6 +99,9 @@ export interface Customer {
   name: string;
   archetype: Archetype;
   kind: CustomerKind;
+  /** §17: the district whose demand routed this visit here — the observed-
+   *  demand memory files what they ask for under it. */
+  districtId: string;
   mode: CustomerMode;
   /** Active RxScript id, or 0 (Rx patients only). */
   scriptId: number;
@@ -150,29 +161,6 @@ export const RUSH_WINDOWS: readonly (readonly [number, number])[] = [
   [1020, 1140], // 17:00–19:00
 ];
 const RUSH_MULT = 1.6;
-
-/**
- * The store's slice of Old Town demand until §17 routing lands (M12/13),
- * tuned to the §26 baseline: 20 visitors/day at 2.5★ with the Tier-1
- * formulary, mixed ~65% OTC / ~35% Rx. OTC intent and Rx generation are
- * separate §17 streams, so each gets its own share constant — and the Rx
- * side is anchored to Tier-1 coverage, which is what makes a new license
- * grow the day naturally: more fillable categories, more scripts routed
- * here, no artificial multiplier (milestone 08).
- */
-const BASE_OTC_VISITORS = 13; // 20 × 0.65 (§26 mix)
-const BASE_RX_VISITORS = 7; // 20 × 0.35
-const OLD_TOWN = districtById(STORE_DISTRICT_ID);
-const OTC_SHARE = BASE_OTC_VISITORS / ((OLD_TOWN.population / 1000) * OLD_TOWN.otcIntent);
-// Anchored to the same predicate the generator draws with (fillableDrugs at
-// L1 = Tier 1 minus refrigerated), so a future cold-chain Tier-1 SKU can't
-// silently detune the baseline.
-const RX_SHARE_TUNE =
-  BASE_RX_VISITORS /
-  TIER1_DRUGS.filter((def) => !def.refrigerated).reduce(
-    (sum, def) => sum + drugDailyDemand(OLD_TOWN, def),
-    0,
-  );
 
 const WALK_SPEED = 0.5; // cells per igm ≈ 1.2 m/s at 1×
 const ANGRY_SPEED = 0.68;
@@ -286,8 +274,12 @@ export class CustomerSystem {
    *  exists — the §7 mix's 5% slice, kept apart from the demand streams. */
   private vaccineArrivals: number[] = [];
   private vaccineIdx = 0;
-  /** Today's Rx slice of the visitor mix — set by beginDay from formulary
-   *  breadth (§17); starts at the §26 baseline for a mid-morning load. */
+  /** Today's routed demand slices from the §17 city model (sim/city.ts) —
+   *  spawn draws each visitor's district (and Rx category) from them. Null
+   *  until the first beginDay of the session. */
+  private plan: CityDayPlan | null = null;
+  /** Today's Rx slice of the visitor mix — set by beginDay from the routed
+   *  streams (§17); starts at the §26 baseline for a mid-morning load. */
   private rxShare = 0.35;
   private stressLevel = 0; // 0..3 → ×1 / ×3 / ×9 / ×27 spawn multiplier
   private pathScratch: number[] = [];
@@ -387,24 +379,26 @@ export class CustomerSystem {
   // --- Day scheduling (§7, §17, §26) ---
 
   beginDay(state: GameState): void {
-    // Two §17 streams share the day: OTC intent, and the Rx scripts the
-    // store's licenses and equipment can actually capture (§12, milestone 08).
-    // §16 seasons lean on the Rx side per category — flu season's ×1.8 on
+    // §17 (milestone 12): the day's demand routes from the city model —
+    // every district's generation, sliced to what this store could fill,
+    // scaled by the store's share of that district. §16 seasons ride the
+    // generation per category and per district, so flu season's ×1.8 on
     // respiratory and antibiotics genuinely brings more patients through
     // the door, the same way a new license does.
-    const otcVisitors = (OLD_TOWN.population / 1000) * OLD_TOWN.otcIntent * OTC_SHARE;
-    let rxVisitors = 0;
-    for (const def of fillableDrugs(state)) {
-      rxVisitors += drugDailyDemand(OLD_TOWN, def) * rxDemandMult(state, def.category);
-    }
-    rxVisitors *= RX_SHARE_TUNE;
-    this.rxShare = rxVisitors / (otcVisitors + rxVisitors);
+    const plan = planCityDay(state);
+    this.plan = plan;
+    const routed = plan.otcTotal + plan.rxTotal;
+    this.rxShare = routed > 0 ? plan.rxTotal / routed : 0;
 
+    // §15/§26 interplay: reputation moves the door twice, by design — the
+    // §17 routing share (how much of each district comes here at all) and
+    // the §7 repMult on the whole schedule. Both sit at ×1 at the 2.5★
+    // baseline, so the §26 20/day emerges untouched.
     const repMult = 0.4 + 0.24 * state.repStars;
     const dayNoise = randRange(0.85, 1.15);
     // §16/§26 on the whole door: the summer lull, the winter crowd, and a
     // storm day's ×0.6 all scale today's schedule.
-    let n = Math.round((otcVisitors + rxVisitors) * repMult * dayNoise * visitorMult(state));
+    let n = Math.round(routed * repMult * dayNoise * visitorMult(state));
     n *= 3 ** this.stressLevel;
     this.arrivals = this.sampleArrivals(n, DAY_START_IGM);
     this.arrivalIdx = 0;
@@ -1105,6 +1099,10 @@ export class CustomerSystem {
       if (worker?.charming) applyRep(state, REP_CHARMING, emit, REP_REASONS.charming);
     }
 
+    // §17 neighborhood memory: the script was served (an uncaught error is
+    // still "refunded and refilled", §8 — the demand was met, badly).
+    recordServed(state, c.districtId, drug.category);
+
     emit({ type: "rx.pickedUp", scriptId: script.id, total: cashDelta, counseled: counsel !== null });
     this.workflow.finish(script, emit);
     c.scriptId = 0;
@@ -1149,6 +1147,7 @@ export class CustomerSystem {
       name: "",
       archetype: "steady",
       kind: "otc",
+      districtId: STORE_DISTRICT_ID,
       mode: "enter",
       scriptId: 0,
       waitIgm: 0,
@@ -1234,18 +1233,33 @@ export class CustomerSystem {
     c.offY = door[1];
     c.hasOffTarget = true;
 
-    // §26 mix, ~35% Rx at the Tier-1 baseline; today's actual split follows
-    // formulary breadth (§17). Rx needs a service counter to drop off at.
+    // §26 mix, ~35% Rx at the baseline; today's actual split follows the
+    // routed §17 streams. Rx needs a service counter to drop off at.
     // Vaccine walk-ins arrive on their own §14 schedule, already decided.
+    c.kind = "otc";
+    c.districtId = STORE_DISTRICT_ID;
     if (kind === "vaccine") {
       c.kind = "vaccine";
-    } else {
-      const counterExists = state.store.furniture.some((f) => f.defId === "counter_service");
-      c.kind = counterExists && Math.random() < this.rxShare ? "rx" : "otc";
+    } else if (
+      state.store.furniture.some((f) => f.defId === "counter_service") &&
+      Math.random() < this.rxShare
+    ) {
+      // §17: the script is a district's routed demand — draw which district
+      // and category sent them, then the SKU inside it. A coverage change
+      // since the plan was made (cabinet sold mid-shift) can leave a routed
+      // category unfillable; that visitor browses the front store instead.
+      const slice = this.drawRxSlice();
+      const drug = slice ? drawScriptDrugIn(state, slice.category) : null;
+      if (slice && drug) {
+        c.kind = "rx";
+        c.districtId = slice.districtId;
+        c.scriptId = this.workflow.createScript(c.id, c.name, drug).id;
+        recordSeen(state, c.districtId, slice.category);
+      }
     }
-    if (c.kind === "rx") {
-      c.scriptId = this.workflow.createScript(state, c.id, c.name).id;
-    } else if (c.kind === "otc") {
+    if (c.kind === "otc") {
+      c.districtId = this.drawOtcDistrict()?.districtId ?? STORE_DISTRICT_ID;
+      recordSeen(state, c.districtId, OTC_TALLY_KEY);
       this.pickShelfTargets(state, c, def.targetsMin, def.targetsMax);
     }
 
@@ -1253,6 +1267,30 @@ export class CustomerSystem {
     this.archetypeCounts[def.id]++;
     state.dayStats.visitors++;
     emit({ type: "customer.spawned", id: c.id, archetype: c.archetype });
+  }
+
+  /** Weighted draw over today's routed Rx slices (district × category, §17). */
+  private drawRxSlice(): RxDemandSlice | null {
+    const plan = this.plan;
+    if (!plan || plan.rxTotal <= 0) return null;
+    let u = Math.random() * plan.rxTotal;
+    for (const slice of plan.rx) {
+      u -= slice.count;
+      if (u <= 0) return slice;
+    }
+    return plan.rx[plan.rx.length - 1] ?? null;
+  }
+
+  /** Weighted draw over today's routed OTC intent (§17). */
+  private drawOtcDistrict(): OtcDemandSlice | null {
+    const plan = this.plan;
+    if (!plan || plan.otcTotal <= 0) return null;
+    let u = Math.random() * plan.otcTotal;
+    for (const slice of plan.otc) {
+      u -= slice.count;
+      if (u <= 0) return slice;
+    }
+    return plan.otc[plan.otc.length - 1] ?? null;
   }
 
   /** Target 1–n stocked shelves weighted by remaining units (§7). */
@@ -1646,6 +1684,8 @@ export class CustomerSystem {
     state.dayStats.otcUnits += c.basket.length;
     for (const line of c.basket) recordSale(state.store, line.skuId, 1);
     post(state, "otc.sale", total, emit);
+    // §17 neighborhood memory: a rung-up front-store visit counts served.
+    recordServed(state, c.districtId, OTC_TALLY_KEY);
     emit({ type: "sale.completed", customerId: c.id, items: c.basket.length, total });
     applyRep(state, REP_SERVE, emit, REP_REASONS.serve); // happy serve (§15)
     const worker = c.laneId ? this.stationWorker(state, c.laneId) : null;

@@ -87,5 +87,3 @@ export function drugDef(id: string): DrugDef {
   if (!def) throw new Error(`Unknown drug def: ${id}`);
   return def;
 }
-
-export const TIER1_DRUGS: readonly DrugDef[] = DRUG_DEFS.filter((def) => def.tier === 1);

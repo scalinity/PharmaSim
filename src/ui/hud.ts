@@ -41,6 +41,7 @@ import { createLicensesPanel } from "./screens/licensesPanel";
 import { createOrdersPanel } from "./screens/ordersPanel";
 import { buildReceipt } from "./screens/receipt";
 import { createRenovatePanel } from "./screens/renovatePanel";
+import { createReportsPanel } from "./screens/reportsPanel";
 import { createStaffPanel } from "./screens/staffPanel";
 
 const STAR_GLYPHS = "★★★★★";
@@ -53,6 +54,12 @@ export interface BuildSelectionInfo {
 export interface BuildControls {
   selectDef(defId: string | null): void;
   beginMove(): void;
+}
+
+/** The §28 city view — a render-layer scene swap main.ts owns; the HUD
+ *  holds its dock pill, its key, and its place in the Escape order. */
+export interface CityControls {
+  toggle(): void;
 }
 
 export interface HudHandle {
@@ -69,6 +76,10 @@ export interface HudHandle {
   selectionChanged(selection: BuildSelectionInfo | null): void;
   /** Late-bound because the picking controller is created after the HUD. */
   bindBuild(controls: BuildControls): void;
+  /** Late-bound: the city scene toggle lives beside the renderer (main.ts). */
+  bindCity(controls: CityControls): void;
+  /** Reflect the scene actually shown: pill pressed state + Escape order. */
+  setCityActive(on: boolean): void;
   /** Register hover hint (null clears; a worked station overrides it). */
   stationHint(text: string | null): void;
   /** OTC shelf under the pointer: its price tags + restock card (§11). */
@@ -156,6 +167,8 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
   const state = sim.snapshot;
   let lastRunSpeed: GameSpeed = state.speed === 0 ? 1 : state.speed;
   let build: BuildControls | null = null;
+  let city: CityControls | null = null;
+  let cityActive = false;
   let selection: BuildSelectionInfo | null = null;
 
   // --- Top bar ---
@@ -262,6 +275,9 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
   );
   buildPill.addEventListener("pointerdown", (e) => e.preventDefault());
   buildPill.addEventListener("click", () => {
+    // Build happens on the shop floor: asking for it from the city map
+    // walks back inside first (the swap itself also exits any build state).
+    if (cityActive) city?.toggle();
     sim.dispatch({ type: sim.snapshot.buildMode ? "build.exit" : "build.enter" });
   });
 
@@ -287,6 +303,17 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
   teamPill.addEventListener("pointerdown", (e) => e.preventDefault());
   teamPill.addEventListener("click", () => togglePanel("team"));
 
+  const reportsPill = h(
+    "button",
+    {
+      cls: "pill pill--secondary pill--dock",
+      attrs: { type: "button", "aria-pressed": "false", "aria-label": "Reports (R)" },
+    },
+    [h("span", { cls: "keycap", attrs: { "aria-hidden": "true" }, text: "R" }), "Reports"],
+  );
+  reportsPill.addEventListener("pointerdown", (e) => e.preventDefault());
+  reportsPill.addEventListener("click", () => togglePanel("reports"));
+
   const licensesPill = h(
     "button",
     {
@@ -297,6 +324,19 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
   );
   licensesPill.addEventListener("pointerdown", (e) => e.preventDefault());
   licensesPill.addEventListener("click", () => togglePanel("licenses"));
+
+  // The City pill is a scene swap, not a dock sheet (§28) — main.ts owns
+  // the toggle; the pill just asks for it and mirrors the shown scene.
+  const cityPill = h(
+    "button",
+    {
+      cls: "pill pill--secondary pill--dock",
+      attrs: { type: "button", "aria-pressed": "false", "aria-label": "City (C)" },
+    },
+    [h("span", { cls: "keycap", attrs: { "aria-hidden": "true" }, text: "C" }), "City"],
+  );
+  cityPill.addEventListener("pointerdown", (e) => e.preventDefault());
+  cityPill.addEventListener("click", () => city?.toggle());
 
   const renovatePill = h(
     "button",
@@ -320,11 +360,15 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
   legacyPill.addEventListener("pointerdown", (e) => e.preventDefault());
   legacyPill.addEventListener("click", () => togglePanel("legacy"));
 
+  // §28 dock order: B build · O orders · T team · R reports · L licenses ·
+  // C city, with the two later arrivals (V renovate, G legacy) after.
   const dock = h("div", { cls: "dock" }, [
     buildPill,
     ordersPill,
     teamPill,
+    reportsPill,
     licensesPill,
+    cityPill,
     renovatePill,
     legacyPill,
   ]);
@@ -420,15 +464,17 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
 
   const orders = createOrdersPanel(sim, bus);
   const team = createStaffPanel(sim, bus);
+  const reports = createReportsPanel(sim, bus);
   const licenses = createLicensesPanel(sim, bus);
   const renovate = createRenovatePanel(sim, bus);
   const legacy = createLegacyPanel(sim, bus);
 
   /** The dock's sheets, one registry: each pairs its panel with its pill. */
-  type PanelName = "orders" | "team" | "licenses" | "renovate" | "legacy";
+  type PanelName = "orders" | "team" | "reports" | "licenses" | "renovate" | "legacy";
   const panels: Record<PanelName, { handle: { setVisible(on: boolean): void }; pill: HTMLButtonElement }> = {
     orders: { handle: orders, pill: ordersPill },
     team: { handle: team, pill: teamPill },
+    reports: { handle: reports, pill: reportsPill },
     licenses: { handle: licenses, pill: licensesPill },
     renovate: { handle: renovate, pill: renovatePill },
     legacy: { handle: legacy, pill: legacyPill },
@@ -597,6 +643,7 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     palette.root,
     orders.root,
     team.root,
+    reports.root,
     licenses.root,
     renovate.root,
     legacy.root,
@@ -905,10 +952,21 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
       sim.dispatch({ type: "speed.set", speed: 1 });
     } else if (e.key === "2") {
       sim.dispatch({ type: "speed.set", speed: 2 });
+    } else if (e.code === "KeyB" && !e.repeat && cityActive) {
+      // The store's own B handler (render/picking.ts) sleeps under the map;
+      // from here the key walks back inside and opens the build sheet.
+      city?.toggle();
+      sim.dispatch({ type: "build.enter" });
     } else if (e.code === "KeyO" && !e.repeat) {
       togglePanel("orders");
     } else if (e.code === "KeyT" && !e.repeat) {
       togglePanel("team");
+    } else if (e.code === "KeyR" && !e.repeat) {
+      // While a build ghost is held, R belongs to rotation (render/picking);
+      // setPanel refuses in build mode anyway, so the toggle is inert there.
+      togglePanel("reports");
+    } else if (e.code === "KeyC" && !e.repeat) {
+      city?.toggle();
     } else if (e.code === "KeyL" && !e.repeat) {
       togglePanel("licenses");
     } else if (e.code === "KeyV" && !e.repeat) {
@@ -949,6 +1007,11 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
         setPanel(null);
         return true;
       }
+      // The city map goes down before Escape means "pause" (§28).
+      if (cityActive) {
+        city?.toggle();
+        return true;
+      }
       // Build mode owns Escape for its ghost, selection and its own exit
       // (render/picking.ts) — it consumes the key.
       return sim.snapshot.buildMode;
@@ -957,6 +1020,15 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     selectionChanged: (next) => setSelection(next),
     bindBuild: (controls) => {
       build = controls;
+    },
+    bindCity: (controls) => {
+      city = controls;
+    },
+    setCityActive: (on) => {
+      cityActive = on;
+      cityPill.classList.toggle("pill--primary", on);
+      cityPill.classList.toggle("pill--secondary", !on);
+      cityPill.setAttribute("aria-pressed", String(on));
     },
     stationHint: (text) => {
       hoverHint = text;

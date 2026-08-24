@@ -11,6 +11,8 @@ const PITCH_MAX = MathUtils.degToRad(65);
 // a short window — enough to see that a label exists, not enough to tell
 // Amlodipine from Lisinopril. The floor sits under the fill glide (main.ts)
 // so the wheel can lean in until a name is a readable line of Plex Mono.
+// These are the *store* clamps — the city view swaps in wider ones (§28)
+// via setViewClamp and swaps these back on return.
 const VIEW_MIN = 2;
 const VIEW_MAX = 30;
 const CAMERA_DIST = 45;
@@ -20,6 +22,14 @@ const KEY_PAN_SPEED = 0.9; // viewport heights per second
 const DAMPING = 9; // 1/s
 
 const PAN_KEYS = new Set(["KeyW", "KeyA", "KeyS", "KeyD"]);
+
+/** A framing the rig can be sent back to (scene toggling, main.ts). */
+export interface CameraPose {
+  target: Vector3;
+  viewHeight: number;
+  yaw: number;
+  pitch: number;
+}
 
 export class CameraRig {
   readonly camera: OrthographicCamera;
@@ -32,6 +42,8 @@ export class CameraRig {
   private goalPitch = this.pitch;
   private viewHeight = 14;
   private goalViewHeight = this.viewHeight;
+  private viewMin = VIEW_MIN;
+  private viewMax = VIEW_MAX;
   private aspect = 1;
 
   private heldKeys = new Set<string>();
@@ -92,7 +104,7 @@ export class CameraRig {
       };
     }
     this.goalTarget.copy(aim);
-    this.goalViewHeight = MathUtils.clamp(viewHeight, VIEW_MIN, VIEW_MAX);
+    this.goalViewHeight = MathUtils.clamp(viewHeight, this.viewMin, this.viewMax);
     if (faceYaw !== undefined) {
       // Take the short way round from wherever the player left the camera.
       const turn = MathUtils.euclideanModulo(faceYaw - this.yaw + Math.PI, TAU) - Math.PI;
@@ -114,6 +126,45 @@ export class CameraRig {
   /** Drift the yaw on its own, in rad/s; 0 stops it. */
   setAutoOrbit(radPerSecond: number): void {
     this.autoOrbit = radPerSecond;
+  }
+
+  /** Swap the zoom clamps (§28 city view: same rig, wider limits). The
+   *  current goal is pulled inside the new range so the wheel never sticks. */
+  setViewClamp(min: number, max: number): void {
+    this.viewMin = min;
+    this.viewMax = max;
+    this.goalViewHeight = MathUtils.clamp(this.goalViewHeight, min, max);
+  }
+
+  /** Swap the frustum depth range with the scene. The store keeps near = 1
+   *  so its own south wall culls behind the camera; the city's wide zoom
+   *  needs a negative near or the map's close edge clips away at full
+   *  zoom-out (ground depth runs 45 − halfH·cot-ish below the rig's fixed
+   *  camera distance). */
+  setDepthRange(near: number, far: number): void {
+    this.camera.near = near;
+    this.camera.far = far;
+    this.camera.updateProjectionMatrix();
+  }
+
+  /** Where the rig is headed — saved by the scene toggle (main.ts) so each
+   *  scene keeps its own framing across swaps. */
+  getPose(): CameraPose {
+    return {
+      target: this.goalTarget.clone(),
+      viewHeight: this.goalViewHeight,
+      yaw: this.goalYaw,
+      pitch: this.goalPitch,
+    };
+  }
+
+  /** Aim the rig at a saved pose. The smooth damping carries it there; the
+   *  scene fade hides most of the trip. */
+  setPose(pose: CameraPose): void {
+    this.goalTarget.copy(pose.target);
+    this.goalViewHeight = MathUtils.clamp(pose.viewHeight, this.viewMin, this.viewMax);
+    this.goalYaw = pose.yaw;
+    this.goalPitch = MathUtils.clamp(pose.pitch, PITCH_MIN, PITCH_MAX);
   }
 
   update(dtMs: number): void {
@@ -203,8 +254,8 @@ export class CameraRig {
     e.preventDefault();
     this.goalViewHeight = MathUtils.clamp(
       this.goalViewHeight * Math.exp(e.deltaY * ZOOM_SPEED),
-      VIEW_MIN,
-      VIEW_MAX,
+      this.viewMin,
+      this.viewMax,
     );
   }
 }
