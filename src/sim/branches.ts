@@ -359,7 +359,10 @@ export function resolveBranchDay(
   const served = rxServed + otcUnits;
   const missed = stockOuts + capacityMissed;
   const rate = served + missed === 0 ? 1 : served / (served + missed);
-  pushHistory(store, rate, gross);
+  // Banked net of refunds: rollHistory's gross is the ledger's revenue
+  // group, which the visited day's refunds already reduced — the bank's
+  // credit line must read one number across the network.
+  pushHistory(store, rate, revenue);
 
   store.daySummary = {
     day: state.day,
