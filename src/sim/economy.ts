@@ -52,7 +52,7 @@ export const LEDGER_REASONS = [
   { id: "branch.purchase", group: "cost", label: "Branch purchase" },
   /** §20: the depot building and the garage's vans (M15). */
   { id: "dc.purchase", group: "cost", label: "Distribution center" },
-  { id: "truck.purchase", group: "cost", label: "Trucks" },
+  { id: "truck.purchase", group: "cost", label: "Vans" },
   { id: "renovation", group: "cost", label: "Renovation" },
   { id: "bank.draw", group: "financing", label: "Credit line draw" },
   { id: "bank.payment", group: "financing", label: "Credit line payment" },
