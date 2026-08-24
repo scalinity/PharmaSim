@@ -107,9 +107,11 @@ export function buildReceipt(sim: Sim, onNextDay: () => void): HTMLElement {
 
   // §18 market note: one line, only when the day moved a district's share
   // meaningfully (±2 points against the last played day) — the biggest
-  // mover speaks for the market.
+  // mover speaks for the market. A renovation day never planned (the log's
+  // top entries are two *earlier* days), so its receipt stays quiet rather
+  // than reprinting last night's move.
   const shareDays = state.city.districtShareLog;
-  if (shareDays.length >= 2) {
+  if (state.pendingEra === null && shareDays.length >= 2) {
     let moverId: string | null = null;
     let moverDelta = 0;
     for (const districtId of Object.keys(shareDays[0]!)) {
