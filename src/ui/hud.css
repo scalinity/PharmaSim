@@ -4868,3 +4868,11 @@ html.app-shell .topbar {
 .cityui__yarddoor {
   padding: 8px 16px 4px;
 }
+
+/* A stop with bare depot shelves behind it says why it can't be drafted. */
+.van__noline {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  color: var(--ink-60);
+}

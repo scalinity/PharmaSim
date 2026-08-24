@@ -268,7 +268,17 @@ export function createDepotPanel(sim: Sim, bus: EventBus<SimEvent>): DepotPanelH
     const options = Object.keys(dc.stock)
       .filter((skuId) => dc.stock[skuId]! > 0 && !lined.has(skuId))
       .sort((a, b) => nameOf(a).localeCompare(nameOf(b)));
-    if (options.length === 0) return null;
+    if (options.length === 0) {
+      // Bare shelves must say so — a stop with nothing to allocate would
+      // otherwise read as finished drafting instead of waiting on stock.
+      if (dcHeldUnits(dc) === 0 && stop.lines.length === 0) {
+        return h("p", {
+          cls: "van__noline",
+          text: "Nothing on the shelves to pick from — the Orders sheet's Depot scope buys stock.",
+        });
+      }
+      return null;
+    }
 
     const select = h("select", {
       cls: "van__select",

@@ -343,9 +343,19 @@ export function runTruckRoutes(
 
     truck.lastRunDay = state.day;
     // Transfers are one-shot corrections, not standing orders — the run
-    // takes them off the manifest, along with any stop left without duty.
+    // takes them off the manifest, and a line-less stop that existed for a
+    // transfer's pickup or drop goes with them. A stop the player drafted
+    // keeps its place even before it carries a picking line: the manifest
+    // is the player's standing draft, and the morning must not eat it.
+    const transferStops = new Set<string>();
+    for (const t of truck.transfers) {
+      transferStops.add(t.fromStoreId);
+      transferStops.add(t.toStoreId);
+    }
     truck.transfers = [];
-    truck.route = truck.route.filter((stop) => stop.lines.length > 0);
+    truck.route = truck.route.filter(
+      (stop) => stop.lines.length > 0 || !transferStops.has(stop.storeId),
+    );
   }
 
   // §22: the first stock moved between your own stores is a moment.
