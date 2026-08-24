@@ -170,7 +170,18 @@ function rollCandidate(
  */
 export function refreshHiringPool(state: GameState): boolean {
   const monday = mondayOf(state.day);
-  if (state.hiring.refreshedOnDay >= monday) return false;
+  // A pool drawn before a role became hireable (a pre-M14 save loaded
+  // mid-week) would wait out the week with an empty Managers section right
+  // after the first branch made one matter. Redraw early when a hireable
+  // role has neither a candidate nor a hire anywhere — and only then: a
+  // role emptied by hiring is on the roster, and the same week draws the
+  // same seed, so forcing a redraw can never farm fresh cards.
+  const missingRole = HIREABLE_ROLES.some(
+    (role) =>
+      !state.hiring.candidates.some((c) => c.role === role) &&
+      !state.stores.some((s) => s.staff.some((m) => m.role === role)),
+  );
+  if (state.hiring.refreshedOnDay >= monday && !missingRole) return false;
 
   // Candidates apply to the name, so quality follows the network's
   // best-known store (§9/§19 networkStars).
@@ -185,7 +196,13 @@ export function refreshHiringPool(state: GameState): boolean {
     }
   }
   state.hiring.refreshedOnDay = monday;
-  state.hiring.candidates = candidates;
+  // A mid-week redraw regenerates this week's ids — cards already hired
+  // stay off the pile, or a second hire would seat a duplicate id.
+  const hired = new Set<string>();
+  for (const store of state.stores) {
+    for (const member of store.staff) hired.add(member.id);
+  }
+  state.hiring.candidates = candidates.filter((c) => !hired.has(c.id));
   return true;
 }
 
