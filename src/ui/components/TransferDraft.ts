@@ -232,6 +232,11 @@ export function TransferDraft(sim: Sim, options: TransferDraftOptions = {}): Tra
       });
       move.addEventListener("pointerdown", (e) => e.preventDefault());
       move.addEventListener("click", () => {
+        // Drafting is structural like a chip switch: let go of the qty
+        // field so the transfer.drafted repaint can flip this row to
+        // "already riding" at once instead of waiting on a blur.
+        const active = document.activeElement;
+        if (active instanceof HTMLElement) active.blur();
         const units = Math.min(line.available, Number(field.value.replace(/\D+/g, "")) || 0);
         if (units < 1) return;
         const plan = planTransfer(sim.snapshot, source.id, target.id, line.skuId, units);
