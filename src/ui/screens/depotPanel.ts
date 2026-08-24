@@ -31,6 +31,7 @@ import {
   storeById,
   storeLabel,
   storeName,
+  type OrderLine,
   type Truck,
   type TruckStop,
   type TruckTransfer,
@@ -189,13 +190,12 @@ export function createDepotPanel(sim: Sim, bus: EventBus<SimEvent>): DepotPanelH
 
   function lineRow(
     truck: Truck,
-    stopIndex: number,
-    lineIndex: number,
+    stop: TruckStop,
+    line: OrderLine,
     onLoadChanged: () => void,
   ): HTMLElement {
     const state = sim.snapshot;
     const dc = state.dc!;
-    const line = truck.route[stopIndex]!.lines[lineIndex]!;
     const field = h("input", {
       cls: "qty__field van__qty",
       attrs: { type: "text", inputmode: "numeric", "aria-label": `${nameOf(line.skuId)} units` },
@@ -204,9 +204,17 @@ export function createDepotPanel(sim: Sim, bus: EventBus<SimEvent>): DepotPanelH
     const status = h("span", { cls: "van__status" });
 
     const commit = (units: number): void => {
+      // Resolve the row by identity at click time, never by build-time
+      // position — the handler must not depend on a rebuild landing
+      // before the next input; a vanished row is a quiet no-op.
       const route = copyRoute(truck.route);
-      if (units <= 0) route[stopIndex]!.lines.splice(lineIndex, 1);
-      else route[stopIndex]!.lines[lineIndex]!.units = units;
+      const stopCopy = route.find((s) => s.storeId === stop.storeId);
+      const lineIndex = stopCopy
+        ? stopCopy.lines.findIndex((l) => l.skuId === line.skuId)
+        : -1;
+      if (!stopCopy || lineIndex === -1) return;
+      if (units <= 0) stopCopy.lines.splice(lineIndex, 1);
+      else stopCopy.lines[lineIndex]!.units = units;
       const reason = validateTruckConfig(state, route, truck.transfers);
       if (reason !== null) {
         status.textContent = reason;
@@ -267,10 +275,9 @@ export function createDepotPanel(sim: Sim, bus: EventBus<SimEvent>): DepotPanelH
     ]);
   }
 
-  function addLineRow(truck: Truck, stopIndex: number): HTMLElement | null {
+  function addLineRow(truck: Truck, stop: TruckStop): HTMLElement | null {
     const state = sim.snapshot;
     const dc = state.dc!;
-    const stop = truck.route[stopIndex]!;
     const lined = new Set(stop.lines.map((line) => line.skuId));
     const options = Object.keys(dc.stock)
       .filter((skuId) => dc.stock[skuId]! > 0 && !lined.has(skuId))
@@ -304,7 +311,9 @@ export function createDepotPanel(sim: Sim, bus: EventBus<SimEvent>): DepotPanelH
       // guard lets the rebuilt manifest show the new row at once.
       dropFocus();
       const route = copyRoute(truck.route);
-      route[stopIndex]!.lines.push({ skuId, units: STEP_UNITS });
+      const stopCopy = route.find((s) => s.storeId === stop.storeId);
+      if (!stopCopy) return;
+      stopCopy.lines.push({ skuId, units: STEP_UNITS });
       if (validateTruckConfig(state, route, truck.transfers) !== null) {
         select.value = "";
         return;
@@ -330,8 +339,11 @@ export function createDepotPanel(sim: Sim, bus: EventBus<SimEvent>): DepotPanelH
     remove.addEventListener("pointerdown", (e) => e.preventDefault());
     remove.addEventListener("click", () => {
       dropFocus();
+      // Identity, not build-time position (the lineRow rule).
       const route = copyRoute(truck.route);
-      route.splice(stopIndex, 1);
+      const idx = route.findIndex((s) => s.storeId === stop.storeId);
+      if (idx === -1) return;
+      route.splice(idx, 1);
       // A transfer loses its stop, it comes off the manifest with it.
       const transfers = copyTransfers(truck.transfers).filter(
         (t) => t.fromStoreId !== stop.storeId && t.toStoreId !== stop.storeId,
@@ -345,14 +357,13 @@ export function createDepotPanel(sim: Sim, bus: EventBus<SimEvent>): DepotPanelH
         remove,
       ]),
     ];
-    for (let i = 0; i < stop.lines.length; i++) {
-      rows.push(lineRow(truck, stopIndex, i, onLoadChanged));
+    for (const line of stop.lines) {
+      rows.push(lineRow(truck, stop, line, onLoadChanged));
     }
 
     // Transfers riding this stop (§20): the pickup carries the remove — the
     // drop half goes with it.
-    for (let i = 0; i < truck.transfers.length; i++) {
-      const t = truck.transfers[i]!;
+    for (const t of truck.transfers) {
       if (t.fromStoreId === stop.storeId) {
         const drop = storeById(state, t.toStoreId);
         const cancel = h("button", {
@@ -361,11 +372,20 @@ export function createDepotPanel(sim: Sim, bus: EventBus<SimEvent>): DepotPanelH
           attrs: { type: "button", "aria-label": `Cancel the ${nameOf(t.skuId)} transfer` },
         });
         cancel.addEventListener("pointerdown", (e) => e.preventDefault());
-        const index = i;
         cancel.addEventListener("click", () => {
           dropFocus();
+          // Identity, not build-time position (the lineRow rule); with
+          // twin drafts the first match goes, which is indistinguishable.
           const transfers = copyTransfers(truck.transfers);
-          transfers.splice(index, 1);
+          const idx = transfers.findIndex(
+            (x) =>
+              x.fromStoreId === t.fromStoreId &&
+              x.toStoreId === t.toStoreId &&
+              x.skuId === t.skuId &&
+              x.units === t.units,
+          );
+          if (idx === -1) return;
+          transfers.splice(idx, 1);
           dispatchManifest(truck, copyRoute(truck.route), transfers);
         });
         rows.push(
@@ -388,7 +408,7 @@ export function createDepotPanel(sim: Sim, bus: EventBus<SimEvent>): DepotPanelH
       }
     }
 
-    const addLine = addLineRow(truck, stopIndex);
+    const addLine = addLineRow(truck, stop);
     if (addLine) rows.push(addLine);
 
     return h("div", { cls: "van__stop" }, [
