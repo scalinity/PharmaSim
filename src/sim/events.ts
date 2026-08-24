@@ -55,7 +55,7 @@ export type SimEvent =
   /** `by` names the Stock Hawk who made the trip; absent for player clicks. */
   | { type: "stock.restocked"; furnitureId: string; units: number; by?: string }
   /** First stock-out: per-SKU reorder rules become available (§11). */
-  | { type: "reorder.unlocked" }
+  | { type: "reorder.unlocked"; storeId: string }
   | { type: "order.submitted"; storeId: string; lines: OrderLine[]; units: number; total: number }
   /** One van per store with goods due (§19) — `storeId` names the door. */
   | { type: "order.delivered"; storeId: string; units: number; skus: number }

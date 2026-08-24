@@ -955,8 +955,8 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     const units = `${e.units} ${e.units === 1 ? "unit" : "units"}`;
     toast(e.by ? `${e.by} brought out ${units}` : `Brought out ${units}`);
   });
-  bus.on("reorder.unlocked", () => {
-    toast("An empty shelf cost you a sale. Orders now takes min/target levels.", "error");
+  bus.on("reorder.unlocked", (e) => {
+    toast(`An empty shelf cost you a sale${atBranch(e.storeId)}. Orders now takes min/target levels.`, "error");
   });
 
   // --- World events + atmosphere (§16, milestone 11) ---

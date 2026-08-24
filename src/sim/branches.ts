@@ -326,6 +326,15 @@ export function resolveBranchDay(
   const revenue = round2(gross - refunds);
   if (revenue !== 0) post(state, "branch.sales", revenue, emit);
 
+  // §11 is per store (§19): a branch's first stock-out teaches its reorder
+  // rules even with nobody standing in it — recordStockOut only ever
+  // unlocks the visited floor, so a never-visited branch would otherwise
+  // hide the Orders panel's min/target columns forever.
+  if (stockOuts > 0 && !store.reorderUnlocked) {
+    store.reorderUnlocked = true;
+    emit({ type: "reorder.unlocked", storeId: store.id });
+  }
+
   // §19 local rep: drifts by served ratio inside the ±0.05/day band.
   const demandTotal = scripts.length + visits.length;
   const servedTotal = rxServed + otcVisitsServed;

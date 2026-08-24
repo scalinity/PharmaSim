@@ -351,7 +351,7 @@ export function recordStockOut(state: GameState, skuId: string, emit: Emit): voi
   const store = activeStore(state);
   if (!store.reorderUnlocked) {
     store.reorderUnlocked = true;
-    emit({ type: "reorder.unlocked" });
+    emit({ type: "reorder.unlocked", storeId: store.id });
   }
 }
 
