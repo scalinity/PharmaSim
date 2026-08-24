@@ -300,13 +300,22 @@ export interface ObservedWindow {
   priorKnown: boolean;
 }
 
+/** The §17 report windows: the week, or the whole 28-day book. The log
+ *  holds 27 days beside today, so only the weekly view can ever satisfy
+ *  priorKnown — the type keeps callers on the two real windows. */
+export type ObservedWindowDays = 7 | 28;
+
 /**
  * One district's observed tallies summed over the trailing `days` window
  * (today included), with the preceding same-length window for trend
  * comparison. Only keys the store has actually seen appear — knowledge,
  * never the generator (§17).
  */
-export function observedWindow(state: GameState, districtId: string, days: number): ObservedWindow {
+export function observedWindow(
+  state: GameState,
+  districtId: string,
+  days: ObservedWindowDays,
+): ObservedWindow {
   const lines = new Map<string, ObservedLine>();
   const add = (tally: Record<string, [number, number]> | undefined, prior: boolean): void => {
     if (!tally) return;

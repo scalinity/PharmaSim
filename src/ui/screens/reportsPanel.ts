@@ -6,7 +6,13 @@
 
 import type { EventBus } from "../../core/bus";
 import { DISTRICT_MAPS, DISTRICTS } from "../../data/districts";
-import { observedWindow, OTC_TALLY_KEY, shareTrend, type ObservedLine } from "../../sim/city";
+import {
+  observedWindow,
+  OTC_TALLY_KEY,
+  shareTrend,
+  type ObservedLine,
+  type ObservedWindowDays,
+} from "../../sim/city";
 import { categoryLabel } from "../../sim/economy";
 import type { SimEvent } from "../../sim/events";
 import type { Sim } from "../../sim/sim";
@@ -19,8 +25,6 @@ export interface ReportsPanelHandle {
   setVisible(on: boolean): void;
 }
 
-type WindowDays = 7 | 28;
-
 function hex(tint: number): string {
   return `#${tint.toString(16).padStart(6, "0")}`;
 }
@@ -28,7 +32,7 @@ function hex(tint: number): string {
 export function createReportsPanel(sim: Sim, bus: EventBus<SimEvent>): ReportsPanelHandle {
   let visible = false;
   let pending = false;
-  let windowDays: WindowDays = 7;
+  let windowDays: ObservedWindowDays = 7;
 
   const shareChip = h("span", { cls: "reports__share" });
   const tabs = Tabs(
