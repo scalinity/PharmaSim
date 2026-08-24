@@ -34,7 +34,7 @@ import type { GameState, StoreState } from "./state";
 export const VERIFY_ASSIST_COST = 30_000;
 export const FORECAST_COST = 45_000;
 /** §26: the forecast unlocks past 28 days of sales history. */
-export const FORECAST_HISTORY_DAYS = 28;
+const FORECAST_HISTORY_DAYS = 28;
 export const FORECAST_DAYS = 7;
 /** §26: ±10% noise on the true generator. */
 export const FORECAST_NOISE = 0.1;
@@ -95,13 +95,13 @@ export function verifyAssistLock(state: GameState, store: StoreState): string | 
 
 /** Days of sales history on the books: the §17 observed log plus today.
  *  Only played days roll onto the log, so skipped mornings don't count. */
-export function forecastHistoryDays(state: GameState): number {
+function forecastHistoryDays(state: GameState): number {
   return Math.min(FORECAST_HISTORY_DAYS, state.city.log.length + 1);
 }
 
 /** Why the forecast can't be bought right now, or null when it can. */
 export function forecastLock(state: GameState): string | null {
-  if (!state.stores.some((s) => s.era === 4)) return "Needs a Gen 4 store";
+  if (!state.stores.some((s) => s.era >= 4)) return "Needs a Gen 4 store";
   const days = forecastHistoryDays(state);
   if (days < FORECAST_HISTORY_DAYS) {
     return `Needs ${FORECAST_HISTORY_DAYS} days of sales history — the books hold ${days}`;
