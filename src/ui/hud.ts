@@ -878,6 +878,10 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
   });
   bus.on("branch.activeChanged", () => {
     const store = activeStore(sim.snapshot);
+    // Chips are keyed by furniture id, and ids repeat per store (f1…fN):
+    // without a teardown the old floor's chips float at stale positions —
+    // or alias a different fixture — until the close clears them.
+    clearStockChips();
     setStars(store.repStars);
     refreshBranchStrip();
     refreshMorning();
