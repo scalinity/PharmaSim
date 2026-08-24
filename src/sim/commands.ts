@@ -12,6 +12,7 @@ import {
   DC_COST,
   isTruckSku,
   MAX_TRUCKS,
+  pendingPickupUnits,
   planTransfer,
   receiveDcDeliveries,
   runTruckRoutes,
@@ -652,9 +653,15 @@ export function handleCommand(
       const source = storeById(state, command.fromStoreId);
       if (!source || storeById(state, command.toStoreId) === null) return;
       if (!isTruckSku(command.skuId)) return;
-      // Move what the source can actually give — draft-time honesty; the
-      // morning pickup clamps again against that morning's shelves.
-      const units = Math.min(Math.floor(command.units), onHand(source, command.skuId));
+      // Move what the source can actually give, net of what earlier drafts
+      // already promised off the same shelves — stacked clicks must not
+      // drain the source twice at dawn. The morning pickup clamps again
+      // against that morning's real stock.
+      const pending = pendingPickupUnits(state.dc, command.fromStoreId, command.skuId);
+      const units = Math.min(
+        Math.floor(command.units),
+        onHand(source, command.skuId) - pending,
+      );
       if (units < 1) return;
       const plan = planTransfer(state, command.fromStoreId, command.toStoreId, command.skuId, units);
       if (!plan.ok) return;

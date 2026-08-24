@@ -7,11 +7,16 @@
 
 import { DRUG_DEFS } from "../../data/drugs";
 import { OTC_DEFS } from "../../data/otc";
-import { planTransfer, TRUCK_COST } from "../../sim/dc";
+import {
+  pendingDeliveryUnits,
+  pendingPickupUnits,
+  planTransfer,
+  TRUCK_COST,
+} from "../../sim/dc";
 import { onHand, sales7d } from "../../sim/inventory";
 import { canFillDrug } from "../../sim/licenses";
 import type { Sim } from "../../sim/sim";
-import { storeLabel, storeName, type StoreState } from "../../sim/state";
+import { storeLabel, storeName, type DcState, type StoreState } from "../../sim/state";
 import { h } from "../dom";
 import { money } from "../format";
 
@@ -32,8 +37,14 @@ export interface TransferDraftHandle {
 interface ShortageLine {
   skuId: string;
   name: string;
-  source: StoreState;
+  /** Null when the answer is already drafted (incoming > 0). */
+  source: StoreState | null;
   holds: number;
+  /** What the source could still give — held minus units pending drafts
+   *  already promise off its shelves (the same net the command clamps to). */
+  available: number;
+  /** Units already riding a drafted transfer to the receiving branch. */
+  incoming: number;
   /** Trailing 7-day units across the network — the urgency sort key. */
   moved: number;
 }
@@ -65,26 +76,34 @@ export function TransferDraft(sim: Sim, options: TransferDraftOptions = {}): Tra
 
   /** What the receiving branch is out of that a sibling could cover,
    *  network best-sellers first — a fresh branch reads as "stock me from
-   *  the others", a shortage reads as the §20 example sentence. */
-  function shortageLines(target: StoreState): ShortageLine[] {
+   *  the others", a shortage reads as the §20 example sentence. The source
+   *  is the sibling with the most *available* units (held net of pending
+   *  drafts), and a shortage already answered by a drafted transfer shows
+   *  as riding, not as the same move re-offered. */
+  function shortageLines(target: StoreState, dc: DcState): ShortageLine[] {
     const state = sim.snapshot;
     const out: ShortageLine[] = [];
     const consider = (skuId: string, name: string): void => {
       if (onHand(target, skuId) > 0) return;
       let source: StoreState | null = null;
       let holds = 0;
+      let available = 0;
       let moved = 0;
       for (const store of state.stores) {
         moved += sales7d(store, skuId);
         if (store.id === target.id) continue;
         const held = onHand(store, skuId);
-        if (held > holds) {
+        const free = held - pendingPickupUnits(dc, store.id, skuId);
+        if (free > available) {
+          available = free;
           holds = held;
           source = store;
         }
       }
-      if (source === null || moved === 0) return;
-      out.push({ skuId, name, source, holds, moved });
+      if (moved === 0) return;
+      const incoming = pendingDeliveryUnits(dc, target.id, skuId);
+      if (incoming === 0 && (source === null || available < 1)) return;
+      out.push({ skuId, name, source, holds, available, incoming, moved });
     };
     for (const def of DRUG_DEFS) {
       // The vans carry no cold chain, and a SKU the branch couldn't sell
@@ -128,14 +147,15 @@ export function TransferDraft(sim: Sim, options: TransferDraftOptions = {}): Tra
 
     lines.replaceChildren();
     note.textContent = "";
-    if (target === null) return;
+    const dc = state.dc;
+    if (target === null || dc === null) return;
 
-    if (state.dc !== null && state.dc.trucks.length === 0) {
+    if (dc.trucks.length === 0) {
       note.textContent = `No vans in the garage yet — the depot sells them at ${money(TRUCK_COST)}.`;
       return;
     }
 
-    const shortages = shortageLines(target).sort((a, b) => b.moved - a.moved);
+    const shortages = shortageLines(target, dc).sort((a, b) => b.moved - a.moved);
     if (shortages.length === 0) {
       lines.append(
         h("p", {
@@ -146,6 +166,22 @@ export function TransferDraft(sim: Sim, options: TransferDraftOptions = {}): Tra
       return;
     }
     for (const line of shortages.slice(0, MAX_LINES)) {
+      // A shortage a drafted transfer already answers reads as riding, not
+      // as the same move offered again — the double-click double-draft trap.
+      if (line.incoming > 0 || line.source === null) {
+        lines.append(
+          h("div", { cls: "tslip__row" }, [
+            h("p", { cls: "tslip__text" }, [
+              h("span", { cls: "tslip__sku", text: line.name }),
+              h("span", {
+                text: ` — ×${line.incoming} already riding a van to ${storeLabel(state, target)}, lands at dawn.`,
+              }),
+            ]),
+          ]),
+        );
+        continue;
+      }
+      const source = line.source;
       const field = h("input", {
         cls: "qty__field tslip__qty",
         attrs: {
@@ -154,7 +190,7 @@ export function TransferDraft(sim: Sim, options: TransferDraftOptions = {}): Tra
           "aria-label": `${line.name} units to move`,
         },
       });
-      field.value = String(Math.max(1, Math.floor(line.holds / 2)));
+      field.value = String(Math.max(1, Math.floor(line.available / 2)));
       const status = h("span", { cls: "tslip__status" });
       const move = h("button", {
         cls: "pill pill--primary pill--small tslip__go",
@@ -163,16 +199,16 @@ export function TransferDraft(sim: Sim, options: TransferDraftOptions = {}): Tra
       });
       move.addEventListener("pointerdown", (e) => e.preventDefault());
       move.addEventListener("click", () => {
-        const units = Math.min(line.holds, Number(field.value.replace(/\D+/g, "")) || 0);
+        const units = Math.min(line.available, Number(field.value.replace(/\D+/g, "")) || 0);
         if (units < 1) return;
-        const plan = planTransfer(sim.snapshot, line.source.id, target.id, line.skuId, units);
+        const plan = planTransfer(sim.snapshot, source.id, target.id, line.skuId, units);
         if (!plan.ok) {
           status.textContent = plan.reason;
           return;
         }
         sim.dispatch({
           type: "transfer.create",
-          fromStoreId: line.source.id,
+          fromStoreId: source.id,
           toStoreId: target.id,
           skuId: line.skuId,
           units,
@@ -184,7 +220,11 @@ export function TransferDraft(sim: Sim, options: TransferDraftOptions = {}): Tra
             h("span", { text: `${storeLabel(state, target)} is out of ` }),
             h("span", { cls: "tslip__sku", text: line.name }),
             h("span", {
-              text: ` — ${storeName(state, line.source)} holds ${line.holds}.`,
+              text:
+                ` — ${storeName(state, source)} holds ${line.holds}.` +
+                (line.available < line.holds
+                  ? ` ×${line.holds - line.available} of that is already promised to a van.`
+                  : ""),
             }),
           ]),
           h("div", { cls: "tslip__act" }, [field, move]),

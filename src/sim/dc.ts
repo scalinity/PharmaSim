@@ -86,6 +86,32 @@ export function unallocatedUnits(dc: DcState, skuId: string): number {
   return Math.max(0, dcStockOf(dc, skuId) - allocatedUnits(dc, skuId));
 }
 
+/** Units pending transfers already promise *off* one store's shelves for
+ *  one SKU, every van counted. The transfer clamp reads net of this, so
+ *  two enthusiastic drafts can never out-promise the morning's stock. */
+export function pendingPickupUnits(dc: DcState, storeId: string, skuId: string): number {
+  let units = 0;
+  for (const truck of dc.trucks) {
+    for (const t of truck.transfers) {
+      if (t.fromStoreId === storeId && t.skuId === skuId) units += t.units;
+    }
+  }
+  return units;
+}
+
+/** Units pending transfers already promise *to* one store for one SKU —
+ *  the shortage slip says "already riding a van" instead of re-offering
+ *  the same move. */
+export function pendingDeliveryUnits(dc: DcState, storeId: string, skuId: string): number {
+  let units = 0;
+  for (const truck of dc.trucks) {
+    for (const t of truck.transfers) {
+      if (t.toStoreId === storeId && t.skuId === skuId) units += t.units;
+    }
+  }
+  return units;
+}
+
 // --- Route arithmetic (draft-time and save validation share it) ---
 
 /** The most the van ever carries on this plan: the depot load, plus each
