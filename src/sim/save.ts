@@ -575,7 +575,11 @@ function validate(file: RawSave): SaveFile {
   for (const day of city.districtShareLog as unknown[]) {
     const record = requireObject(day, "district share history");
     if (Object.keys(record).length > 8) reject("a sane district share history");
-    for (const value of Object.values(record)) {
+    for (const [districtId, value] of Object.entries(record)) {
+      // The receipt names the biggest mover through districtById, which
+      // throws — an invented district id must not get past here (the same
+      // rule the pools and transfer records already follow).
+      if (!DISTRICT_IDS.has(districtId)) reject("readable district shares");
       // Finiteness first, then bounds: a share is a fraction of a district.
       if (typeof value !== "number" || !Number.isFinite(value) || value < 0 || value > 1) {
         reject("readable district shares");
