@@ -102,6 +102,21 @@ export function createDepotPanel(sim: Sim, bus: EventBus<SimEvent>): DepotPanelH
     sim.dispatch({ type: "truck.setRoute", truckId: truck.id, route, transfers });
   }
 
+  /** Cash only moves the garage pill — repaint that alone while sales
+   *  churn, never the whole clipboard (the district card's narrowed cash
+   *  listener is the precedent). */
+  function refreshGarage(): void {
+    const state = sim.snapshot;
+    const dc = state.dc;
+    if (!visible || !dc) return;
+    bays.textContent = `${dc.trucks.length} of ${MAX_TRUCKS} bays`;
+    buyVan.disabled = dc.trucks.length >= MAX_TRUCKS || state.cash < TRUCK_COST;
+    buyVan.textContent =
+      state.cash < TRUCK_COST && dc.trucks.length < MAX_TRUCKS
+        ? "Not enough cash for a van"
+        : `Buy a van — ${money(TRUCK_COST)}`;
+  }
+
   /** A focused qty field pauses the full rebuild (typing must survive it),
    *  so every structural action lets go of the keyboard first — the
    *  rebuild that follows its dispatch then lands immediately. */
@@ -469,12 +484,7 @@ export function createDepotPanel(sim: Sim, bus: EventBus<SimEvent>): DepotPanelH
       );
     }
     for (const truck of dc.trucks) vansHost.append(truckCard(truck));
-    bays.textContent = `${dc.trucks.length} of ${MAX_TRUCKS} bays`;
-    buyVan.disabled = dc.trucks.length >= MAX_TRUCKS || state.cash < TRUCK_COST;
-    buyVan.textContent =
-      state.cash < TRUCK_COST && dc.trucks.length < MAX_TRUCKS
-        ? "Not enough cash for a van"
-        : `Buy a van — ${money(TRUCK_COST)}`;
+    refreshGarage();
   }
 
   /** Coalesce event churn into one repaint per frame. */
@@ -494,7 +504,9 @@ export function createDepotPanel(sim: Sim, bus: EventBus<SimEvent>): DepotPanelH
   bus.on("truck.routeChanged", invalidate);
   bus.on("transfer.drafted", invalidate);
   bus.on("branch.bought", invalidate);
-  bus.on("cash.changed", invalidate);
+  // Cash fires several times per served customer; it only moves the
+  // garage pill here, so it must not rebuild the manifests every frame.
+  bus.on("cash.changed", refreshGarage);
   bus.on("day.phaseChanged", invalidate);
 
   return {
