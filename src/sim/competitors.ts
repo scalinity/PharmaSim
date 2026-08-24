@@ -87,14 +87,32 @@ export function poolPatientName(poolId: string): string {
   return `${first} ${last}`;
 }
 
+/** Memo for poolDrug — the pick is pure in (poolId, §25 catalog), and the
+ *  spawn path asks on every Rx arrival (same shape as city.ts's draw memo). */
+const POOL_DRUG_PICKS = new Map<string, DrugDef | null>();
+
 /** The pool's standing refill: a stable pick from the lowest tier of its
  *  category's non-refrigerated drugs — the daily generic a chronic patient
- *  actually rides on, and fillable as soon as the category itself is. */
-export function poolDrug(poolId: string, category: RxCategory): DrugDef {
-  const drugs = DRUG_DEFS.filter((def) => def.category === category && def.refrigerated !== true);
-  const lowestTier = drugs.reduce((min, def) => Math.min(min, def.tier), 3);
-  const band = drugs.filter((def) => def.tier === lowestTier);
-  return band[hashString(poolId) % band.length]!;
+ *  actually rides on, and fillable as soon as the category itself is.
+ *  Null when the category has no such drug (no chronic category is bare
+ *  today, but a catalog edit must degrade to an ordinary visit, not a
+ *  crash on the spawn path). */
+export function poolDrug(poolId: string, category: RxCategory): DrugDef | null {
+  let pick = POOL_DRUG_PICKS.get(poolId);
+  if (pick === undefined) {
+    const drugs = DRUG_DEFS.filter(
+      (def) => def.category === category && def.refrigerated !== true,
+    );
+    if (drugs.length === 0) {
+      pick = null;
+    } else {
+      const lowestTier = drugs.reduce((min, def) => Math.min(min, def.tier), 3);
+      const band = drugs.filter((def) => def.tier === lowestTier);
+      pick = band[hashString(poolId) % band.length]!;
+    }
+    POOL_DRUG_PICKS.set(poolId, pick);
+  }
+  return pick;
 }
 
 // --- Pool creation (launch-day assignment) ---
@@ -170,7 +188,7 @@ export function duePoolVisit(
     (pool.retry && pool.lastVisitDay < state.day);
   if (!due) return null;
   const drug = poolDrug(poolId, category);
-  if (!canFillDrug(state, drug)) return null;
+  if (drug === null || !canFillDrug(state, drug)) return null;
   return { poolId, patientName: poolPatientName(poolId), drug };
 }
 
@@ -280,7 +298,8 @@ function evaluatePools(state: GameState, emit: Emit): void {
     const holder = state.competitors.find((c) => c.id === pool.pharmacyId);
     if (!holder) continue;
     // A pool the store couldn't serve is not a pool the store has won.
-    if (!canFillDrug(state, poolDrug(poolId, pool.category))) continue;
+    const drug = poolDrug(poolId, pool.category);
+    if (drug === null || !canFillDrug(state, drug)) continue;
     const holderScore = rivalAvailability(state, holder) + holder.repStars / 5;
     const gap = playerScore - (holderScore + PULL_MARGIN);
     if (gap > 0) candidates.push({ poolId, pool, gap });
