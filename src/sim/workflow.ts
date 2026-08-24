@@ -326,9 +326,12 @@ export class RxWorkflow {
   }
 
   /** Filled script leaves a bench: the §21 AI lane signs off Tier-1/2 on
-   *  the spot; the rest go to the desk, or the implicit check. */
+   *  the spot; the rest go to the desk, or the implicit check. The gate is
+   *  read live, not from the tick-cached flag: staff fills complete before
+   *  syncAssistLane runs, and the one-tick stale window would hand the
+   *  lane's first script to the owner's 90% instead of the AI's 100%. */
   private routeFilled(state: GameState, script: RxScript, emit: Emit): void {
-    if (this.assistLaneOpen && assistCoversDrug(drugDef(script.drugId))) {
+    if (verifyAssistOnline(state, activeStore(state)) && assistCoversDrug(drugDef(script.drugId))) {
       script.stage = "verifying";
       this.assistTasks.set(script.id, ASSIST_VERIFY_IGM);
       emit({ type: "rx.stageChanged", scriptId: script.id, stage: script.stage });
@@ -539,18 +542,26 @@ export class RxWorkflow {
       }
       return;
     }
+    // Compact first, move second: an emit inside the compaction loop would
+    // let a listener that pushes onto the queue corrupt the iteration
+    // (syncDispenserLanes keeps its emits out of the equivalent loop too).
+    const moved: number[] = [];
     let kept = 0;
     for (const id of this.verifyQueue) {
       const script = this.scripts.get(id);
       if (script && assistCoversDrug(drugDef(script.drugId))) {
-        script.stage = "verifying";
-        this.assistTasks.set(id, ASSIST_VERIFY_IGM);
-        emit({ type: "rx.stageChanged", scriptId: id, stage: script.stage });
+        moved.push(id);
       } else {
         this.verifyQueue[kept++] = id;
       }
     }
     this.verifyQueue.length = kept;
+    for (const id of moved) {
+      const script = this.scripts.get(id)!;
+      script.stage = "verifying";
+      this.assistTasks.set(id, ASSIST_VERIFY_IGM);
+      emit({ type: "rx.stageChanged", scriptId: id, stage: script.stage });
+    }
   }
 
   /** Advance every scan in the lane at once — parallel on purpose (§21:
