@@ -383,7 +383,10 @@ export function resolveUnvisitedBranches(state: GameState, emit: Emit): number {
   let resolved = 0;
   for (const { store, demand } of days) {
     resolveBranchDay(state, store, demand, emit);
-    resolved++;
+    // A scaffolding day observed nothing — it must not count toward rolling
+    // a city day, or an all-renovation close would burn a slot in the §17
+    // 28-day observed window on an empty entry.
+    if (demand !== null) resolved++;
   }
   return resolved;
 }
