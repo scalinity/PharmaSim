@@ -541,6 +541,14 @@ export function storeById(state: GameState, storeId: string): StoreState | null 
   return state.stores.find((s) => s.id === storeId) ?? null;
 }
 
+/** The founding store (§19): the run's first door, stores[0] by the §24
+ *  append-only contract. It stands on its own Old Town site rather than a
+ *  district lot, so map markers, lot availability and the store-cross all
+ *  branch on it — through this name, never a re-derived array position. */
+export function isFoundingStore(state: GameState, store: StoreState): boolean {
+  return state.stores[0] === store;
+}
+
 /** The name on the glass — and on the receipt header (§19/§28). */
 export function storeName(store: StoreState): string {
   return `${districtById(store.districtId).name} Pharmacy`;

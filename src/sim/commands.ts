@@ -39,6 +39,7 @@ import {
   activeStore,
   emptyDayStats,
   freshStore,
+  isFoundingStore,
   storeById,
   type GameSpeed,
   type GameState,
@@ -475,9 +476,11 @@ export function handleCommand(
       if (state.phase === "close" || !ownsLicense(state, "L5")) return;
       const districtId = command.districtId;
       if (!DISTRICT_LOT_IDS.has(districtId)) return;
-      // One branch per district lot; the founding store (stores[0]) stands
-      // on its own site, so its district's lot is still for sale.
-      const lotTaken = state.stores.some((s, i) => i > 0 && s.districtId === districtId);
+      // One branch per district lot; the founding store stands on its own
+      // site, so its district's lot is still for sale.
+      const lotTaken = state.stores.some(
+        (s) => !isFoundingStore(state, s) && s.districtId === districtId,
+      );
       if (lotTaken) return;
       const price = branchPrice(districtId);
       if (state.cash < price.total) return;

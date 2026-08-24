@@ -24,7 +24,7 @@ import { branchPrice, categoryLabel } from "../../sim/economy";
 import type { SimEvent } from "../../sim/events";
 import { ownsLicense } from "../../sim/licenses";
 import type { Sim } from "../../sim/sim";
-import { storeName, type StoreState } from "../../sim/state";
+import { isFoundingStore, storeName, type StoreState } from "../../sim/state";
 import { h } from "../dom";
 import { money } from "../format";
 
@@ -354,7 +354,7 @@ export function createCityOverlay(sim: Sim, bus: EventBus<SimEvent>): CityOverla
     // §19: the founding store keeps its own site; every *other* store in a
     // district stands on the district's one lot.
     const branches = state.stores.filter((s) => s.districtId === id);
-    const lotFree = !state.stores.some((s, i) => i > 0 && s.districtId === id);
+    const lotFree = !state.stores.some((s) => !isFoundingStore(state, s) && s.districtId === id);
 
     card.replaceChildren(
       h("div", { cls: "cityui__tab" }, [

@@ -24,7 +24,7 @@ import { CustomerSystem } from "./sim/customers";
 import type { SimEvent } from "./sim/events";
 import { hydrate, migrate, serialize, type SaveFile } from "./sim/save";
 import { Sim } from "./sim/sim";
-import { activeStore, createGameState } from "./sim/state";
+import { activeStore, createGameState, isFoundingStore } from "./sim/state";
 import { CameraRig, type CameraPose } from "./render/cameraRig";
 import { CityScene } from "./render/cityScene";
 import { Lighting } from "./render/lighting";
@@ -108,7 +108,10 @@ bus.on("era.changed", (e) => {
 // founding store keeps its own site marker; branches (stores past the
 // first) claim their district's lot.
 function refreshCityOwnership(): void {
-  city.setBranches(sim.snapshot.stores.slice(1).map((store) => store.districtId));
+  const state = sim.snapshot;
+  city.setBranches(
+    state.stores.filter((store) => !isFoundingStore(state, store)).map((store) => store.districtId),
+  );
 }
 refreshCityOwnership();
 bus.on("branch.bought", refreshCityOwnership);
@@ -419,11 +422,11 @@ function updateOverlays(): void {
       const [sx, sy] = project(rival.site[0], 3.9, rival.site[1]);
       cityOverlay.updateLabel(rival.id, sx, sy);
     }
-    const stores = sim.snapshot.stores;
-    for (let i = 0; i < stores.length; i++) {
-      const site = i === 0 ? STORE_SITE : DISTRICT_MAPS[stores[i]!.districtId]!.lot;
+    const snap = sim.snapshot;
+    for (const store of snap.stores) {
+      const site = isFoundingStore(snap, store) ? STORE_SITE : DISTRICT_MAPS[store.districtId]!.lot;
       const [sx, sy] = project(site[0], 4.4, site[1]);
-      cityOverlay.updateLabel(`branch:${stores[i]!.id}`, sx, sy);
+      cityOverlay.updateLabel(`branch:${store.id}`, sx, sy);
     }
     return;
   }
