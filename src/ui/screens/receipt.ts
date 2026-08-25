@@ -318,7 +318,11 @@ function buildBranchSheet(sim: Sim, store: StoreState): SheetRefs {
   return { sheet, items };
 }
 
-export function buildReceipt(sim: Sim, onNextDay: () => void): HTMLElement {
+export function buildReceipt(
+  sim: Sim,
+  onNextDay: () => void,
+  onStamp?: () => void,
+): HTMLElement {
   const state = sim.snapshot;
   const active = activeStore(state);
 
@@ -388,10 +392,21 @@ export function buildReceipt(sim: Sim, onNextDay: () => void): HTMLElement {
   }
   const all = [...activeItems, nextWrap];
   const timers: number[] = [];
+  // The stamp's thunk (§29) fires the moment the verdict lands — at its slot
+  // in the stagger, or right away when the print collapses (skip, reduced
+  // motion). Once per printing, however the paper got to done.
+  const stampIndex = all.findIndex((el) => el.classList.contains("rcpt__stamp"));
+  let stamped = false;
+  const stampNow = (): void => {
+    if (stamped || stampIndex === -1) return;
+    stamped = true;
+    onStamp?.();
+  };
   const finish = (): void => {
     for (const t of timers) window.clearTimeout(t);
     timers.length = 0;
     for (const el of all) el.classList.add("rcpt__item--on");
+    stampNow();
   };
   // Reduced motion comes from the OS or the settings toggle (§23); either way
   // the print collapses to instant. Flipping the toggle mid-print is handled
@@ -404,7 +419,12 @@ export function buildReceipt(sim: Sim, onNextDay: () => void): HTMLElement {
   } else {
     const step = PRINT_MS / all.length;
     all.forEach((el, i) => {
-      timers.push(window.setTimeout(() => el.classList.add("rcpt__item--on"), step * (i + 1)));
+      timers.push(
+        window.setTimeout(() => {
+          el.classList.add("rcpt__item--on");
+          if (i === stampIndex) stampNow();
+        }, step * (i + 1)),
+      );
     });
     for (const page of pages) page.refs.sheet.addEventListener("click", finish);
   }

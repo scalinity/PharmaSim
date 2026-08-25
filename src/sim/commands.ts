@@ -65,6 +65,7 @@ import {
   freshStore,
   isFoundingStore,
   storeById,
+  type GameSettings,
   type GameSpeed,
   type GameState,
   type OrderLine,
@@ -137,8 +138,14 @@ export type Command =
   /** Buy account-wide demand forecasting (any Gen 4 store + 28 days history). */
   | { type: "aitech.buyForecast" }
   // --- App shell (§23, §24) ---
-  /** Reduced motion is the only live setting; volumes wait for milestone 17. */
-  | { type: "settings.set"; reducedMotion: boolean }
+  /** Patch any subset of the §24 settings; volumes clamp to 0–1. */
+  | {
+      type: "settings.set";
+      volume?: number;
+      sfx?: number;
+      ambience?: number;
+      reducedMotion?: boolean;
+    }
   /** Dev-only spawn stress cycle ×1/×3/×9/×27 (milestone 03); handled by Sim, not here. */
   | { type: "dev.stressToggle" }
   // --- Dev event console (§16, milestone 11; keys in the README) ---
@@ -725,9 +732,27 @@ export function handleCommand(
       return;
     }
     case "settings.set": {
-      if (state.settings.reducedMotion === command.reducedMotion) return;
-      state.settings.reducedMotion = command.reducedMotion;
-      emit({ type: "settings.changed", settings: { ...state.settings } });
+      const s = state.settings;
+      const clamp = (value: number | undefined, current: number): number =>
+        value === undefined || !Number.isFinite(value)
+          ? current
+          : Math.min(1, Math.max(0, value));
+      const next: GameSettings = {
+        volume: clamp(command.volume, s.volume),
+        sfx: clamp(command.sfx, s.sfx),
+        ambience: clamp(command.ambience, s.ambience),
+        reducedMotion: command.reducedMotion ?? s.reducedMotion,
+      };
+      if (
+        next.volume === s.volume &&
+        next.sfx === s.sfx &&
+        next.ambience === s.ambience &&
+        next.reducedMotion === s.reducedMotion
+      ) {
+        return;
+      }
+      Object.assign(s, next); // in place — captured references stay live
+      emit({ type: "settings.changed", settings: { ...next } });
       return;
     }
     case "dev.forceShortage": {

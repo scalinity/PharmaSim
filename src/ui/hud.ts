@@ -76,6 +76,14 @@ export interface CityControls {
   toggle(): void;
 }
 
+/** The two §29 cues whose timing only the HUD knows: paper landing on the
+ *  counter (dock sheets, the receipt) and the receipt's verdict stamp.
+ *  Structural, so ui/ never imports platform/ — main.ts passes the handle. */
+export interface HudSounds {
+  rustle(): void;
+  stamp(): void;
+}
+
 export interface HudHandle {
   toast(message: string, tone?: ToastTone): void;
   /** Coming back from the title: repaint the phase so the end-of-day receipt
@@ -214,7 +222,12 @@ function worldHeadlines(state: Readonly<GameState>): TickerItem[] {
   return items;
 }
 
-export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>): HudHandle {
+export function createHud(
+  root: HTMLElement,
+  sim: Sim,
+  bus: EventBus<SimEvent>,
+  sounds?: HudSounds,
+): HudHandle {
   const state = sim.snapshot;
   let lastRunSpeed: GameSpeed = state.speed === 0 ? 1 : state.speed;
   let build: BuildControls | null = null;
@@ -614,7 +627,9 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
    *  none, whatever was asked for. */
   function setPanel(name: PanelName | null): void {
     const allowed = sim.snapshot.phase !== "close" && !sim.snapshot.buildMode;
+    const before = openPanel;
     openPanel = allowed ? name : null;
+    if (openPanel !== null && openPanel !== before) sounds?.rustle();
     for (const key of Object.keys(panels) as PanelName[]) {
       const on = key === openPanel;
       const panel = panels[key];
@@ -817,8 +832,18 @@ export function createHud(root: HTMLElement, sim: Sim, bus: EventBus<SimEvent>):
     if (phase === "morning") refreshMorning();
     closeStage.hidden = phase !== "close";
     closeStage.replaceChildren();
-    if (phase === "close") {
-      closeStage.append(buildReceipt(sim, () => sim.dispatch({ type: "day.advance" })));
+    // Behind the title the HUD is hidden and enterPlay repaints — building
+    // the receipt there would run its print timers (and the stamp's §29
+    // thunk) invisibly, then double them when play starts.
+    if (phase === "close" && !root.hidden) {
+      closeStage.append(
+        buildReceipt(
+          sim,
+          () => sim.dispatch({ type: "day.advance" }),
+          () => sounds?.stamp(),
+        ),
+      );
+      sounds?.rustle(); // the register paper arrives
     }
     if (phase === "close") setPanel(null);
     if (phase !== "shift") {

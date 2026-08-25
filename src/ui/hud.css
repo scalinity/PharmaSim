@@ -608,6 +608,7 @@ html.app-shell .topbar {
 }
 
 .toast {
+  max-width: min(560px, calc(100vw - 48px)); /* long lines wrap, never spill */
   padding: 8px 14px;
   background: var(--paper);
   border: var(--panel-border) solid var(--ink);
@@ -1040,7 +1041,7 @@ html.app-shell .topbar {
 }
 
 .rcpt__line--total .rcpt__r {
-  color: var(--amber);
+  color: var(--amber-ink);
 }
 
 .rcpt__stamp {
@@ -1172,15 +1173,17 @@ html.app-shell .topbar {
   appearance: none;
   -webkit-appearance: none;
   width: 100%;
-  height: 12px;
-  margin: 0;
+  /* §28 hit floor: a 32 px grab box, drawn at the tag's original 12 px —
+     the negative margins keep the tag's layout (and the scale ticks) put. */
+  height: 32px;
+  margin: -10px 0;
   background: none;
   cursor: ew-resize;
 }
 
 .ptag__slider::-webkit-slider-runnable-track {
   height: 2px;
-  margin-top: 5px;
+  margin-top: 15px;
   background: var(--ink-25);
 }
 
@@ -1496,16 +1499,16 @@ html.app-shell .topbar {
   text-align: center;
 }
 
-/* Quantity stepper: two ink keys and a written-in figure */
+/* Quantity stepper: two ink keys and a written-in figure (§28: ≥32 px keys) */
 .qty {
   display: grid;
-  grid-template-columns: 26px minmax(0, 1fr) 26px;
+  grid-template-columns: 32px minmax(0, 1fr) 32px;
   align-items: center;
   gap: 3px;
 }
 
 .qty__btn {
-  height: 26px;
+  height: 32px;
   border: 1.5px solid var(--ink);
   border-radius: 3px;
   background: var(--paper);
@@ -1520,7 +1523,7 @@ html.app-shell .topbar {
 }
 
 .qty__field {
-  height: 26px;
+  height: 32px;
   min-width: 0;
   padding: 0 2px;
   border: none;
@@ -1800,7 +1803,7 @@ html.app-shell .topbar {
 }
 
 .fcast__meta--shortage {
-  color: var(--amber);
+  color: var(--amber-ink);
 }
 
 /* The week cell: printer-block shape, the number, and the ±10% band. */
@@ -1850,7 +1853,7 @@ html.app-shell .topbar {
 }
 
 .fcast__trend--capped {
-  color: var(--amber);
+  color: var(--amber-ink);
   font-weight: var(--w-semibold);
 }
 
@@ -2168,6 +2171,7 @@ html.app-shell .topbar {
 }
 
 .tabs__tab {
+  min-height: 32px; /* §28 hit floor */
   margin-bottom: -1.5px;
   padding: 8px 18px 7px;
   background: rgba(32, 48, 43, 0.08);
@@ -2259,7 +2263,7 @@ html.app-shell .topbar {
 }
 
 .srow__assign {
-  height: 28px;
+  height: 32px; /* §28 hit floor */
   padding: 0 6px;
   background: var(--paper);
   border: 1.5px solid var(--ink);
@@ -2418,7 +2422,7 @@ html.app-shell .topbar {
 /* ---- Receipt: family-loan stamp + Aunt Rosa's note ---- */
 
 .rcpt__stamp--family {
-  color: var(--amber);
+  color: var(--amber-ink);
   font-size: var(--fs-16);
 }
 
@@ -2748,11 +2752,6 @@ html.app-shell .topbar {
   gap: 24px;
 }
 
-/* The whole row reads inert until there is audio to move (§28 honesty). */
-.row--slider .row__name {
-  color: var(--ink-60);
-}
-
 .row--actions {
   justify-content: flex-start;
   gap: 10px;
@@ -2814,14 +2813,16 @@ html.app-shell .topbar {
   transform: translateX(21px);
 }
 
-/* Volume sliders: laid out, inert until milestone 17 */
+/* Volume sliders (§29): each input moves its gain right away. The 18 px
+   input sits in a ≥36 px row, so the §28 hit target is the row's. */
 .slider {
   flex: 1;
   max-width: 268px;
-  height: 18px;
+  height: 32px; /* §28 hit floor; the drawn track stays a thin line */
   appearance: none;
   -webkit-appearance: none;
   background: none;
+  cursor: pointer;
 }
 
 .slider::-webkit-slider-runnable-track {
@@ -2834,13 +2835,22 @@ html.app-shell .topbar {
   width: 13px;
   height: 13px;
   margin-top: -5px;
-  background: var(--ink-60);
+  background: var(--ink);
   border: 1.5px solid var(--paper);
   border-radius: 50%;
 }
 
-.slider:disabled {
-  opacity: 0.5;
+.slider::-moz-range-track {
+  height: 3px;
+  background: var(--ink-25);
+}
+
+.slider::-moz-range-thumb {
+  width: 13px;
+  height: 13px;
+  background: var(--ink);
+  border: 1.5px solid var(--paper);
+  border-radius: 50%;
 }
 
 /* ---- Modal: the one decision the game won't take on its own ---- */
@@ -3118,7 +3128,7 @@ html.app-shell .topbar {
 /* Issued date in the receipt's rubber-stamp voice (§28). */
 .cert__stamp {
   padding: 2px 8px;
-  border: 2px solid var(--amber);
+  border: 2px solid var(--amber-ink);
   border-radius: 3px;
   transform: rotate(-3deg);
   font-family: var(--font-mono);
@@ -3126,7 +3136,7 @@ html.app-shell .topbar {
   font-weight: var(--w-semibold);
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--amber);
+  color: var(--amber-ink);
   mix-blend-mode: multiply;
 }
 
@@ -3331,7 +3341,7 @@ html.app-shell .topbar {
 /* The rubber-stamp voice, same as the certificates and the receipt verdict. */
 .reno__stamp {
   padding: 2px 8px 1px;
-  border: 2px solid var(--amber);
+  border: 2px solid var(--amber-ink);
   border-radius: 4px;
   transform: rotate(-2deg);
   font-family: var(--font-mono);
@@ -3339,7 +3349,7 @@ html.app-shell .topbar {
   font-weight: var(--w-semibold);
   letter-spacing: 0.14em;
   text-transform: uppercase;
-  color: var(--amber);
+  color: var(--amber-ink);
   mix-blend-mode: multiply;
 }
 
@@ -4173,7 +4183,7 @@ html.app-shell .topbar {
   font-size: 10px;
   letter-spacing: 0.08em;
   text-transform: uppercase;
-  color: var(--amber);
+  color: var(--amber-ink);
 }
 
 .reports__none {
@@ -4270,6 +4280,7 @@ html.app-shell .topbar {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  min-height: 32px; /* §28 hit floor */
   padding: 6px 14px 7px;
   background: rgba(251, 248, 240, 0.85);
   border: 1.5px solid var(--ink-25);
@@ -4308,7 +4319,7 @@ html.app-shell .topbar {
 }
 
 .bstrip__tab--on .bstrip__stars {
-  color: var(--amber);
+  color: var(--amber-ink);
 }
 
 /* Panel branch scope: small chips under a sheet's title row (Team, Orders). */
@@ -4322,6 +4333,7 @@ html.app-shell .topbar {
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  min-height: 32px; /* §28 hit floor */
   padding: 3px 12px 4px;
   border: 1.5px solid var(--ink-25);
   border-radius: 999px;
@@ -4368,6 +4380,7 @@ html.app-shell .topbar {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  min-height: 32px; /* §28 hit floor */
   padding: 6px 16px 8px;
   background: rgba(251, 248, 240, 0.62);
   clip-path: polygon(7px 0, calc(100% - 7px) 0, 100% 100%, 0 100%);
@@ -4498,7 +4511,7 @@ html.app-shell .topbar {
 }
 
 .cityui__deedrow--total .cityui__deednum {
-  color: var(--amber);
+  color: var(--amber-ink);
 }
 
 .cityui__deeddots {

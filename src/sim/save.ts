@@ -528,7 +528,24 @@ export function hydrate(file: SaveFile): GameState {
     hiring: copyHiring(file.hiring),
     workingStationId: null,
     dayStats: copyDayStats(file.dayStats),
-    settings: { ...defaultSettings(), ...file.settings },
+    settings: copySettings(file.settings),
+  };
+}
+
+/** Settings drive live gain nodes and a CSS class, so a hand-edited value
+ *  reads as the nearest sane one instead of refusing the whole pharmacy:
+ *  volumes clamp to 0–1 finite, reduced motion coerces to a boolean. */
+function copySettings(raw: GameSettings): GameSettings {
+  const defaults = defaultSettings();
+  const level = (value: unknown, fallback: number): number =>
+    typeof value === "number" && Number.isFinite(value)
+      ? Math.min(1, Math.max(0, value))
+      : fallback;
+  return {
+    volume: level(raw.volume, defaults.volume),
+    sfx: level(raw.sfx, defaults.sfx),
+    ambience: level(raw.ambience, defaults.ambience),
+    reducedMotion: raw.reducedMotion === true,
   };
 }
 

@@ -19,6 +19,7 @@ import { cellToWorld, FACING } from "./core/grid";
 import { startLoop } from "./core/loop";
 import { COMPETITOR_DEFS } from "./data/competitors";
 import { DEPOT_ID, DEPOT_SITE, DISTRICT_MAPS, DISTRICTS, STORE_SITE } from "./data/districts";
+import { createGameAudio } from "./platform/audio";
 import { createStorage } from "./platform/storage";
 import { verifyAssistOnline } from "./sim/aitech";
 import { CustomerSystem } from "./sim/customers";
@@ -229,7 +230,14 @@ bus.on("day.phaseChanged", (e) => {
   if (dc) city.setTruckRuns(dc.trucks.map((truck) => todayRuns.get(truck.id) ?? []));
 });
 
-const hud = createHud(hudRoot, sim, bus);
+// §29: the soundscape subscribes to the bus the way render/ does — the sim
+// never learns audio exists. The HUD gets the two cues only it can time.
+const audio = createGameAudio(bus, {
+  crowd: () => sim.customers.activeCount,
+  settings: () => sim.snapshot.settings,
+});
+
+const hud = createHud(hudRoot, sim, bus, audio);
 const binBoard = new RxBinBoard();
 store.scene.add(binBoard.group);
 

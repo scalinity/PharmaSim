@@ -1,7 +1,7 @@
 // Settings screen (SPEC §28: a full paper sheet over the scrim). Three
 // sections, each a labelled group on the sheet: what moves, what it sounds
-// like, and where the save lives. Reduced motion is live; the volume sliders
-// are laid out and inert until audio arrives in milestone 17.
+// like, and where the save lives. The volume sliders drive the §29 gains
+// live and persist with the save (§24).
 
 import type { Sim } from "../../sim/sim";
 import { PillButton } from "../components/PillButton";
@@ -27,23 +27,29 @@ function section(label: string, children: HTMLElement[]): HTMLElement {
   ]);
 }
 
-/** Inert volume slider: shown so the shape of the audio settings is honest. */
-function volumeRow(label: string, value: number): HTMLElement {
-  const slider = h("input", { cls: "slider" });
-  slider.type = "range";
-  slider.min = "0";
-  slider.max = "100";
-  slider.value = String(Math.round(value * 100));
-  slider.disabled = true;
-  slider.tabIndex = -1;
-  return h("div", { cls: "row row--slider" }, [
-    h("span", { cls: "row__name", text: label }),
-    slider,
-  ]);
-}
+type VolumeKey = "volume" | "sfx" | "ambience";
 
 export function createSettingsScreen(sim: Sim, props: SettingsProps): SettingsHandle {
   const settings = sim.snapshot.settings;
+  const sliders = new Map<VolumeKey, HTMLInputElement>();
+
+  /** Live volume slider: each input moves its §29 gain right away. */
+  function volumeRow(label: string, key: VolumeKey): HTMLElement {
+    const slider = h("input", { cls: "slider" });
+    slider.type = "range";
+    slider.min = "0";
+    slider.max = "100";
+    slider.value = String(Math.round(settings[key] * 100));
+    slider.setAttribute("aria-label", `${label} volume`);
+    slider.addEventListener("input", () => {
+      sim.dispatch({ type: "settings.set", [key]: Number(slider.value) / 100 });
+    });
+    sliders.set(key, slider);
+    return h("label", { cls: "row row--slider" }, [
+      h("span", { cls: "row__name", text: label }),
+      slider,
+    ]);
+  }
 
   const knob = h("span", { cls: "switch__knob", attrs: { "aria-hidden": "true" } });
   const toggle = h("button", {
@@ -81,10 +87,15 @@ export function createSettingsScreen(sim: Sim, props: SettingsProps): SettingsHa
         ]),
 
         section("Sound", [
-          volumeRow("Master", settings.volume),
-          volumeRow("Effects", settings.sfx),
-          volumeRow("Room tone", settings.ambience),
-          h("p", { cls: "row__help", text: "Audio arrives in a later milestone." }),
+          volumeRow("Master", "volume"),
+          volumeRow("Effects", "sfx"),
+          volumeRow("Room tone", "ambience"),
+          h("p", {
+            cls: "row__help",
+            text:
+              "Effects are the door, the register and the counting tray; room tone is the crowd. " +
+              "Sound mutes while the window is in the background.",
+          }),
         ]),
 
         section("Your save", [
@@ -101,9 +112,12 @@ export function createSettingsScreen(sim: Sim, props: SettingsProps): SettingsHa
   ]);
 
   function sync(): void {
-    const on = sim.snapshot.settings.reducedMotion;
-    toggle.classList.toggle("switch--on", on);
-    toggle.setAttribute("aria-checked", String(on));
+    const current = sim.snapshot.settings;
+    toggle.classList.toggle("switch--on", current.reducedMotion);
+    toggle.setAttribute("aria-checked", String(current.reducedMotion));
+    for (const [key, slider] of sliders) {
+      slider.value = String(Math.round(current[key] * 100));
+    }
   }
   sync();
 

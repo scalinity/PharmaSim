@@ -805,8 +805,10 @@ else quiet.
   the world stays visible behind them.
 - **Tokens** (`ui/tokens.css`):
   - `--ink #20302B` (green-black text/lines) · `--pine #2F6B4F` (primary, the cross) ·
-    `--paper #FBF8F0` (panel ground) · `--amber #E7A03C` (money, warnings, bottlenecks) ·
-    `--rose #C0524E` (errors, walk-outs) · `--glass rgba(32,48,43,.55)` (scrim).
+    `--paper #FBF8F0` (panel ground) · `--amber #E7A03C` (money, warnings, bottlenecks —
+    fills, bands, rings) · `--amber-ink #8A5A00` (amber as text on paper; the fill amber
+    doesn't reach the contrast floor there) · `--rose #B04440` (errors, walk-outs) ·
+    `--glass rgba(32,48,43,.55)` (scrim).
   - Era tint: paper warms in Gen 1 (`#FBF4E4`) and cools to clinical white by Gen 4 (`#FCFCFA`)
     via CSS custom property swap on the HUD root — the UI quietly modernizes with the store.
 - **Type** (bundled via `@fontsource`, OFL licenses, no network fetch): **Fraunces** for display

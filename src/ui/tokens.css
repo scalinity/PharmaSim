@@ -5,8 +5,10 @@
   --ink: #20302b; /* green-black text/lines */
   --pine: #2f6b4f; /* primary, the cross */
   --paper: #fbf8f0; /* panel ground */
-  --amber: #e7a03c; /* money, warnings, bottlenecks */
-  --rose: #c0524e; /* errors, walk-outs */
+  --amber: #e7a03c; /* money, warnings, bottlenecks — fills, bands, rings */
+  --amber-ink: #8a5a00; /* amber mixed for *text on paper* (§28 ≥4.5:1;
+                           the bright fill amber only reaches ~2:1 there) */
+  --rose: #b04440; /* errors, walk-outs (dark enough to write with on paper) */
   --glass: rgba(32, 48, 43, 0.55); /* scrim */
 
   /* Era paper tints — swapped onto --paper on the HUD root as the store

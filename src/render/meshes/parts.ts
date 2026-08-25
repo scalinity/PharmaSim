@@ -13,7 +13,10 @@ export class PartsBuilder {
    * before adding (geometry.rotateX/Y/Z); position is applied here.
    */
   add(geometry: BufferGeometry, color: number, x = 0, y = 0, z = 0): this {
-    const part = geometry.toNonIndexed();
+    // toNonIndexed() on an already non-indexed geometry warns and returns
+    // *the same object* — the translate below would then mutate the caller's
+    // geometry. Clone that branch instead.
+    const part = geometry.index !== null ? geometry.toNonIndexed() : geometry.clone();
     part.translate(x, y, z);
     const count = part.getAttribute("position").count;
     const colors = new Float32Array(count * 3);
